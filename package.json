@@ -1,0 +1,22 @@
+{
+  "name": "cfgfs",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "fuse-bindings": "^2.11.2",
+    "mkdirp": "^0.5.1"
+  },
+  "devDependencies": {
+    "@types/mkdirp": "^0.5.2",
+    "@types/node": "^9.6.5",
+    "typescript": "^2.8.1"
+  }
+}
