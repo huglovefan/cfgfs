@@ -1,6 +1,6 @@
 import {Dir} from "../fs/Dir";
-import {File} from "../fs/File";
-import {keySet} from "./keySet";
+import {DynamicFile} from "../fs/DynamicFile";
+import {keyNames} from "./keyNames";
 import {EmptyFile} from "../fs/EmptyFile";
 
 type BindCallback = (c: (c: string) => void) => void | string;
@@ -9,7 +9,7 @@ export class BindSystem {
 	readonly dir: Dir;
 	constructor () {
 		this.dir = new Dir();
-		for (const key of keySet) {
+		for (const key of keyNames) {
 			this.dir.putChild(`+${key}.cfg`, EmptyFile);
 			this.dir.putChild(`-${key}.cfg`, EmptyFile);
 		}
@@ -25,8 +25,8 @@ export class BindSystem {
 			[`+${key}.cfg`, onDown],
 			[`-${key}.cfg`, onUp],
 		]) {
-			this.dir.putChild(filename, (callback !== void 0) ? new File(() => {
-				let res = [];
+			this.dir.putChild(filename, (callback !== void 0) ? new DynamicFile(() => {
+				let res: string[] = [];
 				const cb_res = callback((c) => {
 					res.push(c);
 				});
@@ -42,7 +42,7 @@ export class BindSystem {
 	}
 	getInitCommands () {
 		const commands = [];
-		for (const key of keySet) {
+		for (const key of keyNames) {
 			commands.push(`alias "+cfgfs_${key}" "exec binds/+${key}.cfg"`);
 			commands.push(`alias "-cfgfs_${key}" "exec binds/-${key}.cfg"`);
 			commands.push(`bind "${key}" "+cfgfs_${key}"`);

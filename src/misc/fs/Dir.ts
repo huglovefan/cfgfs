@@ -11,12 +11,12 @@ export class Dir extends FsNode {
 	getContents () {
 		return [...this.children.keys()];
 	}
-	getChild (name: string) {
+	getChild <TType extends FsNode> (name: string) {
 		const child = this.children.get(name);
 		if (child === void 0) {
 			return null;
 		}
-		return child;
+		return <TType> child;
 	}
 	putChild (name: string, node: FsNode) {
 		this.children.set(name, node);
@@ -31,14 +31,14 @@ export class Dir extends FsNode {
 			case 1:
 				return this.getChild(components[0]);
 			default:
-				const child = this.getChild(components[0]);
-				if (child === null) {
+				const next = this.getChild(components[0]);
+				if (
+					next === null ||
+					!(next instanceof Dir)
+				) {
 					return null;
 				}
-				if (!(child instanceof Dir)) {
-					return null;
-				}
-				return child.lookupPath(components.slice(1));
+				return next.lookupPath(components.slice(1));
 		}
 	}
 }

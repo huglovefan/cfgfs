@@ -1,3 +1,3 @@
-import {File} from "./File";
+import {DynamicFile} from "./DynamicFile";
 
-export const EmptyFile = new File(() => "");
+export const EmptyFile = new DynamicFile(() => "");
