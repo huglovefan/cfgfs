@@ -1,0 +1,43 @@
+#!/bin/sh
+
+t=$(realpath -- "$0") || exit
+t=$(dirname -- "$t") || exit
+cd -- "$t" || exit
+
+: ${CC:=gcc}
+#: ${CFLAGS:=$(alias source=':'; . /etc/portage/make.conf; echo $CFLAGS)}
+: ${CFLAGS:=-O3 -U_FORTIFY_SOURCE -U_GLIBCXX_ASSERTIONS -UNDEBUG -flto -fno-math-errno -fno-stack-protector -fno-trapping-math -march=native -pipe -DNDEBUG}
+
+: ${FUSE_CFLAGS:=$(pkg-config fuse3 --cflags --libs)}
+: ${LUA_CFLAGS:=$(pkg-config luajit --cflags --libs)}
+
+case $1 in
+watch)
+	echo main.c | exec entr -s "clear; date; exec \"$0\" build"
+	;;
+run-watch)
+	printf '%s\n' cfgfs main.lua | exec entr -rs "clear; date; sleep 0.2; exec \"$0\" run"
+	;;
+run)
+	fusermount3 -u mnt 2>&-
+	CFGFS_SCRIPT=$(realpath main.lua) ./cfgfs -f -o auto_unmount mnt
+	;;
+build)
+	set -x
+	exec $CC \
+		$CFLAGS \
+		$FUSE_CFLAGS \
+		$LUA_CFLAGS \
+		-Wall \
+		-Wextra \
+		-Wpedantic \
+		-Wstrict-overflow=5 \
+		-Wunused-parameter \
+		-o cfgfs \
+		main.c
+	;;
+*)
+	>&2 printf '%s: unknown target "%s"\n' "$0" "$1"
+	exit 1
+	;;
+esac
