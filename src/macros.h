@@ -2,27 +2,21 @@
 
 #include <sys/prctl.h> // prctl() for set_thread_name
 
-#include "cli.h" // cli_println() for debug printing
+#include "cli.h" // cli_eprintln() for debug printing
 
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
-#define assume(x) ({ typeof(x) x_ = (x); if (!x_) __builtin_unreachable(); x_; })
-
-#ifdef SANITIZER
- extern void __sanitizer_print_stack_trace(void);
-#else
- #define __sanitizer_print_stack_trace()
-#endif
+#define assume(x) ({ __auto_type _assume_x = (x); if (!_assume_x) __builtin_unreachable(); _assume_x; })
 
 #define V  if (0)
 #define VV if (0)
 #define D  if (0)
 
-#define Debug1(fmt, ...) cli_println("%s: " fmt, __func__, ##__VA_ARGS__)
-#define Debug(fmt, ...)  cli_println(" %s: " fmt, __func__, ##__VA_ARGS__)
+#define Debug1(fmt, ...) cli_eprintln("%s: " fmt, __func__, ##__VA_ARGS__)
+#define Debug(fmt, ...)  cli_eprintln(" %s: " fmt, __func__, ##__VA_ARGS__)
 
-#define Dbg(fmt, ...) cli_println("%s: " fmt, __func__, ##__VA_ARGS__)
+#define Dbg(fmt, ...) cli_eprintln("%s: " fmt, __func__, ##__VA_ARGS__)
 
 // https://en.cppreference.com/w/cpp/utility/exchange
 #define exchange(T, var, newval) ({ T oldval = var; var = newval; oldval; })
@@ -33,24 +27,25 @@
 
 // -----------------------------------------------------------------------------
 
-#undef assert
+#define once_(x, c) ({ static _Atomic(_Bool) _once_##c; if (__builtin_expect(!_once_##c++, 0)) { x; } })
+#define once(x) once_(x, __COUNTER__)
 
-// https://stackoverflow.com/questions/10593492/catching-assert-with-side-effects
-//extern char sideeffect_catcher;
-// makes false positives
+// -----------------------------------------------------------------------------
+
+#undef assert
 
 // https://stackoverflow.com/a/2671100
 #define STRINGIZE_DETAIL(x) #x
 #define STRINGIZE(x) STRINGIZE_DETAIL(x)
 
-#ifdef SANITIZER
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || __has_feature(undefined_behavior_sanitizer)
  extern void __sanitizer_print_stack_trace(void);
 #else
  #define __sanitizer_print_stack_trace()
 #endif
 
 #define assert2(x, s) \
-	({ typeof(x) _assert_rv = (x); \
+	({ __auto_type _assert_rv = (x); \
 	   if (unlikely(!_assert_rv)) { \
 	       fprintf(stderr, EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __PRETTY_FUNCTION__, s); \
 	       __sanitizer_print_stack_trace(); \

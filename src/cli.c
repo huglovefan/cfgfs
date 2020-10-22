@@ -7,6 +7,8 @@
 #include "main.h"
 #include "lua.h"
 #include "click.h"
+#include "vcr.h"
+#include "buffers.h"
 
 #include <readline/history.h>
 
@@ -44,17 +46,26 @@ static void linehandler(char *line) {
 	}
 	if (unlikely(*line == '\0')) goto end;
 
+	double tm = vcr_get_timestamp();
+	vcr_event {
+		vcr_add_string("what", "cli_input");
+		vcr_add_string("text", line);
+		vcr_add_double("timestamp", tm);
+	}
+
 	LUA_LOCK();
 	lua_State *L = g_L;
-	 lua_getglobal(L, "_cfg");
+	 lua_getglobal(L, "_cli_input");
 	  lua_pushstring(L, line);
 	lua_call(L, 1, 0);
+	int stuff = (!buffer_list_is_empty(&buffers));
 	LUA_UNLOCK();
-	click(0);
+	if (stuff) click(0);
 
 	add_history(line);
 end:
 	if (unlikely(cli_exiting)) rl_callback_handler_remove();
+	// ^ has to be called from here so it doesn't print the prompt again
 }
 
 // -----------------------------------------------------------------------------
@@ -122,8 +133,6 @@ outofhere:
 	 rl_callback_handler_remove();
 	pthread_mutex_unlock(&cli_mutex);
 
-	close(quitpipe[1]); // <-- is the other end closed?
-	                    // ^ what did this comment mean?
 	main_stop();
 
 	pthread_exit(NULL);
@@ -134,10 +143,11 @@ outofhere:
 
 __attribute__((cold))
 void cli_thread_start(void *L) {
-	if (thread != 0) return;
+	if (thread != 0 || !isatty(0)) return;
 
 	pipe(quitpipe);
 	fds[1].fd = quitpipe[0];
+
 	pthread_create(&thread, NULL, cli_thread_main, L);
 }
 
@@ -150,6 +160,9 @@ void cli_thread_stop(void) {
 
 	pthread_join(thread, NULL);
 	thread = 0;
+
+	close(quitpipe[0]);
+	close(quitpipe[1]);
 }
 
 // -----------------------------------------------------------------------------

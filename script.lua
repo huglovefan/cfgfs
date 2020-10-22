@@ -4,60 +4,84 @@ cfgfs.init_on_reload = not not gamedir
 
 --------------------------------------------------------------------------------
 
--- crosshairs
+-- crosshair and slot thing
 
 do
 
 class = global('class', 'scout')
 slot = global('slot', 1)
 
-local mod_prev = nil
-
-local xhs = {
-	--               1            2            3      4      5
+xhs = global('xhs', {
+	--               1            2            3      4      ... 5
 	scout        = { {f=6},       {f=5, s=22}, {f=4}, m=2 },
-	soldier      = { {f=6},       {f=7, s=24}, {f=4} },
+	soldier      = { {f=6},       {f=7, s=24}, {f=4}, m=3 },
 	pyro         = { {f=5, s=28}, {f=7, s=24}, {f=4}, m=3 },
-	demoman      = { {f=2},       {f=7, s=24}, {f=4} },
+	demoman      = { {f=2},       {f=7, s=24}, {f=4}, m=1 },
 	heavyweapons = { {f=3},       {f=7, s=24}, {f=4} },
-	engineer     = { {f=6},       {f=5, s=22}, {f=4}, {f=4}, {f=4}, scroll_max=3 },
+	-- build pda switches to melee on build
+	-- destruct pda remembers active slot
+	engineer     = { {f=6},       {f=5, s=22}, {f=4}, {sk=1, f=4}, {sk=1} },
 	medic        = { {f=5, s=24}, {f=7, s=24}, {f=4} },
 	sniper       = { {f=5, s=20}, {f=7, s=22}, {f=4} },
-	spy          = { {f=5, s=20}, {f=7, s=24}, {f=4}, {f=4}, {f=4}, scroll_max=3 },
-}
+	-- disguise remembers active slot
+	spy          = { {f=5, s=20}, {f=7, s=24}, {f=4}, {sk=1} },
+	_v = 1,
+})
+
+local mod_prev = nil
 
 local xh_update = function (slot)
 	local t = xhs[class][slot]
 	if not t then return end
-	cvar.cl_crosshair_file = 'crosshair'..t.f
-	cvar.cl_crosshair_scale = t.s or 32
+	if t.f then
+		cvar.cl_crosshair_file = 'crosshair'..t.f
+		cvar.cl_crosshair_scale = t.s or 32
+	end
 end
 add_listener('slotchange', xh_update)
 
-local do_slot = function (n, mod)
-	if not mod then slot = n end
+local do_slot = function (n, is_mod, noskip)
+	if not (n and xhs[class][n] and (noskip or not xhs[class][n].sk)) then
+		return cfg('slot6') -- makes the "selection failed" sound
+	end
+	if not is_mod then slot = n end
 	mod_prev = nil
 	cfgf('slot%d', n)
 	fire_event('slotchange', n)
 end
 
+local getslot = function (slot, add)
+	slot = (slot or #xhs[class])
+	local slmax = #xhs[class]
+	for i = 1, slmax-1 do
+		local n = ((slot-1+add*i)%slmax)+1
+		if not xhs[class][n].sk then
+			return n
+		end
+	end
+	return nil
+end
 slotcmd = function (n)
 	return function ()
-		return do_slot(n)
+		if is_pressed['ctrl'] and is_pressed['alt'] then
+			xhs[class][n].sk = (not xhs[class][n].sk) or nil
+			if n == slot and xhs[class][n].sk then
+				return do_slot(getslot(nil, 1))
+			end
+		end
+		return do_slot(n, false, (n >= 4))
 	end
 end
 invnext = function ()
-	local cnt = (xhs[class].scroll_max or #xhs[class])
-	return do_slot(slot%cnt+1)
+	return do_slot(getslot(slot, 1))
 end
 invprev = function ()
-	local cnt = (xhs[class].scroll_max or #xhs[class])
-	return do_slot((slot-2)%cnt+1)
+	return do_slot(getslot(slot, -1))
 end
 
 mod_dn = function ()
 	local m = xhs[class].m
-	if not m or m == slot then return end
+	if not m or m == slot then return cfg('slot6') end
 	do_slot(m, true)
 	mod_prev = slot
 end
@@ -72,9 +96,6 @@ add_listener('classchange', function (cls)
 	class = cls
 	return do_slot(1)
 end)
-add_listener('startup', function (cls)
-	return do_slot(1)
-end)
 
 end
 
@@ -84,29 +105,30 @@ end
 
 do
 
-local join = function (...) return table.concat({...}, ';') end
-
-local reset = function ()
-	cvar.cl_crosshair_red = 255
-	cvar.cl_crosshair_green = 0
-	cvar.cl_crosshair_blue = 255
+local xh_update = function ()
+	local r, g, b = 0xff, 0x0, 0xff
+	if is_pressed['mouse1'] then
+		r, g, b = r~0xff, g~0xff, b~0xff
+	end
+	if is_pressed['mouse2'] then
+		r = r~0xff
+	end
+	if is_pressed['mouse3'] then
+		g, b = g~0xff, b~0xff
+	end
+	cvar.cl_crosshair_red   = r
+	cvar.cl_crosshair_green = g
+	cvar.cl_crosshair_blue  = b
 end
-add_listener('classchange', reset)
 
-local   xh_inv_r = "incrementvar cl_crosshair_red   0 255 255"
-local  xh_inv_rg = "incrementvar cl_crosshair_red   0 255 255;incrementvar cl_crosshair_green 0 255 255"
-local  xh_inv_rb = "incrementvar cl_crosshair_red   0 255 255;incrementvar cl_crosshair_blue  0 255 255"
-local xh_inv_rgb = "incrementvar cl_crosshair_red   0 255 255;incrementvar cl_crosshair_green 0 255 255;incrementvar cl_crosshair_blue 0 255 255"
-local   xh_inv_g = "incrementvar cl_crosshair_green 0 255 255"
-local  xh_inv_gb = "incrementvar cl_crosshair_green 0 255 255;incrementvar cl_crosshair_blue  0 255 255"
-local   xh_inv_b = "incrementvar cl_crosshair_blue  0 255 255"
+attack1_dn = function () cmd('+attack') xh_update() cmd('spec_next') end
+attack1_up = function () cmd('-attack') xh_update() end
+attack2_dn = function () cmd('+attack2') xh_update() cmd('spec_prev') end
+attack2_up = function () cmd('-attack2') xh_update() end
+attack3_dn = function () cmd('+attack3') xh_update() end
+attack3_up = function () cmd('-attack3') xh_update() end
 
-attack1_dn = join('+attack',  xh_inv_rgb, 'spec_next')
-attack1_up = join('-attack',  xh_inv_rgb)
-attack2_dn = join('+attack2', xh_inv_r,   'spec_prev')
-attack2_up = join('-attack2', xh_inv_r)
-attack3_dn = join('+attack2', xh_inv_gb)
-attack3_up = join('-attack2', xh_inv_gb)
+add_listener('classchange', xh_update)
 
 end
 
@@ -115,13 +137,19 @@ end
 nullcancel_pair = function (this_key, other_key, this_act, other_act)
 	local this_dn, this_up = '+'..this_act, '-'..this_act
 	local other_dn, other_up = '+'..other_act, '-'..other_act
+	local this_dn_other_up = other_up..';'..this_dn
+	local this_up_other_dn = this_up..';'..other_dn
 	local dn = function ()
-		if is_pressed[other_key] then cfg(other_up) end
-		cfg(this_dn)
+		if is_pressed[other_key]
+		then return cfg(this_dn_other_up)
+		else return cfg(this_dn)
+		end
 	end
 	local up = function ()
-		cfg(this_up)
-		if is_pressed[other_key] then cfg(other_dn) end
+		if is_pressed[other_key]
+		then return cfg(this_up_other_dn)
+		else return cfg(this_up)
+		end
 	end
 	return dn, up
 end
@@ -130,7 +158,7 @@ end
 
 -- i hate this
 
-local jump_dn = '+jump;slot0;spec_mode'
+local jump_dn = '+jump;slot6;spec_mode'
 local jump_up = '-jump'
 
 if 1 + 1 == 3 then
@@ -179,6 +207,8 @@ cmd.fortune = function ()
 	end
 end
 
+cmd.cfgfs_init = 'exec cfgfs/init'
+
 --------------------------------------------------------------------------------
 
 -- cvars
@@ -198,10 +228,11 @@ cvar.cl_downloadfilter = 'nosounds' -- (all, none, nosounds, mapsonly)
 cvar.cl_hud_playerclass_use_playermodel = 1
 cvar.cl_mvm_wave_status_visible_during_wave = 1
 cvar.cl_rumblescale = 0
-cvar.con_enable = 1
-cvar.engine_no_focus_sleep = 50
+cvar.con_enable = 0
+cvar.engine_no_focus_sleep = 100
 cvar.fov_desired = 90
-cvar.fps_max = 120/1.001+1
+do local refresh_rate = 60/1.001
+   cvar.fps_max = refresh_rate*2+1 end
 cvar.glow_outline_effect_enable = 1
 cvar.hud_classautokill = 0
 cvar.hud_combattext = 1
@@ -218,7 +249,7 @@ cvar.tf_backpack_page_button_delay = 0
 cvar.tf_dingaling_volume = 1
 cvar.tf_dingalingaling = 1
 cvar.tf_hud_target_id_disable_floating_health = 1
-cvar.tf_remember_activeweapon = 1 -- for consistency with crosshairs (did this work??)
+cvar.tf_remember_activeweapon = 1
 cvar.tf_respawn_on_loadoutchanges = 0
 cvar.tf_scoreboard_mouse_mode = 2
 cvar.tf_scoreboard_ping_as_text = 1
@@ -233,6 +264,24 @@ cvar.cl_crosshair_red = 255
 cvar.cl_crosshair_green = 0
 cvar.cl_crosshair_blue = 255
 
+local checkwm = function ()
+	local use_world_model = 1
+	if class == 'sniper' and slot == 1 then
+		use_world_model = 0 -- huntsman
+	end
+	if class == 'spy' then
+		use_world_model = 0 -- cloak
+	end
+	cvar.cl_first_person_uses_world_model = use_world_model
+end
+add_listener('classchange', checkwm)
+add_listener('slotchange', checkwm)
+
+-- sto = 20
+-- lux = 47
+cvar.tf_mm_custom_ping_enabled = 1
+cvar.tf_mm_custom_ping = 35
+
 --------------------------------------------------------------------------------
 
 -- binds
@@ -241,135 +290,157 @@ cvar.cl_crosshair_blue = 255
 
 cmd.unbindall()
 
-bind("mouse1",			attack1_dn, attack1_up)
-bind("mouse2",			attack2_dn, attack2_up)
-bind("mouse3",			attack3_dn, attack3_up)
-bind("mouse4",			"voicemenu 0 7") -- y*s
-bind("mouse5",			"voicemenu 0 6") -- n*
-bind("mwheeldown",		invnext)
-bind("mwheelup",		invprev)
+bind('mouse1',			attack1_dn, attack1_up)
+bind('mouse2',			attack2_dn, attack2_up)
+bind('mouse3',			attack3_dn, attack3_up)
+bind('mouse4',			'voicemenu 0 7') -- y*s
+bind('mouse5',			'voicemenu 0 6') -- n*
+bind('mwheeldown',		invnext)
+bind('mwheelup',		invprev)
 
-bind("escape",			"cancelselect")
-bind("f1",			"incrementvar net_graph 0 6 6")
-bind("f2",			"screenshot")
-bind("f3",			"")
-bind("f4",			"player_ready_toggle")
-bind("f5",			"")
-bind("f6",			"")
-bind("f7",			"")
-cmd.bind("f8",			"exec cfgfs/buffer")
-cmd.bind("f9",			"exec cfgfs/buffer")
-bind("f10",			"toggleconsole")
-bind("f11",			"")
-bind("f12",			"")
+bind('escape',			'cancelselect')
+bind('f1',			'incrementvar net_graph 0 6 6')
+bind('f2',			'screenshot')
+bind('f3',			'')
+bind('f4',			'player_ready_toggle')
+bind('f5',			'')
+bind('f6',			'')
+bind('f7',			'')
+cmd.bind('f8',			'exec cfgfs/buffer')
+cmd.bind('f9',			'exec cfgfs/buffer')
+bind('f10',			function ()
+				    local old = tonumber(cvar.con_enable)
+				    cvar.con_enable = 1
+				    cmd.toggleconsole()
+				    cvar.con_enable = old
+				end)
+cmd.bind('f11',			'exec cfgfs/buffer')
+bind('f12',			'')
 
-bind("scrolllock",		"")
-bind("pause",			"")
+bind('scrolllock',		'')
+bind('pause',			'')
 
-bind("\\",			"+use_action_slot_item")
-bind("1",			slotcmd(1))
-bind("2",			slotcmd(2))
-bind("3",			slotcmd(3))
-bind("4",			slotcmd(4))
-bind("5",			slotcmd(5))
-bind("6",			slotcmd(6))
-bind("7",			slotcmd(7))
-bind("8",			slotcmd(8))
-bind("9",			slotcmd(9))
-bind("0",			slotcmd(10))
-bind("=",			"")
-bind("[",			"")
-bind("backspace",		"")
+bind('\\',			'+use_action_slot_item')
+bind('1',			slotcmd(1))
+bind('2',			slotcmd(2))
+bind('3',			slotcmd(3))
+bind('4',			slotcmd(4))
+bind('5',			slotcmd(5))
+bind('6',			slotcmd(6))
+bind('7',			slotcmd(7))
+bind('8',			slotcmd(8))
+bind('9',			slotcmd(9))
+bind('0',			slotcmd(10))
+bind('=',			'')
+bind('[',			'')
+bind('backspace',		'')
 
-bind("ins",			"")
-bind("home",			"")
-bind("pgup",			"")
+bind('ins',			'')
+bind('home',			'')
+bind('pgup',			'')
 
-bind("tab",			"+showscores;cl_showfps 2;cl_showpos 1",
-           			"-showscores;cl_showfps 0;cl_showpos 0")
+bind('tab',			'+showscores;cl_showfps 2;cl_showpos 1',
+           			'-showscores;cl_showfps 0;cl_showpos 0')
 
-bind("q",			cmd.fixme)
-bind("w",			nullcancel_pair('w', 's', 'forward', 'back'))
-bind("e",			"voicemenu 0 0")
-cmd.bind("r",			"+reload") -- can't change disguise team otherwise
-bind("t",			"")
+bind('q',			cmd.fixme)
+bind('w',			nullcancel_pair('w', 's', 'forward', 'back'))
+bind('e',			'voicemenu 0 0')
+cmd.bind('r',			'+reload') -- can't change disguise team otherwise
+bind('t',			'')
 cmd.bind('y',			'say') -- can't open chat otherwise
 cmd.bind('u',			'say_team') -- can't open chat otherwise
-bind("i",			"callvote")
-bind("o",			"kill")
-bind("p",			"explode")
-bind("]",			"")
-bind("semicolon",		"")
-bind("enter",			"")
+bind('i',			'callvote')
+bind('o',			'kill')
+bind('p',			'explode')
+bind(']',			'')
+bind('semicolon',		'')
+bind('enter',			'')
 
-bind("del",			"")
-bind("end",			"")
-bind("pgdn",			"")
+bind('del',			'')
+bind('end',			'')
+bind('pgdn',			'')
 
-bind("capslock",		"")
-bind("a",			nullcancel_pair('a', 'd', 'moveleft', 'moveright'))
-bind("s",			nullcancel_pair('s', 'w', 'back', 'forward'))
-bind("d",			nullcancel_pair('d', 'a', 'moveright', 'moveleft'))
-bind("f",			"+inspect")
-cmd.bind("g",			"+taunt") -- can't use normal taunt from menu otherwise
-cmd.bind("h",			"lastinv") -- can't cancel taunt menu otherwise
-bind("j",			"cl_trigger_first_notification")
-bind("k",			"cl_decline_first_notification")
-bind("l",			"dropitem")
-bind("semicolon",		"")
-bind("'",			"")
-bind("/",			"")
+bind('capslock',		'')
+bind('a',			nullcancel_pair('a', 'd', 'moveleft', 'moveright'))
+bind('s',			nullcancel_pair('s', 'w', 'back', 'forward'))
+bind('d',			nullcancel_pair('d', 'a', 'moveright', 'moveleft'))
+bind('f',			'+inspect')
+cmd.bind('g',			'+taunt') -- can't use normal taunt from menu otherwise
+cmd.bind('h',			'lastinv') -- can't cancel taunt menu otherwise
+bind('j',			'cl_trigger_first_notification')
+bind('k',			'cl_decline_first_notification')
+bind('l',			'dropitem')
+bind('semicolon',		'')
+bind("'",			'')
+bind('/',			'')
 
-bind("shift",			mod_dn, mod_up)
-bind("z",			"voice_menu_1")
-bind("x",			"voice_menu_2")
-bind("c",			"voice_menu_3")
-bind("v",			"noclip")
-bind("b",			"lastdisguise")
-bind("n",			"open_charinfo_backpack")
-bind("m",			"open_charinfo_direct")
-bind(",",			"changeclass")
-bind(".",			"changeteam")
-bind("-",			"")
-bind("rshift",			"")
+bind('shift',			mod_dn, mod_up)
+bind('z',			'voice_menu_1')
+bind('x',			'voice_menu_2')
+bind('c',			'voice_menu_3')
+bind('v',			'noclip')
+bind('b',			'lastdisguise')
+bind('n',			'open_charinfo_backpack')
+bind('m',			'open_charinfo_direct')
+bind(',',			'changeclass')
+bind('.',			'changeteam')
+bind('-',			'')
+bind('rshift',			'')
 
-bind("ctrl",			"+duck")
-bind("lwin",			"")
-bind("alt",			"+strafe")
-bind("space",			jump_dn,
+do
+
+local lol = nil
+
+fn_dn = function ()
+	if lol then return end
+	local t = {} lol = t
+	while true do
+		cfg('destroy 3;build 3')
+		wait2(100)
+		if lol ~= t then break end
+	end
+end
+fn_up = function ()
+	lol = nil
+end
+
+end
+
+bind('ctrl',			'+duck')
+bind('lwin',			'')
+bind('alt',			'+strafe')
+bind('space',			jump_dn,
              			jump_up)
-bind("ralt",			"")
-bind("rwin",			"")
-cmd.bind("app",			"exec cfgfs/buffer")
-bind("rctrl",			"")
+bind('ralt',			'')
+bind('rwin',			'')
+bind('app',			'')
+bind('rctrl',			'')
 
-bind("uparrow",			"")
-bind("downarrow",		"")
-bind("leftarrow",		"")
-bind("rightarrow",		"")
+bind('uparrow',			'')
+bind('downarrow',		'')
+bind('leftarrow',		'')
+bind('rightarrow',		'')
 
-bind("numlock",			"")
-bind("kp_slash",		"")
-bind("kp_multiply",		"")
-bind("kp_minus",		"")
+bind('numlock',			'')
+bind('kp_slash',		'')
+bind('kp_multiply',		'')
+bind('kp_minus',		'')
 
-bind("kp_home",			"") -- 7
-bind("kp_uparrow",		"") -- 8
-bind("kp_pgup",			"") -- 9
-bind("kp_plus",			"")
+bind('kp_home',			'') -- 7
+bind('kp_uparrow',		'') -- 8
+bind('kp_pgup',			'') -- 9
+bind('kp_plus',			'')
 
-bind("kp_leftarrow",		"") -- 4
-bind("kp_5",			"") -- 5
-bind("kp_rightarrow",		"") -- 6
+bind('kp_leftarrow',		'') -- 4
+bind('kp_5',			'') -- 5
+bind('kp_rightarrow',		'') -- 6
 
-bind("kp_end",			"") -- 1
-bind("kp_downarrow",		"") -- 2
-bind("kp_pgdn",			"") -- 3
-bind("kp_enter",		"")
+bind('kp_end',			'') -- 1
+bind('kp_downarrow',		'') -- 2
+bind('kp_pgdn',			'') -- 3
+bind('kp_enter',		'')
 
-bind("kp_ins",			"")
-bind("kp_del",			"")
-
-cmd.cfgfs_init = "exec cfgfs/init"
+bind('kp_ins',			'')
+bind('kp_del',			'')
 
 cmd.echo('</script.lua>')

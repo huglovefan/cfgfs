@@ -6,10 +6,6 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 
-#define THE_SCRIPT "./script.lua"
-#define CALL_BEFORE_BUFFER_SWAP "_reload_1"
-#define CALL_AFTER_BUFFER_SWAP "_reload_2"
-
 // -----------------------------------------------------------------------------
 
 static pthread_t thread = 0;
@@ -21,8 +17,8 @@ static void *cfgfs_inotify(void *ud) {
 	set_thread_name("cf_lua_reloader");
 	lua_State *L = (lua_State *)ud;
 	char buf[sizeof(struct inotify_event) + PATH_MAX + 1];
-	while (1) {
-		g_wd = inotify_add_watch(g_fd, THE_SCRIPT, IN_MODIFY);
+	for (;;) {
+		g_wd = inotify_add_watch(g_fd, (getenv("CFGFS_SCRIPT") ?: "./script.lua"), IN_MODIFY);
 		// todo: apparently this may (or may not) be leaking fds but doing it the right way didn't work when i first wrote it and i didn't change it after that so it's still broken but i wrote that other thing where it worked so i should try to do that here too maybe
 		ssize_t rv = read(g_fd, buf, sizeof(buf));
 		if (rv <= 0) break;
@@ -30,10 +26,10 @@ static void *cfgfs_inotify(void *ud) {
 		LUA_LOCK();
 		buffer_list_reset(&buffers);
 		buffer_list_reset(&init_cfg);
-		lua_getglobal(L, CALL_BEFORE_BUFFER_SWAP);
+		lua_getglobal(L, "_reload_1");
 		 lua_call(L, 0, 1);
 		buffer_list_swap(&buffers, &init_cfg);
-		  lua_getglobal(L, CALL_AFTER_BUFFER_SWAP);
+		  lua_getglobal(L, "_reload_2");
 		  lua_rotate(L, -2, 1);
 		lua_call(L, 1, 0);
 		LUA_UNLOCK();

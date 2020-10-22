@@ -28,7 +28,7 @@ void cli_thread_stop(void);
 	do {  \
 		pthread_mutex_lock(&cli_mutex); \
 		char *tmp_line_buffer = NULL; \
-		int tmp_point = -1; /* silence "-Wconditional-uninitialized" false positive */ \
+		int tmp_point = -1; /* assign to silence "-Wconditional-uninitialized" false positive */ \
 		if (likely(cli_reading_line)) { \
 			int tmp_len = rl_end; \
 			tmp_line_buffer = alloca(tmp_len+1); \
@@ -51,6 +51,13 @@ void cli_thread_stop(void);
 	} while (0)
 
 #define cli_println(fmt, ...) \
+	do { \
+		cli_lock_stdout(); \
+		fprintf(stdout, fmt "\n", ##__VA_ARGS__); \
+		cli_unlock_stdout(); \
+	} while (0)
+
+#define cli_eprintln(fmt, ...) \
 	do { \
 		cli_lock_stdout(); \
 		fprintf(stderr, fmt "\n", ##__VA_ARGS__); \

@@ -6,6 +6,7 @@
 #include <sys/inotify.h>
 
 #include "cli.h"
+#include "vcr.h"
 
 // -----------------------------------------------------------------------------
 
@@ -27,7 +28,7 @@ static char linebuf[0xffff];
 static char *p;
 
 static void logtail_barf(void) {
-	while (true) {
+	for (;;) {
 		int c = fgetc(logfile);
 		if (unlikely(c == EOF)) {
 			clearerr(logfile); // forget eof
@@ -35,6 +36,14 @@ static void logtail_barf(void) {
 		}
 		if (unlikely(c == '\n')) {
 			*p = '\0';
+			{
+			double tm = vcr_get_timestamp();
+			vcr_event {
+				vcr_add_string("what", "game_console_output");
+				vcr_add_string("text", linebuf);
+				vcr_add_double("timestamp", tm);
+			}
+			}
 			cli_println("%s", linebuf);
 			p = linebuf;
 			continue;
@@ -63,6 +72,11 @@ void logtail_start(const char *gamedir) {
 	if (thread != 0) return;
 
 	snprintf(logpath, sizeof(logpath), "%s/console.log", gamedir);
+
+	// create if it doesn't exist
+	logfile = fopen(logpath, "a");
+	if (logfile != NULL) fclose(logfile);
+
 	logfile = fopen(logpath, "r");
 	if (logfile == NULL) {
 		Dbg("fopen: %s", strerror(errno));
@@ -108,12 +122,7 @@ void logtail_stop(void) {
 
 	int fd = exchange(int, in_fd, -1);
 	int wd = exchange(int, in_wd, -1);
-	// todo:
-	// this isn't really atomic
-	// clang had a builtin atomic exchange()-like funciton but it didn't like _Atomic
-	// what 2 do
-	// does atomicity even matter here?
-	// could you cast it to a non-atomic pointer?
+	// is this safe??
 
 	inotify_rm_watch(fd, wd);
 	close(wd);

@@ -15,7 +15,8 @@ SRCS = src/buffer_list.c \
        src/logtail.c \
        src/lua.c \
        src/main.c \
-       src/reload_thread.c
+       src/reload_thread.c \
+       src/vcr.c
 
 EXE := $(shell basename -- "$$(pwd)")
 OBJS = $(SRCS:.c=.o)
@@ -27,7 +28,11 @@ CFLAGS += -Weverything \
           -Werror=implicit-function-declaration \
           -Wno-alloca \
           -Wno-atomic-implicit-seq-cst \
+          -Wno-c++98-compat \
           -Wno-disabled-macro-expansion \
+          -Wno-format-nonliteral \
+          -Wno-gnu-auto-type \
+          -Wno-gnu-conditional-omitted-operand \
           -Wno-gnu-statement-expression \
           -Wno-gnu-zero-variadic-macro-arguments \
           -Wno-language-extension-token \
@@ -52,6 +57,11 @@ LIBS += -llua -ldl -lm
 CFLAGS += $(shell pkg-config --cflags fuse3)
 LIBS   += $(shell pkg-config --libs   fuse3)
 CPPFLAGS += -DFUSE_USE_VERSION=35
+
+# vcr.c
+ifneq ($(VCR),)
+ CPPFLAGS += -DWITH_VCR
+endif
 
 # ------------------------------------------------------------------------------
 
@@ -81,33 +91,44 @@ $(EXE): $(OBJS)
 .c.o:
 	$(CCACHE) $(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
 
-tf2sim: tf2sim.cpp
-	g++ -O2 $^ -o $@
-
 clean:
-	rm -- $(EXE) $(DEPS) $(OBJS) core.[0-9]* vgcore.[0-9]* *.profdata *.profraw
+	rm -f -- $(EXE) $(DEPS) $(OBJS) core.[0-9]* vgcore.[0-9]* *.profdata *.profraw *.log
+
+libvcr.so:
+	clang -O2 -shared -fPIC libvcr.c -o libvcr.so -lpthread
 
 # ------------------------------------------------------------------------------
 
-GAMEDIR := ~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf
-MNTPNT := $(GAMEDIR)/custom/!cfgfs/cfg
+MNTLNK := mnt
 
-MNTPNT2 := mnt
+TF2MNT := ~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg
+FOFMNT := ~/.local/share/Steam/steamapps/common/Fistful\ of\ Frags/fof/custom/!cfgfs/cfg
 
-# start in game directory
+# start in game (tf2) directory
 start: cfgfs
 	@set -e; \
-	fusermount -u $(MNTPNT) || true; \
-	fusermount -u $(MNTPNT2) || true; \
-	! [ -d $(MNTPNT2) -a ! -L $(MNTPNT2) ] || rmdir $(MNTPNT2); \
-	! [ ! -e $(MNTPNT2) ] || ln -fs $(MNTPNT) $(MNTPNT2); \
-	exec ./cfgfs $(MNTPNT)
+	mount -t fuse.cfgfs | grep -Po ' on \K(.+)(?= type )' | xargs -rd'\n' fusermount -u; \
+	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
+	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
+	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
+	ln -fs $(TF2MNT) $(MNTLNK); \
+	exec ./cfgfs $(TF2MNT)
+
+# start in game (fof) directory
+startfof: cfgfs
+	@set -e; \
+	mount -t fuse.cfgfs | grep -Po ' on \K(.+)(?= type )' | xargs -rd'\n' fusermount -u; \
+	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
+	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
+	[ -d $(FOFMNT) ] || mkdir -p $(FOFMNT); \
+	ln -fs $(FOFMNT) $(MNTLNK); \
+	CFGFS_SCRIPT=./script_fof.lua exec ./cfgfs $(FOFMNT)
 
 # start it here
 start2: cfgfs
 	@set -e \
-	fusermount -u $(MNTPNT) || true; \
-	fusermount -u $(MNTPNT2) || true; \
-	! [ -L $(MNTPNT2) ] || rm -f $(MNTPNT2); \
-	! [ ! -e $(MNTPNT2) ] || mkdir $(MNTPNT2); \
-	exec ./cfgfs $(MNTPNT2)
+	mount -t fuse.cfgfs | grep -Po ' on \K(.+)(?= type )' | xargs -rd'\n' fusermount -u; \
+	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
+	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
+	mkdir -p $(MNTLNK); \
+	exec ./cfgfs $(MNTLNK)

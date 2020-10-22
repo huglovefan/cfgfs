@@ -125,20 +125,29 @@ static char badchars[256];
 __attribute__((constructor))
 static void _init_badchars(void) {
 	for (size_t c = 0; c < sizeof(badchars); c++) badchars[c] = 1;
-	badchars['+'] = 0;
-	badchars['-'] = 0;
-	badchars['.'] = 0;
-	badchars['/'] = 0;
-	badchars['_'] = 0;
-	for (int c = '0'; c <= '9'; c++) badchars[c] = 0;
-	for (int c = 'A'; c <= 'Z'; c++) badchars[c] = 0;
-	for (int c = 'a'; c <= 'z'; c++) badchars[c] = 0;
+#define ok_range(from, to) for (int i = from; i <= to; i++) badchars[i] = 0
+	badchars[33] = 0;
+	ok_range(35, 38);
+	ok_range(42, 46);
+	ok_range(48, 57);
+	ok_range(60, 122);
+	badchars[124] = 0;
+	badchars[126] = 0;
+	badchars[127] = 0;
+#undef ok_range
+	// ^ numbers gotten using a script
+	// for each character c in 1-255:
+	// - cfgf('help %s', c..c)
+	// - check if the output is exactly 'help:  no cvar or command named '..c..c
+	// this should get all whitespace/separator/invalid characters
 }
 
 // https://code.woboq.org/userspace/glibc/string/strspn.c.html
 // i wonder if this is any better than just doing it normally
 // i wish there was a way to let the compiler choose the implementation
+// todo: benchmark now that vcr exists
 
+#if 1
 static bool str_is_ok(const char *restrict s, size_t sz) {
 	char b1 = 0, b2 = 0, b3 = 0, b4 = 0;
 	while (sz >= 4) {
@@ -158,6 +167,35 @@ static bool str_is_ok(const char *restrict s, size_t sz) {
 	default: __builtin_unreachable();
 	}
 }
+#else
+static bool str_is_ok(const char *restrict s, size_t sz) {
+	char b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, b7 = 0, b8 = 0;
+	while (sz >= 8) {
+		b1 = badchars[(int)s[0]];
+		b2 = badchars[(int)s[1]];
+		b3 = badchars[(int)s[2]];
+		b4 = badchars[(int)s[3]];
+		b5 = badchars[(int)s[4]];
+		b6 = badchars[(int)s[5]];
+		b7 = badchars[(int)s[6]];
+		b8 = badchars[(int)s[7]];
+		if (unlikely(b1|b2|b3|b4|b5|b6|b7|b8)) return 0;
+		sz -= 8;
+		s += 8;
+	}
+	switch (sz) {
+	case 7: b3 = badchars[(int)s[6]]; __attribute__((fallthrough));
+	case 6: b3 = badchars[(int)s[5]]; __attribute__((fallthrough));
+	case 5: b2 = badchars[(int)s[4]]; __attribute__((fallthrough));
+	case 4: b1 = badchars[(int)s[3]]; __attribute__((fallthrough));
+	case 3: b3 = badchars[(int)s[2]]; __attribute__((fallthrough));
+	case 2: b2 = badchars[(int)s[1]]; __attribute__((fallthrough));
+	case 1: b1 = badchars[(int)s[0]]; __attribute__((fallthrough));
+	case 0: return !(b1|b2|b3|b4|b5|b6|b7);
+	default: __builtin_unreachable();
+	}
+}
+#endif
 
 static int l_cmd(lua_State *L) {
 	char buf[max_line_length+8];
@@ -225,7 +263,7 @@ typeerr:
 toolong:
 	if (len > 40) len = 40;
 	buf[len] = '\0';
-	cli_println("warning: discarding too-long line: %s ...", buf);
+	cli_eprintln("warning: discarding too-long line: %s ...", buf);
 	return lua_print_backtrace(L);
 }
 
@@ -240,7 +278,7 @@ static int l_cfg(lua_State *L) {
 typeerr:
 	return luaL_error(L, "non-string argument passed to cfg()");
 toolong:
-	cli_println("warning: discarding too-long line: %.40s ...", s);
+	cli_eprintln("warning: discarding too-long line: %.40s ...", s);
 	return lua_print_backtrace(L);
 }
 
@@ -273,6 +311,12 @@ static int l_print(lua_State *L) {
 	const char *s = lua_tostring(L, 1);
 	if (unlikely(s == NULL)) return 0;
 	cli_println("%s", s);
+	return 0;
+}
+static int l_eprint(lua_State *L) {
+	const char *s = lua_tostring(L, 1);
+	if (unlikely(s == NULL)) return 0;
+	cli_eprintln("%s", s);
 	return 0;
 }
 
@@ -312,7 +356,7 @@ lua_State *lua_init(void) {
 
 	 lua_pushcfunction(L, l_print);
 	lua_setglobal(L, "_print");
-	 lua_pushcfunction(L, l_print);
+	 lua_pushcfunction(L, l_eprint);
 	lua_setglobal(L, "_eprint");
 
 	 lua_pushcfunction(L, l_init);
@@ -334,25 +378,28 @@ lua_State *lua_init(void) {
 
 #define ARRAYSIZE(a) (sizeof(a)/sizeof(*(a)))
 
-	lua_createtable(L, ARRAYSIZE(keys)-1, 1); lua_setglobal(L, "num2key");
+	lua_createtable(L, ARRAYSIZE(keys), 0); lua_setglobal(L, "num2key");
 	lua_createtable(L, 0, ARRAYSIZE(keys));   lua_setglobal(L, "key2num");
-	lua_createtable(L, 0, ARRAYSIZE(keys)*2); lua_setglobal(L, "bindfilenames");
+	lua_createtable(L, 0, ARRAYSIZE(keys)*4); lua_setglobal(L, "bindfilenames");
 
 	lua_getglobal(L, "num2key");
 	for (size_t i = 0; i < ARRAYSIZE(keys); i++) {
-		lua_pushinteger(L, (lua_Integer)i);
+		lua_pushinteger(L, (lua_Integer)i+1); // the number doesn't matter
 		lua_pushstring(L, keys[i]);
 		lua_settable(L, -3);
 	}
 	lua_pop(L, 1);
 
 	if (luaL_dostring(L, "\
-	for n = 0, #num2key do\
-		local key = num2key[n]\
-		local down = string.format('/cfgfs/keys/+%d.cfg', n)\
-		local up = string.format('/cfgfs/keys/-%d.cfg', n)\
-		bindfilenames[down] = {name = key, pressed = true}\
-		bindfilenames[up] = {name = key, pressed = false}\
+	for n, key in ipairs(num2key) do\
+		local down   = string.format('/cfgfs/keys/+%d.cfg', n)\
+		local up     = string.format('/cfgfs/keys/-%d.cfg', n)\
+		local toggle = string.format('/cfgfs/keys/^%d.cfg', n)\
+		local once   = string.format('/cfgfs/keys/@%d.cfg', n)\
+		bindfilenames[down]   = {name = key, type = 'down'}\
+		bindfilenames[up]     = {name = key, type = 'up'}\
+		bindfilenames[toggle] = {name = key, type = 'toggle'}\
+		bindfilenames[once]   = {name = key, type = 'once'}\
 		key2num[key] = n\
 	end\
 	") != LUA_OK) lua_error(L);

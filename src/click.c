@@ -7,11 +7,12 @@
 
 #include "macros.h"
 
-#define THE_KEY XK_F9
+#define THE_KEY XK_F11
 // - the only keyboard keys that work in the main menu are F1-F12
 // - TF2 has default binds for all of them except F8, F9 and F11
 // - F8 and F9 don't have any common associations while F11 is usually used for
 //   full screening something (don't want to accidentally press it)
+// -- upon further inspection, only F11 seems to work in itemtest
 
 static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 static Display *display;
@@ -48,11 +49,14 @@ end:
 
 void click(double ms) {
 	if (unlikely(display == NULL)) {
+		static int open_failed = 0;
+		if (unlikely(open_failed)) return;
 		pthread_mutex_lock(&click_lock);
 		display = XOpenDisplay(NULL);
-		if (display) keycode = XKeysymToKeycode(display, THE_KEY);
+		open_failed = (display == NULL);
+		if (!open_failed) keycode = XKeysymToKeycode(display, THE_KEY);
 		pthread_mutex_unlock(&click_lock);
-		if (unlikely(display == NULL)) {
+		if (unlikely(open_failed)) {
 			Dbg("failed to open display!");
 			return;
 		}

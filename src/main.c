@@ -16,6 +16,7 @@
 #include "buffers.h"
 #include "reload_thread.h"
 #include "logtail.h"
+#include "vcr.h"
 
 const size_t max_line_length = 510;
 const size_t max_cfg_size = 1048576;
@@ -32,7 +33,8 @@ __attribute__((cold))
 void main_stop(void) {
 	if (g_fuse_instance != NULL) {
 		fuse_session_exit(g_fuse_instance);
-		close(open(g_mountpoint, O_RDONLY)); // wake up
+		close(open(g_mountpoint, O_RDONLY));
+		// fuse_session_exit() only sets a flag, have to wake it up
 	}
 }
 
@@ -130,6 +132,8 @@ static int cfgfs_getattr(const char *path, struct stat *stbuf,
                          struct fuse_file_info *fi) {
 	(void)fi;
 V	Debug1("%s", path);
+	int rv = 0;
+	double tm = vcr_get_timestamp();
 
 	switch (have_file(path)) {
 	case 0xf:
@@ -139,30 +143,56 @@ V	Debug1("%s", path);
 		stbuf->st_mode = 0400|S_IFDIR;
 		break;
 	default:
-		return -ENOENT;
+		rv = -ENOENT;
+		goto end;
 	}
 
 	stbuf->st_size = reported_cfg_size;
 
-	// these affects how much is read() at once (details unclear)
+	// these affect how much is read() at once (details unclear)
 	stbuf->st_blksize = reported_cfg_size;
 	stbuf->st_blocks = 1;
-
-	return 0;
+end:
+	vcr_event {
+		vcr_add_string("what", "getattr");
+		vcr_add_string("path", path);
+		//vcr_add_integer("fd", (fi != NULL) ? (long long)fi->fh : -1);
+		vcr_add_integer("rv", (long long)rv);
+		vcr_add_double("timestamp", tm);
+	}
+	return rv;
 }
 
 __attribute__((hot))
 static int cfgfs_open(const char *path, struct fuse_file_info *fi) {
-	(void)fi;
 V	Debug1("%s", path);
+	int rv = 0;
+	double tm = vcr_get_timestamp();
 
 	switch (have_file(path)) {
 	case 0xf:
 	case 0xd:
-		return 0;
+#if defined(WITH_VCR)
+		{
+		static uint64_t handle = 0;
+		fi->fh = ++handle;
+		}
+#endif
+		break;
 	default:
-		return -ENOENT;
+		rv = -ENOENT;
+		break;
 	}
+	vcr_event {
+		vcr_add_string("what", "open");
+		vcr_add_string("path", path);
+		if (rv == 0) {
+			vcr_add_integer("fd", (long long)fi->fh);
+		}
+		vcr_add_integer("rv", (long long)rv);
+		vcr_add_double("timestamp", tm);
+	}
+	return rv;
 }
 
 #define starts_with(this, that) (strncmp(this, that, strlen(that)) == 0)
@@ -172,14 +202,24 @@ static int cfgfs_read(const char *path, char *buf, size_t size, off_t offset,
                       struct fuse_file_info *fi) {
 	(void)fi;
 V	Debug1("%s (size=%lu, offset=%lu)", path, size, offset);
+	int rv = 0;
+	double tm;
 
-	if (unlikely(offset != 0)) return 0; // not the first read() call?
-	assert(size >= reported_cfg_size); // won't need a second read() call
+	// the first call to read() is with size=(block) offset=0
+	// then if rv > 0, it makes a second call like size=(block) offset=(rv)
+	// we can detect that second call and do nothing since normally one read is enough
+	if (likely(offset == 0)) {
+		assert(size >= reported_cfg_size); // fits in one read
+	} else {
+		tm = vcr_get_timestamp();
+		goto end_unlocked;
+	}
 
 	// /unmask_next/ must not return buffer contents (can mess up the order)
 	bool silent = starts_with(path, "/cfgfs/unmask_next/");
 
 	LUA_LOCK();
+	tm = vcr_get_timestamp();
 
 	struct buffer fakebuf;
 	bool faked = false;
@@ -191,28 +231,52 @@ V	Debug1("%s (size=%lu, offset=%lu)", path, size, offset);
 	lua_call(L, 1, 0);
 
 	if (unlikely(silent)) {
-		size = 0;
-		goto end;
+		goto end_locked;
 	}
 
 	struct buffer *ent = buffer_list_grab_first_nonempty(&buffers);
 
 	if (unlikely(ent == NULL)) {
 		if (likely(faked)) buffer_list_remove_fake_buf(&buffers, &fakebuf);
-		size = 0;
-		goto end;
+		goto end_locked;
 	}
 
-	size = buffer_get_size(ent);
+	size_t outsize = buffer_get_size(ent);
+	rv = (int)outsize;
 
 	if (unlikely(!faked)) {
-		buffer_memcpy_to(ent, buf, size);
+		buffer_memcpy_to(ent, buf, outsize);
 		buffer_free(ent);
 	}
-end:
+end_locked:
 	LUA_UNLOCK();
-	return (int)size;
+end_unlocked:
+	vcr_event {
+		vcr_add_string("what", "read");
+		vcr_add_integer("size", (long long)size);
+		vcr_add_integer("offset", (long long)offset);
+		vcr_add_integer("fd", (long long)fi->fh);
+		vcr_add_integer("rv", (long long)rv);
+		assert(size >= (size_t)rv+1);
+		buf[(size_t)rv] = '\0'; // !!!
+		vcr_add_string("data", buf);
+		vcr_add_double("timestamp", tm);
+	}
+	return rv;
 }
+
+#if defined(WITH_VCR)
+static int cfgfs_release(const char *path, struct fuse_file_info *fi) {
+	(void)path;
+	double tm = vcr_get_timestamp();
+	vcr_event {
+		vcr_add_string("what", "release");
+		vcr_add_integer("fd", (long long)fi->fh);
+		vcr_add_double("timestamp", tm);
+	}
+	return 0;
+}
+#endif
 
 __attribute__((cold))
 static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
@@ -221,8 +285,9 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 
 	// https://libfuse.github.io/doxygen/structfuse__config.html
 	cfg->direct_io = 1;
-	cfg->set_gid = 1000;
-	cfg->set_uid = 1000;
+	//cfg->set_gid = (int)getegid();
+	//cfg->set_uid = (int)geteuid();
+	// ^ don't seem to work
 
 	 lua_getglobal(L, "cwd");
 	 const char *cwd = lua_tostring(L, -1);
@@ -252,6 +317,9 @@ static const struct fuse_operations cfgfs_oper = {
 	.getattr = cfgfs_getattr,
 	.open = cfgfs_open,
 	.read = cfgfs_read,
+#if defined(WITH_VCR)
+	.release = cfgfs_release,
+#endif
 	.init = cfgfs_init,
 };
 
@@ -260,27 +328,27 @@ int main(int argc, char **argv) {
 	set_thread_name("cfgfs_main");
 
 #ifdef SANITIZER
-	fprintf(stderr, "note: cfgfs was built with %s\n", SANITIZER);
+	fprintf(stderr, "NOTE: cfgfs was built with %s\n", SANITIZER);
 #endif
 
-	// PGO message needs to be carefully printed not to invalidate the profile
 	{
 		char *msg;
 #if defined(PGO) && PGO == 1
-		msg = "note: this is a PGO profiling build, rebuild with PGO=2 when finished\n";
+		msg = "NOTE: this is a PGO profiling build, rebuild with PGO=2 when finished\n";
 #else
-		msg = "\r";
+		msg = "\r"; // non-empty to avoid optimizing it out and breaking the profile
 #endif
 		fprintf(stderr, "%s", msg);
 	}
 
-D	fprintf(stderr, "note: debug code is enabled\n");
-V	fprintf(stderr, "note: verbose messages are enabled\n");
-VV	fprintf(stderr, "note: very verbose messages are enabled\n");
+D	fprintf(stderr, "NOTE: debug code is enabled\n");
+V	fprintf(stderr, "NOTE: verbose messages are enabled\n");
+VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
+#if defined(WITH_VCR)
+	fprintf(stderr, "NOTE: events are being logged to vcr.log\n");
+#endif
 
-	signal(SIGCHLD, SIG_IGN); // <-- what was this for?
-	// ^ something about lua
-	// did it make these signals? did they affect cfgfs?
+	signal(SIGCHLD, SIG_IGN); // zombie killer
 
 	// ---------------------------------------------------------------------
 
@@ -405,6 +473,7 @@ out3:
 out2:
 	fuse_destroy(fuse);
 out1:
+	vcr_save();
 	reload_thread_stop();
 	logtail_stop();
 	cli_thread_stop();

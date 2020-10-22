@@ -248,6 +248,10 @@ void buffer_list_append_from_that_to_this(struct buffer_list *self,
 	}
 }
 
+bool buffer_list_is_empty(const struct buffer_list *self) {
+	return (self->first == NULL || self->first->size == 0);
+}
+
 // -----------------------------------------------------------------------------
 
 void buffer_list_write_line(struct buffer_list *self, const char *s, size_t sz) {

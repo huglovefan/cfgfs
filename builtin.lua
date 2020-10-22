@@ -1,10 +1,12 @@
 assert(_print)
 println = function (fmt, ...) return _print(string.format(fmt, ...)) end
+assert(_eprint)
+eprintln = function (fmt, ...) return _eprint(string.format(fmt, ...)) end
 
 setmetatable(_G, {
 	__index = function (self, k)
-		println('warning: tried to access nonexistent variable %s', tostring(k))
-		println('%s', debug.traceback(nil, 2))
+		eprintln('warning: tried to access nonexistent variable %s', tostring(k))
+		eprintln('%s', debug.traceback(nil, 2))
 	end,
 })
 
@@ -26,11 +28,13 @@ end
 
 --------------------------------------------------------------------------------
 
-global = function (k, v)
-	local t = rawget(_G, k)
-	if t ~= nil then return t end
-	rawset(_G, k, v)
-	return v
+global = function (k, v2)
+	local v1 = rawget(_G, k)
+	if v1 ~= nil and not (type(v1) == 'table' and type(v2) == 'table' and v1._v ~= v2._v) then
+		return v1
+	end
+	rawset(_G, k, v2)
+	return v2
 end
 
 --------------------------------------------------------------------------------
@@ -67,23 +71,34 @@ do
 
 local init_settings = function ()
 	cfgfs = {
-		-- start fuse in single-threaded mode
+		-- run fuse in single-threaded mode
 		-- speedup of about 10%, but can cause lockups if something in
 		--  script.lua accesses the cfgfs mount from outside (as the
 		--  request won't be processed until the script returns)
 		fuse_singlethread = true,
 
 		init_on_reload = true,
+		-- there's no init_on_load because that would run before game configs
+		-- set something in init_after_cfg instead
+
 		init_before_cfg = {},
 		init_after_cfg = {
 			['comfig/modules_run.cfg'] = true, -- stop setting fps_max to 1000!!!!!
 		},
 
+		-- things not in cfg format
 		intercept_blacklist = {
+			-- tf2
 			['motd_entries.txt'] = true,
 			['mtp.cfg'] = true,
 			['server_blacklist.txt'] = true,
-			['valve.rc'] = true,
+			-- fof
+			['banned_ip.cfg'] = true,
+			['banned_user.cfg'] = true,
+			['pure_server_full.txt'] = true,
+			['server_blacklist.txt'] = true,
+			['settings.scr'] = true,
+			['user.scr'] = true,
 		},
 		intercept_blackhole = {
 			['comfig/echo.cfg'] = true,
@@ -96,6 +111,9 @@ local init_settings = function ()
 			['class'] = 'classchange',
 			['slot'] = 'slotchange',
 		},
+
+		-- avoid using alias command for games that don't have it (fof)
+		compat_noalias = false,
 	}
 end
 
@@ -124,6 +142,7 @@ cfg = assert(_cfg)
 
 cfgf = function (fmt, ...) return cfg(string.format(fmt, ...)) end
 
+-- TODO compat_noalias -- allow making functions in this table
 cmd = setmetatable(make_resetable_table(), {
 	__index = function (self, k)
 		local f = function (...) return cmd(k, ...) end
@@ -147,12 +166,46 @@ cmd = setmetatable(make_resetable_table(), {
 	__call = assert(_cmd),
 })
 
+-- want: something to silence the output of "help"
+-- con_filter_enable doesn't seem to apply until later for some reason
+
+--[[
+run_capturing_output = function (fn)
+	local f <close> = assert(io.open((gamedir or '.') .. '/console.log', 'r'))
+	f:seek('end')
+	local id = string.format('-capture%d', math.random(0xffffffff))
+	cmd('echo', id..'a')
+	fn()
+	cmd('echo', id..'b')
+	yield()
+	local on = false
+	local lines = {}
+	for l in f:lines() do
+		if on then
+			if l ~= id..'b ' then -- echo puts a space after it
+				lines[#lines+1] = l
+			else
+				on = false
+			end
+		else
+			if l == id..'a ' then
+				on = true
+			end
+		end
+	end
+	return lines
+end
+-- fixme: merge these
+-- probably use the old one (no math.random = simpler and better for vcr)
+]]
+
 cvar = setmetatable({}, {
 	__index = function (_, k)
 		return cvar({k})[k]
 	end,
 	__newindex = function (_, k, v)
-		return cmd(k, v)
+		-- ignore nil i guess
+		if v ~= nil then return cmd(k, v) end
 	end,
 	__call = function (_, t)
 		if type(t) == 'string' then
@@ -164,28 +217,38 @@ cvar = setmetatable({}, {
 			end
 			return
 		end
-		if gamedir then
-			-- want: something to silence the output of "help"
-			-- con_filter_enable doesn't seem to apply until later for some reason
-			local f <close> = io.open(gamedir .. '/console.log')
-			if not f then goto nolog end
-			f:seek('end')
-			for _, k in ipairs(t) do
-				cmd('help', k)
-			end
-			yield()
-			for l in f:lines() do
-				local mk, mv = l:match('^"([^"]+)" = "([^"]*)')
-				if mk then
-					t[mk] = mv
-				end
-			end
-		else
-			goto nolog
+		local f <close> = assert(io.open((gamedir or '.') .. '/console.log', 'r'))
+		f:seek('end')
+		for _, k in ipairs(t) do
+			cmd('help', k)
 		end
-		do return t end
-		::nolog::
-		println('warning: couldn\'t open console log, reading cvars will not work')
+		yield()
+		for l in f:lines() do
+			local mk, mv = l:match('"([^"]+)" = "([^"]*)')
+			if mk then
+				t[mk] = mv
+			end
+			-- note: match pattern does not use "^"
+			-- due to mysteries, console output in source sometimes
+			--  comes up jumbled with the order of words messed up
+			-- like
+			--[[
+				] help con_enable
+				 archive"con_enable" = "1"
+				 ( def. "0" ) - Allows the console to be activated.
+				] help con_enable
+				 - Allows the console to be activated.
+				"con_enable" = "1" ( def. "0" )
+				 archive
+				] help con_enable
+				 ( def. "0" )"con_enable" = "1"
+				 archive
+				 - Allows the console to be activated.
+			]]
+			-- etc etc
+			-- i wonder what causes it
+			-- the `"name" = "value"` part is luckily always intact
+		end
 		return t
 	end,
 })
@@ -195,15 +258,28 @@ cvar = setmetatable({}, {
 bind = function (key, cmd, cmd2)
 	local n = key2num[key]
 	if not n then
-		println('warning: tried to bind unknown key "%s"', key)
-		println('%s', debug.traceback(nil, 2))
+		eprintln('warning: tried to bind unknown key "%s"', key)
+		eprintln('%s', debug.traceback(nil, 2))
 		return
 	end
-	if not binds_down[key] then
+	if not cfgfs.compat_noalias then
+		if not binds_down[key] then
+			local cmd = _G.cmd
+			cmd.alias('+key'..n, 'exec', 'cfgfs/keys/+'..n..'.cfg')
+			cmd.alias('-key'..n, 'exec', 'cfgfs/keys/-'..n..'.cfg')
+			cmd.bind(key, '+key'..n)
+		end
+	else
 		local cmd = _G.cmd
-		cmd.alias('+key'..n, 'exec', 'cfgfs/keys/+'..n..'.cfg')
-		cmd.alias('-key'..n, 'exec', 'cfgfs/keys/-'..n..'.cfg')
-		cmd.bind(key, '+key'..n)
+		if cmd2 then
+			cmd.bind(key, '+jlook;exec cfgfs/keys/^'..n..'.cfg//')
+		else
+			cmd.bind(key, 'exec cfgfs/keys/@'..n..'.cfg')
+		end
+		-- (if cmd2 then ...)
+		-- the bind string needs to start with + to run something on key release too
+		-- +jlook is there because it does nothing and starts with +
+		-- "//" starts a comment to ignore excess arguments
 	end
 	-- check if it's a +toggle
 	if not cmd2 and type(cmd) ~= 'function' then
@@ -237,6 +313,19 @@ end
 -- todo: be careful with where i am calling these
 -- they need to be able to yield
 
+--[[
+
+these should be the events:
+
+classchange   a class config was executed
+slotchange*   weapon slot changed
+startup       fired after script.lua is executed for the first time
+reload        fired after script.lua is reloaded due to being modified
+
+more? are these even right?
+
+]]
+
 add_listener = function (name, cb)
 	events[name] = events[name] or {}
 	table.insert(events[name], cb)
@@ -268,9 +357,9 @@ local timeouts = make_resetable_table()
 
 yield = coroutine.yield
 
-wait = function (ms)
+--[[wait = function (ms) -- what was this for
 	return yield(sym_timeout, ms)
-end
+end]]
 
 wait2 = function (ms)
 	local t = _ms()+ms
@@ -281,7 +370,7 @@ end
 local resume_co = function (id, co, arg)
 	local ok, rv, rv2 = coroutine.resume(co, arg)
 	if not ok then
-		println('error: %s', rv)
+		eprintln('error: %s', rv)
 		if co == main_co then
 			main_co = coroutine.create(main_fn)
 		end
@@ -308,10 +397,11 @@ local resume_co = function (id, co, arg)
 		return
 	end
 	if rv ~= nil then
-		println('warning: yielded unknown value %s', tostring(rv))
+		eprintln('warning: yielded unknown value %s', tostring(rv))
 	end
 
 	-- resume this next time i guess
+
 	if not id then
 		id = co_id
 		co_id = co_id + 1
@@ -319,6 +409,13 @@ local resume_co = function (id, co, arg)
 
 	coros[id] = co
 	return cmd.exec('cfgfs/resume/'..id)
+end
+
+-- adds a new coroutine to the machine
+spinoff = function (fn, ...)
+	local id = co_id
+	co_id = co_id + 1
+	return resume_co(id, coroutine.create(fn), ...)
 end
 
 local run_timeouts = function ()
@@ -357,7 +454,13 @@ main_fn = function (path)
 	local ok, rv = xpcall(function ()
 		local path = path
 		while true do
-			exec_path(path)
+			if type(path) == 'string' then
+				exec_path(path)
+			elseif type(path) == 'function' then
+				path()
+			else
+				return error('main_fn: path has wrong type')
+			end
 
 			-- was yielded?
 			if main_co ~= coroutine.running() then
@@ -368,7 +471,7 @@ main_fn = function (path)
 		end
 	end, debug.traceback)
 	if not ok then
-		println('error: %s', rv)
+		eprintln('error: %s', rv)
 	end
 end
 -- ^ want: similar one for firing an event
@@ -382,13 +485,13 @@ exec_path = function (path)
 	-- keybind?
 	local t = bindfilenames[path]
 	if t then
-		local b = binds_down
-		if not t.pressed then
-			b = binds_up
+		if t.type == 'down' then
+			return binds_down[t.name]()
+		elseif t.type == 'up' then
+			return binds_up[t.name]()
+		else
+			return error('exec_path: wrong type of bind')
 		end
-
-		-- we know it's a function here
-		return b[t.name]()
 	end
 
 	path = assert(path:after('/'))
@@ -402,7 +505,7 @@ exec_path = function (path)
 			local id = tonumber(m)
 			local co = id and coros[id]
 			if not co then
-				return println('warning: tried to resume nonexistent coroutine %s', m)
+				return eprintln('warning: tried to resume nonexistent coroutine %s', m)
 			end
 			coros[id] = nil
 			return resume_co(id, co)
@@ -422,7 +525,7 @@ exec_path = function (path)
 					return cfg(v)
 				end
 			else
-				return println('warning: tried to exec nonexistent alias %s', m)
+				return eprintln('warning: tried to exec nonexistent alias %s', m)
 			end
 		end
 
@@ -430,9 +533,12 @@ exec_path = function (path)
 		if m then
 			unmask_next[m] = 3
 			return
+			-- the next 3 times the FUSE code gets a request about this config file,
+			--  we'll report that we don't have it so that source will find and exec the real one instead
+			-- has to be 3 because source stats configs twice before opening them for reading
 		end
 
-		println('warning: unknown cfgfs config "%s"', path)
+		eprintln('warning: unknown cfgfs config "%s"', path)
 	else
 		local m = path:before('.cfg') or path
 
@@ -462,24 +568,67 @@ _get_contents = function (path)
 	-- keybind?
 	local t = bindfilenames[path]
 	if t then
-		is_pressed[t.name] = t.pressed or nil
-
-		local b = binds_down
-		if not t.pressed then
-			b = binds_up
-		end
-
-		local v = b[t.name]
-		if v then
+		if t.type == 'down' then
+			is_pressed[t.name] = true
+			local v = binds_down[t.name]
+			if not v then goto skip_main end
 			if type(v) ~= 'function' then
 				cfg(v)
 				goto skip_main
 			end
 			goto do_main
+		elseif t.type == 'up' then
+			is_pressed[t.name] = nil
+			local v = binds_up[t.name]
+			if not v then goto skip_main end
+			if type(v) ~= 'function' then
+				cfg(v)
+				goto skip_main
+			end
+			goto do_main
+		elseif t.type == 'toggle' then
+			local pressed = (not is_pressed[t.name])
+			is_pressed[t.name] = pressed or nil
+			local b = binds_down
+			if not pressed then
+				b = binds_up
+			end
+			local v = b[t.name]
+			if not v then goto skip_main end
+			if type(v) ~= 'function' then
+				cfg(v)
+			else
+				if pressed then
+					resume_co(nil, main_co, string.format('/cfgfs/keys/+%d.cfg', key2num[t.name]))
+				else
+					resume_co(nil, main_co, string.format('/cfgfs/keys/-%d.cfg', key2num[t.name]))
+				end
+			end
+			goto skip_main
+		elseif t.type == 'once' then
+			local vd = binds_down[t.name]
+			local vu = binds_up[t.name]
+			if vd ~= nil then
+				if type(vd) ~= 'function' then
+					cfg(vd)
+				else
+					is_pressed[t.name] = true
+					resume_co(nil, main_co, string.format('/cfgfs/keys/+%d.cfg', key2num[t.name]))
+				end
+			end
+			is_pressed[t.name] = nil
+			if vu ~= nil then
+				if type(vu) ~= 'function' then
+					cfg(vu)
+				else
+					resume_co(nil, main_co, string.format('/cfgfs/keys/-%d.cfg', key2num[t.name]))
+				end
+			end
+			goto skip_main
+		else
+			return error('unknown bind type')
 		end
-
-		goto skip_main
-
+		-- ^ epic copypasta ^
 	end
 
 	if path == '/cfgfs/buffer.cfg' then
@@ -500,17 +649,69 @@ _get_contents = function (path)
 
 end
 
+-- relief for buggy toggle keys
+release_all_keys = function ()
+	for key in pairs(is_pressed) do
+		is_pressed[key] = nil
+		local vu = binds_up[key]
+		if vu ~= nil then
+			if type(vu) ~= 'function' then
+				cfg(vu)
+			else
+				cmd.exec(string.format('cfgfs/keys/-%d.cfg', key2num[key]))
+				-- we're (probably) in the coroutine so can't resume it here, need to use exec
+			end
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+
+local repl_fn = function (code)
+	local fn, err1 = load(code, 'input')
+	if fn then
+		return fn
+	end
+	-- note: ",1" at the end is so that we can get the values after the first nil
+	-- (is there no better way?)
+	local fn = load('return '..code..',1', 'input')
+	if fn then
+		return function ()
+			local t = {fn()}
+			for i = 1, #t do
+				t[i] = tostring(t[i]) or 'nil'
+			end
+			t[#t] = nil
+			return println('%s', table.concat(t, '\t'))
+		end
+	end
+	return nil, err1
+end
+
+_cli_input = function (line)
+	if line:find('^!') then
+		local fn, err = repl_fn(line:sub(2))
+		if not fn then
+			eprintln('%s', err)
+			return
+		end
+		return resume_co(nil, main_co, fn)
+	else
+		return cfg(line)
+	end
+end
+
 --------------------------------------------------------------------------------
 
 local bell = function () return io.stderr:write('\a') end
 
 -- reload and re-run script.lua
 _reload_1 = function ()
-	local ok, err = loadfile('./script.lua')
+	local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or './script.lua')
 	if not ok then
 		bell()
-		println('error: %s', err)
-		println('failed to reload script.lua!')
+		eprintln('error: %s', err)
+		eprintln('failed to reload script.lua!')
 		return false
 	end
 	local script = ok
@@ -520,8 +721,8 @@ _reload_1 = function ()
 	local ok, err = xpcall(script, debug.traceback)
 	if not ok then
 		bell()
-		println('error: %s', err)
-		println('script.lua was reloaded with an error!')
+		eprintln('error: %s', err)
+		eprintln('script.lua was reloaded with an error!')
 		return true
 	end
 
@@ -544,31 +745,31 @@ _reload_2 = function (ok)
 		if global(name) then
 			local ok, err = xpcall(function () return fire_event(evt, global(name)) end, debug.traceback)
 			if not ok then
-				println('error: %s', err)
+				eprintln('error: %s', err)
 			end
 		end
 	end
 
 	local ok, err = xpcall(function () return fire_event('reload') end, debug.traceback)
 	if not ok then
-		println('error: %s', err)
+		eprintln('error: %s', err)
 	end
 end
 
 _fire_startup = function ()
 	local ok, err = xpcall(function () return fire_event('startup') end, debug.traceback)
 	if not ok then
-		println('error: %s', err)
+		eprintln('error: %s', err)
 	end
 end
 
 --------------------------------------------------------------------------------
 
-local ok, err = loadfile('./script.lua')
+local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or './script.lua')
 if not ok then
 	bell()
-	println('error: %s', err)
-	println('failed to load script.lua!')
+	eprintln('error: %s', err)
+	eprintln('failed to load script.lua!')
 	return false
 end
 local script = ok
@@ -576,8 +777,8 @@ local script = ok
 local ok, err = xpcall(script, debug.traceback)
 if not ok then
 	bell()
-	println('error: %s', err)
-	println('failed to load script.lua!')
+	eprintln('error: %s', err)
+	eprintln('failed to load script.lua!')
 	return false
 end
 
