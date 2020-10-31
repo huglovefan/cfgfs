@@ -37,14 +37,8 @@ void buffer_list_append_from_that_to_this(struct buffer_list *self, const struct
 void buffer_list_reset(struct buffer_list *self);
 void buffer_list_swap(struct buffer_list *self, struct buffer_list *bl);
 
-// debugging
-void buffer_list_sanity_check(const struct buffer_list *self);
-void buffer_list_print_it(const struct buffer_list *self);
-
 bool buffer_list_is_empty(const struct buffer_list *self);
 
 // -----------------------------------------------------------------------------
 
 void buffer_list_write_line(struct buffer_list *self, const char *s, size_t sz);
-
-// -----------------------------------------------------------------------------

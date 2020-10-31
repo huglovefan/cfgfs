@@ -1,34 +1,27 @@
 #pragma once
 
-#include <sys/prctl.h> // prctl() for set_thread_name
-
-#include "cli.h" // cli_eprintln() for debug printing
-
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
-#define assume(x) ({ __auto_type _assume_x = (x); if (!_assume_x) __builtin_unreachable(); _assume_x; })
-
-#define V  if (0)
-#define VV if (0)
-#define D  if (0)
-
-#define Debug1(fmt, ...) cli_eprintln("%s: " fmt, __func__, ##__VA_ARGS__)
-#define Debug(fmt, ...)  cli_eprintln(" %s: " fmt, __func__, ##__VA_ARGS__)
-
-#define Dbg(fmt, ...) cli_eprintln("%s: " fmt, __func__, ##__VA_ARGS__)
+#ifndef V
+ #define V if (0)
+#endif
+#ifndef VV
+ #define VV if (0)
+#endif
+#ifndef D
+ #define D if (0)
+#endif
 
 // https://en.cppreference.com/w/cpp/utility/exchange
 #define exchange(T, var, newval) ({ T oldval = var; var = newval; oldval; })
 
+// #include <sys/prctl.h>
 #define set_thread_name(s) \
+	do { \
 	_Static_assert(__builtin_strlen(s) <= 15, "thread name too long"); \
-	prctl(PR_SET_NAME, s, NULL, NULL, NULL)
-
-// -----------------------------------------------------------------------------
-
-#define once_(x, c) ({ static _Atomic(_Bool) _once_##c; if (__builtin_expect(!_once_##c++, 0)) { x; } })
-#define once(x) once_(x, __COUNTER__)
+	prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
+	} while (0)
 
 // -----------------------------------------------------------------------------
 
@@ -38,7 +31,7 @@
 #define STRINGIZE_DETAIL(x) #x
 #define STRINGIZE(x) STRINGIZE_DETAIL(x)
 
-#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#if defined(SANITIZER)
  extern void __sanitizer_print_stack_trace(void);
 #else
  #define __sanitizer_print_stack_trace()
@@ -47,7 +40,7 @@
 #define assert2(x, s) \
 	({ __auto_type _assert_rv = (x); \
 	   if (unlikely(!_assert_rv)) { \
-	       fprintf(stderr, EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __PRETTY_FUNCTION__, s); \
+	       fprintf(stderr, EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __func__, s); \
 	       __sanitizer_print_stack_trace(); \
 	       abort(); \
 	   } \

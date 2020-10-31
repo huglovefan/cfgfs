@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <unistd.h>
+#include <string.h>
 
 #pragma GCC diagnostic push
  #pragma GCC diagnostic ignored "-Wdocumentation"
@@ -14,15 +15,24 @@
 #include "buffer_list.h"
 #include "macros.h"
 #include "buffers.h"
-#include "reload_thread.h"
+#include "reloader.h"
 #include "logtail.h"
 #include "vcr.h"
+#include "attention.h"
+#include "cli_input.h"
+#include "cli_output.h"
 
 const size_t max_line_length = 510;
 const size_t max_cfg_size = 1048576;
 const size_t max_argc = 63;
 
+// how big we report config files to be.
+// one can contain less data than this but not more
+// * the lowest safe value is 529 (`max_line_length + strlen("\nexec cfgfs/buffer\n")`)
+//   but 1024 is the lowest value that still works well
 const size_t reported_cfg_size = 1024;
+
+_Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
 
 // -----------------------------------------------------------------------------
 
@@ -34,7 +44,7 @@ void main_stop(void) {
 	if (g_fuse_instance != NULL) {
 		fuse_session_exit(g_fuse_instance);
 		close(open(g_mountpoint, O_RDONLY));
-		// fuse_session_exit() only sets a flag, have to wake it up
+		// fuse_session_exit() only sets a flag, need to wake it up
 	}
 }
 
@@ -49,62 +59,72 @@ static lua_State *get_state(void) {
 
 // have_file: check if a file exists (and get its type)
 
-#define Eq(s) (strcmp(path, s) == 0)
-#define St(s) (strncmp(path, s, strlen(s)) == 0)
+static int have_file(const char *restrict path) {
 
-#define Dir(s) \
-	({ \
-		bool rv = false; \
-		if (St(s)) { \
-			if (likely(*(path+strlen(s)) == '/')) { path += strlen(s)+1; rv = true; } \
-			if (likely(*(path+strlen(s)) == '\0')) { return 0xd; } \
-		} \
-		rv; \
-	})
+	size_t len = strlen(path);
 
-static int have_file(const char *path) {
-
-	if (unlikely(Eq("/"))) return 0xd;
-	path += 1;
-
-	if (likely(Dir("cfgfs"))) {
-		// br*h
-		const char *c = strrchr(path, '.');
-		if (likely(c && strcmp(c+1, "cfg") == 0)) return 0xf;
-		else return 0xd;
+	if (likely(len >= strlen("/cfgfs"))) {
+		if (likely(*(path+strlen("/cfgfs")) == '/')) {
+			if (memcmp(path+len-strlen(".cfg"), ".cfg", sizeof(".cfg")) == 0) {
+				return 0xf;
+			} else {
+				return 0xd;
+			}
+		}
+		if (likely(*(path+strlen("/cfgfs")) == '\0')) return 0xd;
+	} else if (unlikely(len == 1)) {
+		return 0xd;
 	}
 
 	// basename contains no dot = assume directory
-	const char *lastslash = strrchr(path, '/');
-	const char *lastdot = strrchr(unlikely(lastslash != NULL) ? lastslash : path, '.');
-	if (unlikely(lastdot == NULL)) {
-		return 0xd;
+	// todo:
+	// could this just check if it ends with .cfg?
+	// has this thing ever worked for intercepting non-cfg files?
+	// it doesn't sound that useful
+	{
+	const char *p = path+len;
+	do {
+		switch (*--p) {
+		case '.': goto basename_contains_dot;
+		case '/': return 0xd;
+		}
+	} while (p != path);
 	}
+basename_contains_dot:
+
+	goto do_lua_check;
+after_lua_check:
+
+	if (len >= strlen("/")+strlen(".cfg") &&
+	    memcmp(path+len-strlen(".cfg"), ".cfg", sizeof(".cfg")) == 0) {
+		return 0xf;
+	}
+
+	return 0x0;
+do_lua_check:
 
 	LUA_LOCK();
 	lua_State *L = get_state();
 
-	 lua_getglobal(L, "unmask_next");
-	  lua_getfield(L, -1, path);
+	 lua_pushvalue(L, UNMASK_NEXT_IDX);
+	  lua_getfield(L, -1, path+1); // skip "/"
 	  int64_t cnt = lua_tointeger(L, -1);
-	 lua_pop(L, 1);
-	 if (unlikely(cnt != 0)) {
-		  lua_pushstring(L, path);
-		   if (likely(cnt != 1)) lua_pushinteger(L, cnt-1);
-		   else lua_pushnil(L);
-		 lua_settable(L, -3);
-		lua_pop(L, 1);
+	  if (unlikely(cnt != 0)) {
+		   lua_pushstring(L, path+1); // skip "/"
+		    lua_pushinteger(L, cnt-1);
+		  lua_rawset(L, -4);
+		lua_pop(L, 2);
 D		assert(stack_is_clean(L));
 		LUA_UNLOCK();
 		return 0x0;
-	 }
-	lua_pop(L, 1);
+	  }
+//	lua_pop(L, 2); // combined below
+//D	assert(stack_is_clean(L));
 
-	 lua_getglobal(L, "cfgfs");
-	  lua_getfield(L, -1, "intercept_blacklist");
-	   lua_getfield(L, -1, path);
-	   bool blacklisted = lua_toboolean(L, -1);
-	lua_pop(L, 3);
+	 lua_pushvalue(L, CFG_BLACKLIST_IDX);
+	  lua_getfield(L, -1, path+1); // skip "/"
+	  bool blacklisted = lua_toboolean(L, -1);
+	lua_pop(L, 2+2);
 D	assert(stack_is_clean(L));
 	if (unlikely(blacklisted)) {
 		LUA_UNLOCK();
@@ -112,18 +132,8 @@ D	assert(stack_is_clean(L));
 	}
 
 	LUA_UNLOCK();
-
-	if (likely(strcmp(lastdot+1, "cfg") == 0)) {
-		return 0xf;
-	}
-
-	return 0x0;
-
+	goto after_lua_check;
 }
-
-#undef Eq
-#undef St
-#undef Dir
 
 // -----------------------------------------------------------------------------
 
@@ -131,7 +141,7 @@ __attribute__((hot))
 static int cfgfs_getattr(const char *path, struct stat *stbuf,
                          struct fuse_file_info *fi) {
 	(void)fi;
-V	Debug1("%s", path);
+V	eprintln("cfgfs_getattr: %s", path);
 	int rv = 0;
 	double tm = vcr_get_timestamp();
 
@@ -140,18 +150,24 @@ V	Debug1("%s", path);
 		stbuf->st_mode = 0400|S_IFREG;
 		break;
 	case 0xd:
-		stbuf->st_mode = 0400|S_IFDIR;
+		stbuf->st_mode = 0404|S_IFDIR;
 		break;
 	default:
 		rv = -ENOENT;
 		goto end;
 	}
 
-	stbuf->st_size = reported_cfg_size;
-
 	// these affect how much is read() at once (details unclear)
-	stbuf->st_blksize = reported_cfg_size;
+	// less reads may be better, most reads output very little stuff
+	// this logic is in glibc (lua file reads work the same)
+	stbuf->st_size = reported_cfg_size;
+	stbuf->st_blksize = (reported_cfg_size-1);
 	stbuf->st_blocks = 1;
+
+	// with size=1024 blksize=1023 blocks=(any),
+	// the first read is 1024 and the second is 512
+	// second is 512 when "blksize >= 512 && blksize < 1024"
+	// for some reason
 end:
 	vcr_event {
 		vcr_add_string("what", "getattr");
@@ -165,7 +181,7 @@ end:
 
 __attribute__((hot))
 static int cfgfs_open(const char *path, struct fuse_file_info *fi) {
-V	Debug1("%s", path);
+V	eprintln("cfgfs_open: %s", path);
 	int rv = 0;
 	double tm = vcr_get_timestamp();
 
@@ -201,7 +217,7 @@ __attribute__((hot))
 static int cfgfs_read(const char *path, char *buf, size_t size, off_t offset,
                       struct fuse_file_info *fi) {
 	(void)fi;
-V	Debug1("%s (size=%lu, offset=%lu)", path, size, offset);
+V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 	int rv = 0;
 	double tm;
 
@@ -257,7 +273,7 @@ end_unlocked:
 		vcr_add_integer("offset", (long long)offset);
 		vcr_add_integer("fd", (long long)fi->fh);
 		vcr_add_integer("rv", (long long)rv);
-		assert(size >= (size_t)rv+1);
+		//assert(size >= (size_t)rv+1);
 		buf[(size_t)rv] = '\0'; // !!!
 		vcr_add_string("data", buf);
 		vcr_add_double("timestamp", tm);
@@ -292,18 +308,15 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	 lua_getglobal(L, "cwd");
 	 const char *cwd = lua_tostring(L, -1);
 	 if (chdir(cwd) != 0) {
-	 	perror("chdir");
+	 	eprintln("cfgfs_init: chdir: %s", strerror(errno));
 	 	goto abort;
 	 }
 	lua_pop(L, 1);
 
-	cli_thread_start(L);
-
-	 lua_getglobal(L, "gamedir");
-	 logtail_start(lua_tostring(L, -1));
-	lua_pop(L, 1);
-
-	reload_thread_start(L);
+	cli_input_init(L);
+	logtail_init(L);
+	reloader_init(L);
+	attention_init(L);
 
 	return (void *)L;
 abort:
@@ -325,7 +338,6 @@ static const struct fuse_operations cfgfs_oper = {
 
 __attribute__((cold))
 int main(int argc, char **argv) {
-	set_thread_name("cfgfs_main");
 
 #ifdef SANITIZER
 	fprintf(stderr, "NOTE: cfgfs was built with %s\n", SANITIZER);
@@ -369,9 +381,9 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 
 	if (opts.show_help) {
 		if (args.argv[0][0] != '\0') {
-			printf("usage: %s [options] <mountpoint>\n\n", args.argv[0]);
+			println("usage: %s [options] <mountpoint>", args.argv[0]);
 		}
-		printf("FUSE options:\n");
+		println("FUSE options:");
 		fuse_cmdline_help();
 		fuse_lib_help(&args);
 		res = 0;
@@ -379,7 +391,7 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 	}
 
 	if (!opts.show_help && !opts.mountpoint) {
-		fprintf(stderr, "error: no mountpoint specified\n");
+		eprintln("error: no mountpoint specified");
 		res = 2;
 		goto out1;
 	}
@@ -393,12 +405,15 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 	lua_State *L = lua_init();
 	g_L = L;
 
+	 lua_pushstring(L, AGPL_SOURCE_URL);
+	lua_setglobal(L, "agpl_source_url");
+
 	 lua_pushstring(L, opts.mountpoint);
 	lua_setglobal(L, "mountpoint");
 
 	if (luaL_loadfile(L, "./builtin.lua") != LUA_OK) {
-		fprintf(stderr, "error: %s\n", lua_tostring(L, -1));
-		fprintf(stderr, "failed to load builtin.lua!\n");
+		eprintln("error: %s", lua_tostring(L, -1));
+		eprintln("failed to load builtin.lua!");
 		res = 9;
 		goto out1;
 	}
@@ -407,11 +422,23 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 	lua_pop(L, 1);
 	assert(lua_gettop(L) == 0);
 
-	lua_pushnil(L);
+	// put some useful values on the stack
+	// constants from lua.h, grep for uses before changing
+
+	 lua_pushnil(L);
 	assert(lua_gettop(L) == HAVE_FILE_IDX);
 
-	lua_getglobal(L, "_get_contents");
+	  lua_getglobal(L, "_get_contents");
 	assert(lua_gettop(L) == GET_CONTENTS_IDX);
+
+	   lua_getglobal(L, "unmask_next");
+	assert(lua_gettop(L) == UNMASK_NEXT_IDX);
+
+	    lua_getglobal(L, "cfgfs");
+	     lua_getfield(L, -1, "intercept_blacklist");
+	     lua_rotate(L, -2, 1);
+	    lua_pop(L, 1);
+	assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
 
 	buffer_list_swap(&buffers, &init_cfg);
 
@@ -474,9 +501,9 @@ out2:
 	fuse_destroy(fuse);
 out1:
 	vcr_save();
-	reload_thread_stop();
-	logtail_stop();
-	cli_thread_stop();
+	cli_input_deinit();
+	reloader_deinit();
+	logtail_deinit();
 	if (g_L != NULL) {
 		if (LUA_TRYLOCK()) {
 			lua_close((lua_State *)g_L);

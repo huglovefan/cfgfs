@@ -1,6 +1,17 @@
 cmd.echo('<script.lua>')
 
-cfgfs.init_on_reload = not not gamedir
+cfgfs.game_window_title = 'Team Fortress 2 - OpenGL'
+cfgfs.init_after_cfg['comfig/modules_run.cfg'] = true
+cfgfs.intercept_blackhole['comfig/echo.cfg'] = true
+
+add_listener('attention', function (active)
+	local exes = 'chrome'
+	if active then
+		os.execute('kill -STOP $(pidof '..exes..')')
+	else
+		os.execute('kill -CONT $(pidof '..exes..')')
+	end
+end)
 
 --------------------------------------------------------------------------------
 
@@ -11,40 +22,110 @@ do
 class = global('class', 'scout')
 slot = global('slot', 1)
 
+-- mod = switch to that slot when holding shift
+-- skip = pretend this slot doesn't exist and prevent switching to it
+--        (slots >=4 can always be selected using number keys)
+-- ctrl+alt+[slot] = toggle skip on the slot
+-- ctrl+tab = switch between alternative crosshairs
 xhs = global('xhs', {
-	--               1            2            3      4      ... 5
-	scout        = { {f=6},       {f=5, s=22}, {f=4}, m=2 },
-	soldier      = { {f=6},       {f=7, s=24}, {f=4}, m=3 },
-	pyro         = { {f=5, s=28}, {f=7, s=24}, {f=4}, m=3 },
-	demoman      = { {f=2},       {f=7, s=24}, {f=4}, m=1 },
-	heavyweapons = { {f=3},       {f=7, s=24}, {f=4} },
+	scout        = { mod=2,
+	                 { {file=7, size=24}, -- shortstop
+	                   {file=6} }, -- scattergun
+	                 {file=5, size=22},
+	                 {file=4} },
+
+	soldier      = { mod=3,
+	                 {file=6},
+	                 {file=7, size=24},
+	                 {file=4} },
+
+	pyro         = { mod=3,
+	                 {file=5, size=28},
+	                 {file=7, size=24},
+	                 {file=4} },
+
+	demoman      = { mod=1,
+	                 {file=2},
+	                 {file=7, size=24},
+	                 {file=4} },
+
+	heavyweapons = { {file=3},
+	                 {file=7, size=24},
+	                 {file=4} },
+
 	-- build pda switches to melee on build
 	-- destruct pda remembers active slot
-	engineer     = { {f=6},       {f=5, s=22}, {f=4}, {sk=1, f=4}, {sk=1} },
-	medic        = { {f=5, s=24}, {f=7, s=24}, {f=4} },
-	sniper       = { {f=5, s=20}, {f=7, s=22}, {f=4} },
+	engineer     = { { {file=6},
+	                   {file=7, size=24} }, -- rescue ranger
+	                 {file=5, size=22},
+	                 {file=4},
+	                 {skip=1, file=4},
+	                 {skip=1} },
+
+	medic        = { {file=5, size=24},
+	                 {file=7, size=24},
+	                 {file=4} },
+
+	sniper       = { {file=5, size=20},
+	                 {file=7, size=22},
+	                 {file=4} },
+
 	-- disguise remembers active slot
-	spy          = { {f=5, s=20}, {f=7, s=24}, {f=4}, {sk=1} },
+	spy          = { {file=5, size=20},
+	                 {file=7, size=24},
+	                 {file=4},
+	                 {skip=1} },
+
 	_v = 1,
 })
+-- fix up slots that don't have alt. crosshairs to have a list of one of them
+for class, slots in pairs(xhs) do
+	if class == '_v' then goto next end
+	for n, slot in ipairs(slots) do
+		if not slot[1] then
+			slots[n] = {slot}
+			for _, k in ipairs({'skip'}) do
+				if slot[k] then
+					slots[n][k] = slot[k]
+					slot[k] = nil
+				end
+			end
+		end
+	end
+	::next::
+end
 
 local mod_prev = nil
 
 local xh_update = function (slot)
-	local t = xhs[class][slot]
+	local t = xhs[class][slot][1]
 	if not t then return end
-	if t.f then
-		cvar.cl_crosshair_file = 'crosshair'..t.f
-		cvar.cl_crosshair_scale = t.s or 32
+	if t.file then
+		cvar.cl_crosshair_file = 'crosshair'..t.file
+		cvar.cl_crosshair_scale = t.size or 32
 	end
 end
 add_listener('slotchange', xh_update)
 
-local do_slot = function (n, is_mod, noskip)
-	if not (n and xhs[class][n] and (noskip or not xhs[class][n].sk)) then
-		return cfg('slot6') -- makes the "selection failed" sound
+add_key_listener('tab', function (pressed)
+	if pressed and is_pressed['ctrl'] then
+		if #xhs[class][slot] > 1 then
+			table.insert(xhs[class][slot], xhs[class][slot][1])
+			table.remove(xhs[class][slot], 1)
+			return xh_update(slot)
+		else
+			return cfg('slot6') -- makes the "selection failed" sound
+		end
 	end
-	if not is_mod then slot = n end
+end)
+
+local do_slot = function (n, is_mod, noskip)
+	if not (n and xhs[class][n] and (noskip or not xhs[class][n].skip)) then
+		return cfg('slot6')
+	end
+	if not is_mod then
+		slot = n
+	end
 	mod_prev = nil
 	cfgf('slot%d', n)
 	fire_event('slotchange', n)
@@ -55,7 +136,7 @@ local getslot = function (slot, add)
 	local slmax = #xhs[class]
 	for i = 1, slmax-1 do
 		local n = ((slot-1+add*i)%slmax)+1
-		if not xhs[class][n].sk then
+		if not xhs[class][n].skip then
 			return n
 		end
 	end
@@ -64,8 +145,8 @@ end
 slotcmd = function (n)
 	return function ()
 		if is_pressed['ctrl'] and is_pressed['alt'] then
-			xhs[class][n].sk = (not xhs[class][n].sk) or nil
-			if n == slot and xhs[class][n].sk then
+			xhs[class][n].skip = (not xhs[class][n].skip) or nil
+			if n == slot and xhs[class][n].skip then
 				return do_slot(getslot(nil, 1))
 			end
 		end
@@ -80,9 +161,9 @@ invprev = function ()
 end
 
 mod_dn = function ()
-	local m = xhs[class].m
-	if not m or m == slot then return cfg('slot6') end
-	do_slot(m, true)
+	local mod = xhs[class].mod
+	if not mod or mod == slot then return cfg('slot6') end
+	do_slot(mod, true)
 	mod_prev = slot
 end
 mod_up = function ()
@@ -92,7 +173,6 @@ mod_up = function ()
 end
 
 add_listener('classchange', function (cls)
-	if cls == class then return end
 	class = cls
 	return do_slot(1)
 end)
@@ -116,6 +196,11 @@ local xh_update = function ()
 	if is_pressed['mouse3'] then
 		g, b = g~0xff, b~0xff
 	end
+	--[[
+	r, g, b = math.floor(r*brightness),
+	          math.floor(g*brightness),
+	          math.floor(b*brightness)
+	]]
 	cvar.cl_crosshair_red   = r
 	cvar.cl_crosshair_green = g
 	cvar.cl_crosshair_blue  = b
@@ -161,7 +246,7 @@ end
 local jump_dn = '+jump;slot6;spec_mode'
 local jump_up = '-jump'
 
-if 1 + 1 == 3 then
+if 1 + 1 == 2 then
 	local dn = 100
 	local jump = 697 -- 695? 697? 703? 706?
 	local jumping = nil
@@ -201,13 +286,19 @@ end
 
 cmd.qqq = 'quit'
 
-cmd.fortune = function ()
-	for line in io.popen('fortune | cowsay'):lines() do
-		cmd.echo(line)
+local wrap = function (sh)
+	return function ()
+		for line in io.popen(sh):lines() do
+			cmd.echo((line:gsub('"', '\'')))
+		end
 	end
 end
+cmd.fortune = wrap('fortune | cowsay')
+cmd.top = wrap('top -bn1')
 
 cmd.cfgfs_init = 'exec cfgfs/init'
+
+cmd.release_all_keys = release_all_keys
 
 --------------------------------------------------------------------------------
 
@@ -220,7 +311,6 @@ cvar.sensitivity = 2.6
 cvar.snd_musicvolume = 0
 cvar.voice_scale = 0.5
 cvar.volume = 1
-
 cvar.cl_autoreload = 1
 cvar.cl_customsounds = 1
 cvar.cl_disablehtmlmotd = 1
@@ -255,14 +345,11 @@ cvar.tf_scoreboard_mouse_mode = 2
 cvar.tf_scoreboard_ping_as_text = 1
 cvar.tf_sniper_fullcharge_bell = 1
 cvar.viewmodel_fov = 75
+cvar.voice_overdrive = 1
 
 cvar.mat_disable_lightwarp = 0
 cvar.r_lightaverage = 0
 cvar.r_rimlight = 1
-
-cvar.cl_crosshair_red = 255
-cvar.cl_crosshair_green = 0
-cvar.cl_crosshair_blue = 255
 
 local checkwm = function ()
 	local use_world_model = 1
@@ -303,8 +390,41 @@ bind('f1',			'incrementvar net_graph 0 6 6')
 bind('f2',			'screenshot')
 bind('f3',			'')
 bind('f4',			'player_ready_toggle')
-bind('f5',			'')
-bind('f6',			'')
+bind('f5',			function ()
+					if rawget(_G, 'spam_f5') then return end
+					_G.spam_f5 = true
+					while true do
+						for _, class in ipairs({
+							'scout', 'soldier', 'pyro',
+							'demoman', 'heavyweapons', 'engineer',
+							'medic', 'sniper', 'spy',
+						}) do
+							local tm = 20
+							cmd.join_class(class)
+							wait2(tm)
+							if not is_pressed['f5'] then goto out end
+							cmd.voicemenu(0, 0)
+							wait2(510-tm)
+							if not is_pressed['f5'] then goto out end
+						end
+					end
+					::out::
+					_G.spam_f5 = nil
+				end)
+bind('f6',			function ()
+					if rawget(_G, 'spam_f6') then return end
+					_G.spam_f6 = true
+					while true do
+						cmd.destroy(3)
+						cmd.build(3)
+						cmd('+attack')
+						wait2(115)
+						cmd('-attack')
+						if not is_pressed['f6'] then goto out end
+					end
+					::out::
+					_G.spam_f6 = nil
+				end)
 bind('f7',			'')
 cmd.bind('f8',			'exec cfgfs/buffer')
 cmd.bind('f9',			'exec cfgfs/buffer')
@@ -320,7 +440,7 @@ bind('f12',			'')
 bind('scrolllock',		'')
 bind('pause',			'')
 
-bind('\\',			'+use_action_slot_item')
+bind('\\',			'') -- valve homos broke this key and now it can't be bound
 bind('1',			slotcmd(1))
 bind('2',			slotcmd(2))
 bind('3',			slotcmd(3))
@@ -387,25 +507,6 @@ bind('.',			'changeteam')
 bind('-',			'')
 bind('rshift',			'')
 
-do
-
-local lol = nil
-
-fn_dn = function ()
-	if lol then return end
-	local t = {} lol = t
-	while true do
-		cfg('destroy 3;build 3')
-		wait2(100)
-		if lol ~= t then break end
-	end
-end
-fn_up = function ()
-	lol = nil
-end
-
-end
-
 bind('ctrl',			'+duck')
 bind('lwin',			'')
 bind('alt',			'+strafe')
@@ -442,5 +543,22 @@ bind('kp_enter',		'')
 
 bind('kp_ins',			'')
 bind('kp_del',			'')
+
+--bind('f9', function ()
+--	cmd('toggleconsole')
+--	cmd('+attack')
+--	cmd('cl_crosshair_color', '123')
+--	cmd('say', 'test test test test test')
+--	cmd('say', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+--	cmd('say', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+--	cmd('say', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+--	cmd('-attack')
+--	cmd('+jump')
+--	cmd('-jump')
+--	cmd('cl_crosshair_file', 'crosshair123')
+--	cmd('cl_crosshair_red', '255')
+--	cmd('cl_crosshair_green', '0')
+--	cmd('cl_crosshair_blue', '255')
+--end) -- @@ tf2sim @@
 
 cmd.echo('</script.lua>')

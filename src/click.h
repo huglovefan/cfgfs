@@ -1,9 +1,11 @@
 #pragma once
 
-// click.h: click
+// click to make source exec a config at will
 
-// name:    click
-// purpose: click
-void click(double ms);
+void click(void);
 
-// i just realized it's actually a keypress and not a click
+void click_after(double ms);
+
+// click if there is stuff in the buffer
+// !!!NOTE!!! this is only safe to call while LUA_LOCK is held
+void opportunistic_click(void);

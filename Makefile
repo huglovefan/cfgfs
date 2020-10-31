@@ -8,21 +8,23 @@ CFLAGS ?= -Ofast -g
 
 $(shell if [ "$$(id -u)" = 0 ]; then >&2 echo "don't run this as root idiot"; kill $$PPID; fi)
 
-SRCS = src/buffer_list.c \
+SRCS = src/main.c \
+       src/buffer_list.c \
        src/buffers.c \
-       src/cli.c \
+       src/lua.c \
+       src/reloader.c \
+       src/cli_input.c \
+       src/cli_output.c \
        src/click.c \
        src/logtail.c \
-       src/lua.c \
-       src/main.c \
-       src/reload_thread.c \
-       src/vcr.c
+       src/vcr.c \
+       src/attention.c
 
 EXE := $(shell basename -- "$$(pwd)")
 OBJS = $(SRCS:.c=.o)
 DEPS = $(SRCS:.c=.d)
-CPPFLAGS += -DEXE='"$(EXE)"'
-CFLAGS += -MMD
+
+CFLAGS += -MMD -MP
 
 CFLAGS += -Weverything \
           -Werror=implicit-function-declaration \
@@ -40,30 +42,31 @@ CFLAGS += -Weverything \
           -Wno-reserved-id-macro \
           -Wno-vla
 
+# agpl compliance (https://www.gnu.org/licenses/gpl-howto.en.html)
+ifneq ($(AGPL_SOURCE_URL),)
+ CPPFLAGS += -DAGPL_SOURCE_URL='"$(AGPL_SOURCE_URL)"'
+endif
+ifeq (,$(findstring AGPL_SOURCE_URL,$(CPPFLAGS)))
+ CPPFLAGS += -DAGPL_SOURCE_URL='"$(shell git ls-remote --get-url)"'
+endif
+
 # ------------------------------------------------------------------------------
 
-# cli.c
-CFLAGS += $(shell pkg-config --cflags readline)
-LIBS   += $(shell pkg-config --libs   readline)
-
-# click.c
-CFLAGS += $(shell pkg-config --cflags x11 xtst)
-LIBS   += $(shell pkg-config --libs   x11 xtst)
-
-# lua.c
-LIBS += -llua -ldl -lm
-
-# main.c
-CFLAGS += $(shell pkg-config --cflags fuse3)
-LIBS   += $(shell pkg-config --libs   fuse3)
-CPPFLAGS += -DFUSE_USE_VERSION=35
+# verbosity/debug enablings
+ifneq ($(V),)
+ CPPFLAGS += -DV="if(1)"
+endif
+ifneq ($(VV),)
+ CPPFLAGS += -DVV="if(1)"
+endif
+ifneq ($(D),)
+ CPPFLAGS += -DD="if(1)"
+endif
 
 # vcr.c
 ifneq ($(VCR),)
  CPPFLAGS += -DWITH_VCR
 endif
-
-# ------------------------------------------------------------------------------
 
 # pgo
 ifeq ($(PGO),1)
@@ -84,6 +87,36 @@ endif
 
 # ------------------------------------------------------------------------------
 
+CFLAGS += -pthread
+CPPFLAGS += -pthread
+LIBS += -pthread
+
+# barely measurable but: jemalloc > tcmalloc > glibc one
+#LIBS += -ltcmalloc_minimal
+LIBS += -ljemalloc
+
+# assert in macros.h
+CPPFLAGS += -DEXE='"$(EXE)"'
+
+# cli.c
+CFLAGS += $(shell pkg-config --cflags readline)
+LIBS   += $(shell pkg-config --libs   readline)
+
+# attention.c, click.c
+CFLAGS += $(shell pkg-config --cflags x11 xtst)
+LIBS   += $(shell pkg-config --libs   x11 xtst)
+
+# lua.c
+# (it only works with lua 5.4)
+LIBS += -llua -ldl -lm
+
+# main.c
+CFLAGS += $(shell pkg-config --cflags fuse3)
+LIBS   += $(shell pkg-config --libs   fuse3)
+CPPFLAGS += -DFUSE_USE_VERSION=35
+
+# ------------------------------------------------------------------------------
+
 $(EXE): $(OBJS)
 	$(CCACHE) $(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
@@ -91,11 +124,24 @@ $(EXE): $(OBJS)
 .c.o:
 	$(CCACHE) $(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
 
-clean:
-	rm -f -- $(EXE) $(DEPS) $(OBJS) core.[0-9]* vgcore.[0-9]* *.profdata *.profraw *.log
+# ~
 
-libvcr.so:
-	clang -O2 -shared -fPIC libvcr.c -o libvcr.so -lpthread
+libvcr.so: libvcr.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -fPIC -shared $^ -o $@ -pthread
+
+tf2sim: tf2sim.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@
+
+# ~
+
+clean:
+	rm -f -- $(EXE) $(DEPS) $(OBJS) core.[0-9]* vgcore.[0-9]* *.profdata \
+	    *.profraw *.log perf.data* callgrind.out* *.d tf2sim
+
+watch:
+	@while ls $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -c make; do\
+		continue;\
+	done
 
 # ------------------------------------------------------------------------------
 

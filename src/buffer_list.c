@@ -1,4 +1,9 @@
 #include "buffer_list.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
 #include "main.h"
 #include "macros.h"
 
@@ -45,16 +50,7 @@ static void buffer_copy_from_that_to_this(struct buffer *self,
 	memcpy(self->data, buf->data, buf->size);
 }
 
-static void buffer_sanity_check(const struct buffer *self) {
-	if (self->full) assert(self->size >= strlen(cfg_exec_next_cmd)+1);
-	else            assert(buffer_space(self) >= strlen(cfg_exec_next_cmd)+1);
-	assert(self->data != NULL);
-}
-
 // -----------------------------------------------------------------------------
-
-static struct buffer *buffer_list_get_nonfull(struct buffer_list *self);
-static struct buffer *buffer_list_get_next_for(struct buffer_list *self, struct buffer *ent);
 
 // struct buffer_list
 
@@ -71,87 +67,6 @@ void buffer_list_reset(struct buffer_list *self) {
 	}
 	memset(self, 0, sizeof(struct buffer_list));
 }
-
-// todo: this should print the contents and a backtrace
-//#define check(x) if (!x) { print_message_about_this_check(); failed = true; }
-//#define end() if (failed) { print_backtrace(); abort(); }
-
-void buffer_list_sanity_check(const struct buffer_list *self) {
-	// don't bother trying to call this inside the other buffer_list_ functions
-	// but do call this before and after using them from outside
-
-	if (self->first == NULL) {
-		assert(self->first == NULL);
-		assert(self->last == NULL);
-		assert(self->nonfull == NULL);
-		return;
-	}
-
-	if (self->first->next == NULL) {
-		assert(self->first != NULL);
-		assert(self->last != NULL);
-		assert(self->last == self->first);
-		if (self->nonfull != NULL) {
-			assert(!self->first->full); // forgot to update this?
-			assert(self->nonfull == self->first); // points to buffer outside list
-		} else {
-			assert(self->first->full); // forgot to set nonfull?
-		}
-		assert(self->first->next == NULL); // bad copy
-		buffer_sanity_check(self->first);
-		return;
-	}
-
-	struct buffer *ent = self->first;
-	struct buffer *nf = NULL;
-	size_t i = 0;
-	while (ent != NULL) {
-		//assert(i < self->length); // wrong length?
-
-		if (i == 0) assert(self->first == ent);
-		else        assert(self->first != ent);
-		// ^ botched some operation?
-
-		//if (i == self->length-1) assert(self->last == ent);
-		//else                     assert(self->last != ent);
-		// ^ botched some operation?
-
-		if (!ent->full) nf = ent;
-
-		if (!nf) assert(ent->full);
-		else     assert(!ent->full);
-		// ^ the buffer has 0-n full buffers followed by 0-n nonfull ones.
-		// a full buffer coming after a non-full will break things
-		// probably forgot to reset a buffer when re-adding it to the list?
-
-		if (ent->full) assert(self->nonfull != ent);
-		// ^ full can't be nonfull
-
-		buffer_sanity_check(ent);
-		ent = ent->next;
-		i += 1;
-	}
-	//assert(i == self->length);
-}
-
-#define bools(x) ((x) ? "yes" : "no")
-
-void buffer_list_print_it(const struct buffer_list *self) {
-	fprintf(stderr, "buffer_list %p:\n", (const void *)self);
-	size_t i = 0;
-	for (struct buffer *ent = self->first; ent != NULL; ent = ent->next) {
-		fprintf(stderr, " %lu: %p (first=%s, last=%s, nonfull=%s, buf.full=%s size=%lu)\n",
-		    i++,
-		    (const void *)ent,
-		    bools(self->first == ent),
-		    bools(self->last == ent),
-		    bools(self->nonfull == ent),
-		    bools(ent->full),
-		    buffer_get_size(ent));
-	}
-}
-
-#undef bools
 
 struct buffer *buffer_list_grab_first_nonempty(struct buffer_list *self) {
 	struct buffer *ent = self->first;
@@ -266,5 +181,3 @@ D		assert(buffer_may_add_line(buf, sz));
 	}
 	buffer_add_line(buf, s, sz);
 }
-
-// -----------------------------------------------------------------------------

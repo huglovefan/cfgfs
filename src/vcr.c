@@ -39,36 +39,28 @@ void _vcr_begin(void) {
 D	assert(lua_gettop(L) == 0);
 	 lua_getglobal(L, "_init");
 	lua_call(L, 0, 0);
-D	assert(lua_gettop(L) == 0);
 }
 
 void vcr_add_string(const char *k, const char *v) {
-D	assert(lua_gettop(L) == 0);
 	 lua_getglobal(L, "_add");
 	  lua_pushstring(L, k);
 	   lua_pushstring(L, v);
 	lua_call(L, 2, 0);
-D	assert(lua_gettop(L) == 0);
 }
 void vcr_add_double(const char *k, double v) {
-D	assert(lua_gettop(L) == 0);
 	 lua_getglobal(L, "_add");
 	  lua_pushstring(L, k);
 	   lua_pushnumber(L, v);
 	lua_call(L, 2, 0);
-D	assert(lua_gettop(L) == 0);
 }
 void vcr_add_integer(const char *k, long long v) {
-D	assert(lua_gettop(L) == 0);
 	 lua_getglobal(L, "_add");
 	  lua_pushstring(L, k);
 	   lua_pushinteger(L, v);
 	lua_call(L, 2, 0);
-D	assert(lua_gettop(L) == 0);
 }
 
 void _vcr_end(void) {
-D	assert(lua_gettop(L) == 0);
 	 lua_getglobal(L, "_finish");
 	 lua_call(L, 0, 1);
 	 size_t sz;

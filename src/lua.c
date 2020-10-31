@@ -1,11 +1,17 @@
+#define _GNU_SOURCE // unlocked_stdio
 #include "lua.h"
 #include "buffers.h"
 #include "macros.h"
 #include "main.h"
 #include "keys.h"
 #include "click.h"
+#include "attention.h"
+#include "cli_output.h"
 
+#include <errno.h>
+#include <pthread.h>
 #include <unistd.h>
+#include <string.h>
 
 // -----------------------------------------------------------------------------
 
@@ -26,15 +32,15 @@ int lua_print_backtrace(lua_State *L) {
 	  lua_rotate(L, -2, 1);
 	 lua_pop(L, 1);
 	 lua_call(L, 0, 1);
-	 fprintf(stderr, "%s\n", lua_tostring(L, -1));
+	 eprintln("%s", lua_tostring(L, -1));
 	lua_pop(L, 1);
 	return 0;
-	// was there a C version of the backtrace function?
+	// todo: change to luaL_traceback
 }
 
 __attribute__((cold))
 static int l_panic(lua_State *L) {
-	 fprintf(stderr, "fatal error: %s\n", lua_tostring(L, -1));
+	 eprintln("fatal error: %s", lua_tostring(L, -1));
 	lua_print_backtrace(L);
 	__sanitizer_print_stack_trace();
 	return 0;
@@ -142,84 +148,30 @@ static void _init_badchars(void) {
 	// this should get all whitespace/separator/invalid characters
 }
 
-// https://code.woboq.org/userspace/glibc/string/strspn.c.html
-// i wonder if this is any better than just doing it normally
-// i wish there was a way to let the compiler choose the implementation
-// todo: benchmark now that vcr exists
-
-#if 1
 static bool str_is_ok(const char *restrict s, size_t sz) {
-	char b1 = 0, b2 = 0, b3 = 0, b4 = 0;
-	while (sz >= 4) {
-		b1 = badchars[(int)s[0]];
-		b2 = badchars[(int)s[1]];
-		b3 = badchars[(int)s[2]];
-		b4 = badchars[(int)s[3]];
-		if (unlikely(b1|b2|b3|b4)) return 0;
-		sz -= 4;
-		s += 4;
-	}
-	switch (sz) {
-	case 3: b3 = badchars[(int)s[2]]; __attribute__((fallthrough));
-	case 2: b2 = badchars[(int)s[1]]; __attribute__((fallthrough));
-	case 1: b1 = badchars[(int)s[0]]; __attribute__((fallthrough));
-	case 0: return !(b1|b2|b3);
-	default: __builtin_unreachable();
-	}
+	char bad = 0;
+	for (size_t i = 0; i < sz; i++) bad |= badchars[(int)*s++];
+	return !bad;
 }
-#else
-static bool str_is_ok(const char *restrict s, size_t sz) {
-	char b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, b7 = 0, b8 = 0;
-	while (sz >= 8) {
-		b1 = badchars[(int)s[0]];
-		b2 = badchars[(int)s[1]];
-		b3 = badchars[(int)s[2]];
-		b4 = badchars[(int)s[3]];
-		b5 = badchars[(int)s[4]];
-		b6 = badchars[(int)s[5]];
-		b7 = badchars[(int)s[6]];
-		b8 = badchars[(int)s[7]];
-		if (unlikely(b1|b2|b3|b4|b5|b6|b7|b8)) return 0;
-		sz -= 8;
-		s += 8;
-	}
-	switch (sz) {
-	case 7: b3 = badchars[(int)s[6]]; __attribute__((fallthrough));
-	case 6: b3 = badchars[(int)s[5]]; __attribute__((fallthrough));
-	case 5: b2 = badchars[(int)s[4]]; __attribute__((fallthrough));
-	case 4: b1 = badchars[(int)s[3]]; __attribute__((fallthrough));
-	case 3: b3 = badchars[(int)s[2]]; __attribute__((fallthrough));
-	case 2: b2 = badchars[(int)s[1]]; __attribute__((fallthrough));
-	case 1: b1 = badchars[(int)s[0]]; __attribute__((fallthrough));
-	case 0: return !(b1|b2|b3|b4|b5|b6|b7);
-	default: __builtin_unreachable();
-	}
-}
-#endif
 
+static int l_cmd_say(lua_State *L);
 static int l_cmd(lua_State *L) {
 	char buf[max_line_length+8];
 	size_t len = 0;
 	int l = lua_gettop(L);
 
-	// nasty hack for SAY
-	// if the say command's "command line" starts with a quote, it snips
-	//  it off and also removes the last character (even if it's not a quote)
-	// fix by always putting a quote before the first arg, and also adding
-	//  one to the end
-	// this way saying things with and without quotes works as expected
-	// (should say have its own version of this function?)
-	bool say_hazard = false;
+	// note: first arg is the "cfg" table
+
+	if (unlikely(l <= 1)) return 0;
+	if (unlikely(l-1 > (ssize_t)max_argc)) goto toolong;
+
+	// say requires special attention
 	if (unlikely(l >= 3 &&
 	             lua_tostring(L, 2) != NULL &&
 	             (strcmp(lua_tostring(L, 2), "say") == 0 ||
 	              strcmp(lua_tostring(L, 2), "say_team") == 0))) {
-		say_hazard = true;
+		return l_cmd_say(L);
 	}
-
-	if (unlikely(l-1 > (ssize_t)max_argc)) goto toolong;
-
-	// note: first arg is the "cfg" table
 
 	for (int i = 2; i <= l; i++) {
 		size_t sz;
@@ -229,10 +181,8 @@ static int l_cmd(lua_State *L) {
 		// rough safety check
 		if (unlikely(len+sz > max_line_length)) goto toolong;
 
-		if (likely(say_hazard || str_is_ok(s, sz))) {
-			if (unlikely(say_hazard && i == 3)) {
-				buf[len++] = '"';
-			} else if (likely(len != 0 && buf[len-1] != '"')) {
+		if (likely(str_is_ok(s, sz))) {
+			if (likely(len != 0 && buf[len-1] != '"')) {
 				buf[len++] = ' ';
 				// ^ don't need a space after a quote
 			}
@@ -250,12 +200,7 @@ static int l_cmd(lua_State *L) {
 		if (unlikely(len > max_line_length)) goto toolong;
 	}
 
-	if (unlikely(say_hazard)) {
-		buf[len++] = '"';
-		if (unlikely(len > max_line_length)) goto toolong;
-	}
-
-	if (likely(len != 0)) buffer_list_write_line(&buffers, buf, len);
+	buffer_list_write_line(&buffers, buf, len);
 
 	return 0;
 typeerr:
@@ -263,7 +208,66 @@ typeerr:
 toolong:
 	if (len > 40) len = 40;
 	buf[len] = '\0';
-	cli_eprintln("warning: discarding too-long line: %s ...", buf);
+	eprintln("warning: discarding too-long line: %s ...", buf);
+	return lua_print_backtrace(L);
+}
+
+/*
+
+version of l_cmd() for say
+seems to work
+
+bind('4', function () cmd.say('test                             test') end)
+bind('5', function () cmd.say('test say ; // ::::::: {{{{{ test asd') end)
+bind('6', function () cmd.say('test say with "embedded" quotes') end)
+bind('7', function () cmd.say('test say without quotes') end)
+bind('8', function () cmd.say('"test say with left quote') end)
+bind('9', function () cmd.say('test say with right quote"') end)
+bind('0', function () cmd.say('"test say with both quotes"') end)
+
+*/
+__attribute__((cold))
+static int l_cmd_say(lua_State *L) {
+	char buf[max_line_length+8];
+	size_t len = 0;
+	int l = lua_gettop(L);
+
+	// note: first arg is the "cfg" table
+	// note2: this is only called from l_cmd(). critical security checks are done there
+
+	for (int i = 2; i <= l; i++) {
+		size_t sz;
+		const char *s = lua_tolstring(L, i, &sz);
+		if (unlikely(s == NULL)) goto typeerr;
+
+		// rough safety check
+		if (unlikely(len+sz > max_line_length)) goto toolong;
+
+		if (i == 3) {
+			buf[len++] = '"';
+		} else if (i > 3) {
+			buf[len++] = ' ';
+		}
+
+		memcpy(buf+len, s, sz);
+		len += sz;
+
+		// this is now accurate
+		if (unlikely(len > max_line_length)) goto toolong;
+	}
+
+	buf[len++] = '"';
+	if (unlikely(len > max_line_length)) goto toolong;
+
+	buffer_list_write_line(&buffers, buf, len);
+
+	return 0;
+typeerr:
+	return luaL_error(L, "non-string argument passed to cmd");
+toolong:
+	if (len > 40) len = 40;
+	buf[len] = '\0';
+	eprintln("warning: discarding too-long line: %s ...", buf);
 	return lua_print_backtrace(L);
 }
 
@@ -278,7 +282,7 @@ static int l_cfg(lua_State *L) {
 typeerr:
 	return luaL_error(L, "non-string argument passed to cfg()");
 toolong:
-	cli_eprintln("warning: discarding too-long line: %.40s ...", s);
+	eprintln("warning: discarding too-long line: %.40s ...", s);
 	return lua_print_backtrace(L);
 }
 
@@ -289,34 +293,62 @@ static int l_init(lua_State *L) {
 	return 0;
 }
 
-static double tsms(const struct timespec *ts) {
-	return (double)ts->tv_sec * 1000.0 + (double)ts->tv_nsec / 1000000.0;
-}
+// -----------------------------------------------------------------------------
 
-static int l_ms(lua_State *L) {
+// misc
+
+static double getms(void) {
 	struct timespec ts;
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	lua_pushnumber(L, tsms(&ts));
+	return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+}
+static int l_ms(lua_State *L) {
+	lua_pushnumber(L, getms());
 	return 1;
 }
 
-static int l_click(lua_State *L) {
-	click(lua_tonumber(L, 1));
+static int l_click_after(lua_State *L) {
+	click_after(lua_tonumber(L, 1));
 	return 0;
+}
+static int l_click(lua_State *L) {
+	(void)L;
+	click();
+	return 0;
+}
+static int l_opportunistic_click(lua_State *L) {
+	(void)L;
+	opportunistic_click();
+	return 0;
+}
+
+static int l_get_attention(lua_State *L) {
+	char *s = get_attention();
+	lua_pushstring(L, s);
+	free(s);
+	return 1;
 }
 
 // -----------------------------------------------------------------------------
 
+// printing
+
 static int l_print(lua_State *L) {
 	const char *s = lua_tostring(L, 1);
 	if (unlikely(s == NULL)) return 0;
-	cli_println("%s", s);
+	cli_lock_output();
+	fputs_unlocked(s, stdout);
+	fputc_unlocked('\n', stdout);
+	cli_unlock_output();
 	return 0;
 }
 static int l_eprint(lua_State *L) {
 	const char *s = lua_tostring(L, 1);
 	if (unlikely(s == NULL)) return 0;
-	cli_eprintln("%s", s);
+	cli_lock_output();
+	fputs_unlocked(s, stderr);
+	fputc_unlocked('\n', stderr);
+	cli_unlock_output();
 	return 0;
 }
 
@@ -350,9 +382,16 @@ lua_State *lua_init(void) {
 	 lua_pushcfunction(L, l_cmd);
 	lua_setglobal(L, "_cmd");
 	 lua_pushcfunction(L, l_ms);
+
 	lua_setglobal(L, "_ms");
 	 lua_pushcfunction(L, l_click);
 	lua_setglobal(L, "_click");
+	 lua_pushcfunction(L, l_click_after);
+	lua_setglobal(L, "_click_after");
+	 lua_pushcfunction(L, l_opportunistic_click);
+	lua_setglobal(L, "_opportunistic_click");
+	 lua_pushcfunction(L, l_get_attention);
+	lua_setglobal(L, "_get_attention");
 
 	 lua_pushcfunction(L, l_print);
 	lua_setglobal(L, "_print");
@@ -364,7 +403,7 @@ lua_State *lua_init(void) {
 
 	char cwd[PATH_MAX];
 	if (getcwd(cwd, sizeof(cwd)) == NULL) {
-		perror("getcwd");
+		eprintln("lua: getcwd: %s", strerror(errno));
 		exit(1);
 	}
 
@@ -407,5 +446,3 @@ lua_State *lua_init(void) {
 	return L;
 
 }
-
-// -----------------------------------------------------------------------------

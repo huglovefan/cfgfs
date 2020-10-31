@@ -1,4 +1,6 @@
 #pragma once
 
-void logtail_start(const char *gamedir);
-void logtail_stop(void);
+// reads output from the game console logfile
+
+void logtail_init(void *L);
+void logtail_deinit(void);

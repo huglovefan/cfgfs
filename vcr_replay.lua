@@ -10,6 +10,10 @@ things that currently aren't recorded but should be:
 
 ]]
 
+local cfgfs_command = 'perf record ./cfgfs'
+local cfgfs_command = 'doas valgrind ./cfgfs -o allow_other'
+local cfgfs_command = 'perf stat ./cfgfs'
+
 local fcntl  = require 'posix.fcntl'
 local stat   = require 'posix.sys.stat'
 local unistd = require 'posix.unistd'
@@ -25,101 +29,88 @@ end
 
 --------------------------------------------------------------------------------
 
-local events = {}
-event = function (t)
-	table.insert(events, t)
+local _load_cache = {}
+local load_events = function (file)
+	if _load_cache[file] then
+		return _load_cache[file]
+	end
+	local events = {}
+	_G.event = function (t)
+		if t.path then t.path = 'mnt' .. t.path end
+		if t.what == 'game_console_output' then
+			if t.text:find('^Model \'[^\']+\' doesn\'t have attachment ') then return end
+			if t.text:find('^EmitSound: pitch out of bounds = ') then return end
+			if t.text:find('^(.+) killed (.+) with (.+)%.$') then return end
+		end
+		return table.insert(events, t)
+	end
+	dofile(file)
+	_G.event = nil
+	-- it is likely that they're already in chronological order
+	--table.sort(events, function (t1, t2)
+	--	return t1.timestamp < t2.timestamp
+	--end)
+	if #events == 0 then
+		return nil, file..': no events recorded'
+	end
+	_load_cache[file] = events
+	return events
 end
-dofile(arg[1] or './vcr.log')
-table.sort(events, function (t1, t2)
-	return t1.timestamp < t2.timestamp
-end)
-event = nil
-if #events == 0 then
-	io.stderr:write('vcr_replay: no events recorded\n')
-	os.exit(1)
-end
+local events = load_events(arg[1] or './vcr.log')
 
 --------------------------------------------------------------------------------
 
-local console = io.open('./console.log', 'w')
-console:setvbuf('full')
+local console = nil
 
-local fds = {}
+local fds = nil
 
 local actions = {
-	--[[
-	vcr_event {
-		vcr_add_string("what", "getattr");
-		vcr_add_string("path", path);
-		//vcr_add_integer("fd", (fi != NULL) ? (long long)fi->fh : -1);
-		vcr_add_integer("rv", (long long)rv);
-		vcr_add_double("timestamp", tm);
-	}
-	]]
 	getattr = function (t)
-		local st = stat.lstat(t.path)
-		if st == nil then
-			assert(t.rv ~= 0, 'getattr unexpectedly failed')
+		local rv = stat.lstat(t.path)
+		if rv then
+			return check(t.rv == 0, 'getattr unexpectedly succeeded')
 		else
-			assert(t.rv == 0, 'getattr unexpectedly succeeded')
+			return check(t.rv ~= 0, 'getattr unexpectedly failed')
 		end
 	end,
-	--[[
-	vcr_event {
-		vcr_add_string("what", "open");
-		vcr_add_string("path", path);
-		if (rv == 0) {
-			vcr_add_integer("fd", (long long)fi->fh);
-		}
-		vcr_add_integer("rv", (long long)rv);
-		vcr_add_double("timestamp", tm);
-	}
-	]]
 	open = function (t)
-		if t.fd then assert(fds[t.fd] == nil, 'open: fd already opened') end
-
 		local fd = fcntl.open(t.path, fcntl.O_RDONLY)
 		if t.rv == 0 then
-			assert(fd ~= nil, 'open unexpectedly failed')
+			check(fds[t.fd] == nil, 'open: fd already opened')
+			check(fd ~= nil, 'open unexpectedly failed')
 			fds[t.fd] = fd
 		else
-			assert(fd == nil, 'open unexpectedly succeeded')
-			if fd then unistd.close(fd) end
+			if fd ~= nil then
+				check_fail('open unexpectedly succeeded')
+				return unistd.close(fd)
+			end
 		end
 	end,
-	--[[
-	vcr_event {
-		vcr_add_string("what", "release");
-		vcr_add_integer("fd", (long long)fi->fh);
-		vcr_add_double("timestamp", tm);
-	}
-	]]
 	release = function (t)
-		t.rv = 0
-		assert(t.fd >= 1, 'release: invalid fd')
-		assert(fds[t.fd] ~= nil, 'release: unknown fd')
-		assert(fds[t.fd] >= 0)
-		local rv = unistd.close(fds[t.fd])
-		assert(rv == 0)
-		fds[t.fd] = nil
+		local t_fd = t.fd
+		local l_fd = fds[t_fd]
+		if l_fd then
+			local rv = unistd.close(l_fd)
+			if rv then
+				fds[t_fd] = nil
+				return
+			else
+				return check_fail('release: close failed')
+			end
+		else
+			return check_fail('release: fd not opened')
+		end
 	end,
-	--[[
-	vcr_event {
-		vcr_add_string("what", "read");
-		vcr_add_integer("size", (long long)size);
-		vcr_add_integer("offset", (long long)offset);
-		vcr_add_integer("fd", (long long)fi->fh);
-		vcr_add_integer("rv", (long long)rv);
-		vcr_add_string("data", buf);
-		vcr_add_double("timestamp", tm);
-	}
-	]]
 	read = function (t)
-		local s = unistd.read(fds[t.fd], t.size)
-		assert(s ~= nil, 'read failed')
-		assert(s == t.data, 'read wrong data')
-		-- `t.offset` is just how much has been read from it previously
-		-- it's automatically correct here without doing anything
+		if fds[t.fd] then
+			local s = unistd.read(fds[t.fd], t.size)
+			check(s ~= nil, 'read failed')
+			check(s == t.data, 'read wrong data')
+			-- `t.offset` is just how much has been read from it previously
+			-- it's automatically correct here without doing anything
+		else
+			return check_fail('read: fd not opened')
+		end
 	end,
 	game_console_output = function (t)
 		return console:write(t.text..'\n')
@@ -130,6 +121,43 @@ local actions = {
 		-- need to implement signals/^D too
 	end,
 }
+if false then -- disable checking. it's not that slow though
+actions = {
+	getattr = function (t)
+		return stat.lstat(t.path)
+	end,
+	open = function (t)
+		local fd = fcntl.open(t.path, fcntl.O_RDONLY)
+		if t.rv == 0 then
+			fds[t.fd] = fd
+		elseif fd ~= nil then
+			return unistd.close(fd)
+		end
+	end,
+	release = function (t)
+		local t_fd = t.fd
+		local l_fd = fds[t_fd]
+		if l_fd then
+			local rv = unistd.close(l_fd)
+			if rv then
+				fds[t_fd] = nil
+			end
+		end
+	end,
+	read = function (t)
+		return unistd.read(fds[t.fd], t.size)
+	end,
+	game_console_output = function (t)
+		return console:write(t.text..'\n')
+	end,
+	cli_input = function (t)
+		return libvcr.ttype(tty_fd, t.text..'\n')
+	end,
+	cli_eof = function (t)
+		-- how to do this?
+	end,
+}
+end
 
 --------------------------------------------------------------------------------
 
@@ -146,7 +174,7 @@ end
 
 local child_start = function ()
 	if not exec_ok([[
-	( grep -qm1 'a' /dev/tty && exec perf stat ./cfgfs ./mnt >/dev/null ) &
+	( grep -qm1 'a' /dev/tty && exec ]]..cfgfs_command..[[ ./mnt >/dev/null ) &
 	]]) then
 		error('failed to start cfgfs')
 	end
@@ -164,51 +192,62 @@ local e2str = function (t)
 	return table.concat(t2, '\n')
 end
 
-local stats = {}
-local tick = function (k) stats[k] = (stats[k] or 0) + 1 end
-local tick_zero = function (k) stats[k] = 0 end
-tick_zero('asserts')
-tick_zero('ignored')
+local errors = 0
 
 local g_event = nil
 
-assert = function (x, s)
-	if not x then
-		tick('asserts')
-		print(string.format('assertion failed: %s', s or '(nil)'))
-		print(string.format('failing event:\n%s\n', e2str(g_event)))
-	end
+check_fail = function (fmt, ...)
+	errors = (errors + 1)
+	print(string.format('check failed: ' .. fmt, ...))
+	print(string.format('failing event:\n%s\n', e2str(g_event)))
+end
+check = function (cond, fmt, ...)
+	if cond then return end
+	return check_fail(fmt, ...)
 end
 
 --------------------------------------------------------------------------------
 
-unmount_all_cfgfs()
-child_start()
-
-local now = 0
-local ignored = 0
-local prev = nil
-for i, t in ipairs(events) do
-	if t.path then t.path = 'mnt' .. t.path end
-	g_event = t
-	if prev == 'log' and t.what ~= 'log' then console:flush() end
-
-	if t.what == 'log' then
-		if t.text:find('^Model \'[^\']+\' doesn\'t have attachment ') then goto next end
-		if t.text:find('^EmitSound: pitch out of bounds = ') then goto next end
-		if t.text:find('^(.+) killed (.+) with (.+)%.$') then goto next end
-	end
-
-	actions[t.what](t)
-	prev = t.what
-	::next::
+if #arg == 0 then
+	io.stderr:write('usage: vcr_replay.lua <logfile> ...\n')
+	os.exit(1)
 end
 
-os.execute('fusermount -u mnt')
+if not exec_ok([[
+set -e
+[ ! -e perf.stat ] || rm perf.stat
+[ ! -e perf.stat ] || rm console.log
+ln -sf /tmp/vcr_console.log console.log
+]]) then os.exit(1) end
 
---------------------------------------------------------------------------------
+console = io.open('./console.log', 'w')
+console:setvbuf('full')
 
-local unclosed = 0
-for _ in pairs(fds) do unclosed = (unclosed + 1) end
+for _, file in ipairs(arg) do
+	local events = assert(load_events(file))
+	fds = {}
+	errors = 0
+	unmount_all_cfgfs()
+	child_start()
+	local prev = ''
+	for i, t in ipairs(events) do
+		g_event = t
+		if (prev == 'game_console_output' and t.what ~= 'game_console_output') then
+			console:flush()
+		end
+		actions[t.what](t)
+		prev = t.what
+	end
+	os.execute('exec fusermount -u mnt')
+	local unclosed = 0
+	for _ in pairs(fds) do unclosed = (unclosed + 1) end
+	print(string.format('%d events %d errors %d fds unclosed',
+		#events,
+		errors,
+		unclosed))
+end
 
-print(string.format('%d events %d ignored %d errors %d fds unclosed', #events, stats['ignored'], stats['asserts'], unclosed))
+if not exec_ok([[
+rm -f console.log /tmp/vcr_console.log
+touch console.log
+]]) then os.exit(1) end

@@ -10,10 +10,8 @@ setmetatable(_G, {
 	end,
 })
 
-collectgarbage('generational')
-warn('@on')
-
-println('cfgfs running with %s', _VERSION)
+println('cfgfs is free software released under the terms of the GNU AGPLv3 license.')
+println('Type `cfgfs_license\' for details.')
 
 --------------------------------------------------------------------------------
 
@@ -27,6 +25,12 @@ else
 end
 
 --------------------------------------------------------------------------------
+
+-- helper for defining globals in script.lua that persist across reloads
+-- usage:
+--   varname = global('varname', 'default value if it wasn\'t defined before')
+--   varname = global('varname', { _v=1, key=value })
+-- to redefine a table that already exists, change its "_v" key to a different value
 
 global = function (k, v2)
 	local v1 = rawget(_G, k)
@@ -72,21 +76,29 @@ do
 local init_settings = function ()
 	cfgfs = {
 		-- run fuse in single-threaded mode
-		-- speedup of about 10%, but can cause lockups if something in
-		--  script.lua accesses the cfgfs mount from outside (as the
-		--  request won't be processed until the script returns)
+		-- ~10% faster but can cause lockups if script.lua accesses the cfgfs mount from outside
+		-- (requests can't be processed until the script returns)
 		fuse_singlethread = true,
 
-		init_on_reload = true,
-		-- there's no init_on_load because that would run before game configs
-		-- set something in init_after_cfg instead
+		-- output the "initial output" of script.lua when it's reloaded
+		-- (should only disable if you're testing things manually and it gets in the way)
+		init_on_reload = (gamedir) and true or false,
 
-		init_before_cfg = {},
+		-- output the "initial output" of script.lua each time after any of these these configs are executed
+		-- probably should be something that's always executed late during the game startup process
 		init_after_cfg = {
-			['comfig/modules_run.cfg'] = true, -- stop setting fps_max to 1000!!!!!
+			-- ['example.cfg'] = true,
 		},
 
-		-- things not in cfg format
+		-- same as init_after_cfg but before the config
+		-- (maybe not very useful?)
+		init_before_cfg = {
+			-- ['example.cfg'] = true,
+		},
+
+		-- avoid interfering with the execution these "configs"
+		-- add files from the cfg directory that aren't in cfg format here
+		-- (messing with them causes problems)
 		intercept_blacklist = {
 			-- tf2
 			['motd_entries.txt'] = true,
@@ -100,13 +112,14 @@ local init_settings = function ()
 			['settings.scr'] = true,
 			['user.scr'] = true,
 		},
+
+		-- prevent the game from seeing these configs
 		intercept_blackhole = {
-			['comfig/echo.cfg'] = true,
+			-- ['example.cfg'] = true,
 		},
 
-		-- after script.lua is reloaded, "restore" these globals by
-		--  firing the corresponding events with their values
-		-- globals normally persist across reloads though
+		-- after script.lua is reloaded, "restore" these globals by firing the corresponding events with their values
+		-- (globals normally persist across reloads though)
 		restore_globals_on_reload = {
 			['class'] = 'classchange',
 			['slot'] = 'slotchange',
@@ -114,6 +127,8 @@ local init_settings = function ()
 
 		-- avoid using alias command for games that don't have it (fof)
 		compat_noalias = false,
+
+		-- game_window_title = '',
 	}
 end
 
@@ -134,6 +149,10 @@ local events = make_resetable_table()
 unmask_next = make_resetable_table()
 is_pressed = make_resetable_table()
 
+-- how many times script.lua has been reloaded
+-- (0 on the initial load, 1 on the first reload ...)
+reload_count = global('reload_count', 0)
+
 --------------------------------------------------------------------------------
 
 -- cfg/cmd magic tables
@@ -142,7 +161,6 @@ cfg = assert(_cfg)
 
 cfgf = function (fmt, ...) return cfg(string.format(fmt, ...)) end
 
--- TODO compat_noalias -- allow making functions in this table
 cmd = setmetatable(make_resetable_table(), {
 	__index = function (self, k)
 		local f = function (...) return cmd(k, ...) end
@@ -150,10 +168,17 @@ cmd = setmetatable(make_resetable_table(), {
 		return f
 	end,
 	__newindex = function (self, k, v)
+		if cfgfs.compat_noalias then
+			if type(v) ~= 'function' then
+				local s = v
+				v = function () return cfg(s) end
+			end
+			return rawset(self, k, v)
+		end
 		if v == nil then
-			-- is there really no "unalias" command???
 			rawset(self, k, nil)
 			return cmd.alias(k, '')
+			-- ^ there's no "unalias" command so just set it to empty
 		end
 		if type(v) == 'function' then
 			rawset(self, k, v)
@@ -165,9 +190,6 @@ cmd = setmetatable(make_resetable_table(), {
 	end,
 	__call = assert(_cmd),
 })
-
--- want: something to silence the output of "help"
--- con_filter_enable doesn't seem to apply until later for some reason
 
 --[[
 run_capturing_output = function (fn)
@@ -197,6 +219,7 @@ run_capturing_output = function (fn)
 end
 -- fixme: merge these
 -- probably use the old one (no math.random = simpler and better for vcr)
+-- edit: what can we do now that logtail calls a function here? line listener?
 ]]
 
 cvar = setmetatable({}, {
@@ -221,35 +244,37 @@ cvar = setmetatable({}, {
 		f:seek('end')
 		for _, k in ipairs(t) do
 			cmd('help', k)
+			-- is there no way to do this silently?
+			-- con_filter_enable doesn't apply until later for some reason
 		end
 		yield()
 		for l in f:lines() do
-			local mk, mv = l:match('"([^"]+)" = "([^"]*)')
+			local mk, mv = l:match('"([^"]+)" = "([^"]*)"')
 			if mk then
 				t[mk] = mv
 			end
-			-- note: match pattern does not use "^"
-			-- due to mysteries, console output in source sometimes
-			--  comes up jumbled with the order of words messed up
-			-- like
-			--[[
-				] help con_enable
-				 archive"con_enable" = "1"
-				 ( def. "0" ) - Allows the console to be activated.
-				] help con_enable
-				 - Allows the console to be activated.
-				"con_enable" = "1" ( def. "0" )
-				 archive
-				] help con_enable
-				 ( def. "0" )"con_enable" = "1"
-				 archive
-				 - Allows the console to be activated.
-			]]
-			-- etc etc
-			-- i wonder what causes it
-			-- the `"name" = "value"` part is luckily always intact
 		end
 		return t
+		-- note: the match pattern does not use "^"
+		-- due to mysteries, console output in source sometimes
+		--  comes up jumbled with the order of words messed up
+		-- like
+		--[[
+			] help con_enable
+			 archive"con_enable" = "1"
+			 ( def. "0" ) - Allows the console to be activated.
+			] help con_enable
+			 - Allows the console to be activated.
+			"con_enable" = "1" ( def. "0" )
+			 archive
+			] help con_enable
+			 ( def. "0" )"con_enable" = "1"
+			 archive
+			 - Allows the console to be activated.
+		]]
+		-- etc etc
+		-- i wonder what causes it
+		-- the `"name" = "value"` part is luckily always intact
 	end,
 })
 
@@ -276,16 +301,16 @@ bind = function (key, cmd, cmd2)
 		else
 			cmd.bind(key, 'exec cfgfs/keys/@'..n..'.cfg')
 		end
-		-- (if cmd2 then ...)
+		-- (if cmd2 then ...):
 		-- the bind string needs to start with + to run something on key release too
 		-- +jlook is there because it does nothing and starts with +
-		-- "//" starts a comment to ignore excess arguments
+		-- "//" at the end starts a comment to ignore excess arguments
 	end
-	-- check if it's a +toggle
+	-- add -release command for +toggles
 	if not cmd2 and type(cmd) ~= 'function' then
-		cmd = tostring(cmd) or ''
+		cmd = (tostring(cmd) or '')
 		if cmd:find('^%+') then
-			cmd2 = '-' .. cmd:sub(2)
+			cmd2 = ('-' .. cmd:sub(2))
 		end
 	end
 	binds_down[key] = cmd
@@ -361,12 +386,15 @@ yield = coroutine.yield
 	return yield(sym_timeout, ms)
 end]]
 
-wait2 = function (ms)
+wait2 = function (ms) -- todo: rename
 	local t = _ms()+ms
-	_click(t)
+	_click_after(ms)
 	return yield(sym_timeout, t)
 end
 
+-- id: numeric id in the `coros` table (nil for the "main" coroutine)
+-- co: the coroutine to resume
+-- arg: additional argument to resume with
 local resume_co = function (id, co, arg)
 	local ok, rv, rv2 = coroutine.resume(co, arg)
 	if not ok then
@@ -418,6 +446,36 @@ spinoff = function (fn, ...)
 	return resume_co(id, coroutine.create(fn), ...)
 end
 
+-- mostly untested
+set_timeout = function (fn, ms)
+	local cancelled = false
+	spinoff(function ()
+		wait2(ms)
+		if cancelled then return end
+		return fn()
+	end)
+	return {
+		cancel = function ()
+			cancelled = true
+		end,
+	}
+end
+set_interval = function (fn, ms)
+	local cancelled = false
+	spinoff(function ()
+		while true do
+			wait2(ms)
+			if cancelled then break end
+			fn()
+		end
+	end)
+	return {
+		cancel = function ()
+			cancelled = true
+		end,
+	}
+end
+
 local run_timeouts = function ()
 
 	local ts = timeouts
@@ -440,12 +498,42 @@ local run_timeouts = function ()
 	end
 	if #newts > 0 then
 		if #timeouts > 0 then
-			table.insert(newts, table.unpack(timeouts))
+			for _, t in ipairs(timeouts) do
+				table.insert(newts, t)
+			end
 		end
 		timeouts = newts
 	end
 	-- ugly slow wrong code but luckily timeouts aren't very useful
+	-- (what was wrong about it?)
+	-- was it due to emptying the timeouts list first
+	-- cfgfs can't cancel timeouts so that shouldn't be a problem
 
+end
+
+--------------------------------------------------------------------------------
+
+-- these happen after normal binds
+
+local key_listeners = make_resetable_table()
+add_key_listener = function (key, f)
+	key_listeners[key] = (key_listeners[key] or {})
+	key_listeners[key][f] = true
+end
+remove_key_listener = function (key, f)
+	if key_listeners[key] then
+		key_listeners[key][f] = nil
+		if next(key_listeners[key]) == nil then
+			key_listeners[key] = nil
+		end
+	end
+end
+local fire_key_event = function (key, state)
+	local t = key_listeners[key]
+	if not t then return end
+	for fn in pairs(key_listeners[key]) do
+		resume_co(nil, main_co, function () return fn(state) end)
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -533,18 +621,11 @@ exec_path = function (path)
 		if m then
 			unmask_next[m] = 3
 			return
-			-- the next 3 times the FUSE code gets a request about this config file,
-			--  we'll report that we don't have it so that source will find and exec the real one instead
-			-- has to be 3 because source stats configs twice before opening them for reading
 		end
 
 		eprintln('warning: unknown cfgfs config "%s"', path)
 	else
 		local m = path:before('.cfg') or path
-
-		if class2num[m] then
-			fire_event('classchange', m)
-		end
 
 		if cfgfs.init_before_cfg[path] then
 			_init()
@@ -556,6 +637,10 @@ exec_path = function (path)
 
 		if cfgfs.init_after_cfg[path] then
 			_init()
+		end
+
+		if class2num[m] then
+			fire_event('classchange', m)
 		end
 	end
 
@@ -574,8 +659,10 @@ _get_contents = function (path)
 			if not v then goto skip_main end
 			if type(v) ~= 'function' then
 				cfg(v)
+				fire_key_event(t.name, true)
 				goto skip_main
 			end
+			fire_key_event(t.name, true) -- XXX this is in the wrong place
 			goto do_main
 		elseif t.type == 'up' then
 			is_pressed[t.name] = nil
@@ -583,8 +670,10 @@ _get_contents = function (path)
 			if not v then goto skip_main end
 			if type(v) ~= 'function' then
 				cfg(v)
+				fire_key_event(t.name, false)
 				goto skip_main
 			end
+			fire_key_event(t.name, false) -- XXX this too
 			goto do_main
 		elseif t.type == 'toggle' then
 			local pressed = (not is_pressed[t.name])
@@ -604,6 +693,7 @@ _get_contents = function (path)
 					resume_co(nil, main_co, string.format('/cfgfs/keys/-%d.cfg', key2num[t.name]))
 				end
 			end
+			fire_key_event(t.name, pressed)
 			goto skip_main
 		elseif t.type == 'once' then
 			local vd = binds_down[t.name]
@@ -616,6 +706,7 @@ _get_contents = function (path)
 					resume_co(nil, main_co, string.format('/cfgfs/keys/+%d.cfg', key2num[t.name]))
 				end
 			end
+			fire_key_event(t.name, true)
 			is_pressed[t.name] = nil
 			if vu ~= nil then
 				if type(vu) ~= 'function' then
@@ -624,6 +715,7 @@ _get_contents = function (path)
 					resume_co(nil, main_co, string.format('/cfgfs/keys/-%d.cfg', key2num[t.name]))
 				end
 			end
+			fire_key_event(t.name, false)
 			goto skip_main
 		else
 			return error('unknown bind type')
@@ -636,6 +728,20 @@ _get_contents = function (path)
 	end
 	if path == '/cfgfs/init.cfg' then
 		_init()
+		goto skip_main
+	end
+	if path == '/config.cfg' then
+		cmd.echo('')
+		cmd.echo('cfgfs is free software released under the terms of the GNU AGPLv3 license.')
+		cmd.echo('Type `cfgfs_license\' for details.')
+		cmd.echo('')
+		goto do_main
+	end
+	if path == '/cfgfs/license.cfg' then
+		local f <close> = assert(io.open('LICENSE', 'r'))
+		for line in f:lines() do
+			cmd.echo(line)
+		end
 		goto skip_main
 	end
 
@@ -665,6 +771,21 @@ release_all_keys = function ()
 	end
 end
 
+local is_active = (_get_attention() == cfgfs.game_window_title)
+_attention = function (title)
+	local was_active = is_active
+	is_active = (title ~= nil and title == cfgfs.game_window_title)
+	if is_active ~= was_active then
+		local ok, err = xpcall(function () return fire_event('attention', is_active) end, debug.traceback)
+		if not ok then
+			eprintln('error: %s', err)
+		end
+	end
+end
+is_game_window_active = function ()
+	return is_active
+end
+
 --------------------------------------------------------------------------------
 
 local repl_fn = function (code)
@@ -674,6 +795,7 @@ local repl_fn = function (code)
 	end
 	-- note: ",1" at the end is so that we can get the values after the first nil
 	-- (is there no better way?)
+	-- edit: http://lua-users.org/lists/lua-l/2020-10/msg00211.html
 	local fn = load('return '..code..',1', 'input')
 	if fn then
 		return function ()
@@ -697,9 +819,33 @@ _cli_input = function (line)
 		end
 		return resume_co(nil, main_co, fn)
 	else
+		if line == 'cfgfs_license' then
+			local f <close> = assert(io.open('LICENSE', 'r'))
+			for line in f:lines() do
+				println(line)
+			end
+			return
+		end
 		return cfg(line)
 	end
 end
+
+_game_console_output = function (line)
+	println('%s', line)
+	local ok, err = xpcall(function () return fire_event('game_console_output', line) end, debug.traceback)
+	if not ok then
+		eprintln('error: %s', err)
+	end
+	-- agpl backdoor (https://www.gnu.org/licenses/gpl-howto.en.html)
+	-- it doesn't work if you say it yourself
+	if line:find(':[\t ]*!cfgfs_agpl_source[\t ]*$') then
+		cmd.say(agpl_source_url)
+	end
+end
+assert((type(agpl_source_url) == 'string' and #agpl_source_url > 0), 'invalid agpl_source_url')
+
+cmd.cfgfs_license = 'exec cfgfs/license'
+cmd.cfgfs_source = function () cmd.echo(agpl_source_url) end
 
 --------------------------------------------------------------------------------
 
@@ -717,6 +863,7 @@ _reload_1 = function ()
 	local script = ok
 
 	do_reset()
+	reload_count = (reload_count + 1)
 
 	local ok, err = xpcall(script, debug.traceback)
 	if not ok then
