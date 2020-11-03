@@ -1,10 +1,11 @@
 #SANITIZER := -fsanitize=thread,undefined
 #SANITIZER := -fsanitize=address,undefined
-#PGO       := 1
-CC        := clang
-CCACHE    := ccache
+CC        := $(shell if [ -n "$$CC" ] >/dev/null 2>&1; then echo $$CC; elif command -v clang >/dev/null 2>&1; then echo clang; else echo cc; fi)
+CCACHE    := $(shell if command -v ccache >/dev/null 2>&1; then echo ccache; fi)
 
 CFLAGS ?= -Ofast -g
+
+# ------------------------------------------------------------------------------
 
 $(shell if [ "$$(id -u)" = 0 ]; then >&2 echo "don't run this as root idiot"; kill $$PPID; fi)
 
@@ -24,8 +25,17 @@ EXE := $(shell basename -- "$$(pwd)")
 OBJS = $(SRCS:.c=.o)
 DEPS = $(SRCS:.c=.d)
 
-CFLAGS += -MMD -MP
+CPPFLAGS += -MMD -MP
+CFLAGS += -fdiagnostics-color
 
+ifneq ($(ANALYZE),)
+ ifeq (,$(findstring gcc,$(CC)))
+  override CC := gcc
+ endif
+endif
+
+ifeq (,$(findstring gcc,$(CC)))
+# clang
 CFLAGS += -Weverything \
           -Werror=implicit-function-declaration \
           -Wno-alloca \
@@ -35,12 +45,22 @@ CFLAGS += -Weverything \
           -Wno-format-nonliteral \
           -Wno-gnu-auto-type \
           -Wno-gnu-conditional-omitted-operand \
+          -Wno-gnu-folding-constant \
           -Wno-gnu-statement-expression \
           -Wno-gnu-zero-variadic-macro-arguments \
           -Wno-language-extension-token \
           -Wno-padded \
           -Wno-reserved-id-macro \
           -Wno-vla
+else
+# gcc
+CFLAGS += -Wall \
+          -Wextra \
+          -Werror=implicit-function-declaration \
+          -Wno-bool-operation \
+          -Wno-misleading-indentation \
+          -Wno-unused-result
+endif
 
 # agpl compliance (https://www.gnu.org/licenses/gpl-howto.en.html)
 ifneq ($(AGPL_SOURCE_URL),)
@@ -117,6 +137,14 @@ CPPFLAGS += -DFUSE_USE_VERSION=35
 
 # ------------------------------------------------------------------------------
 
+# gcc analyzer
+ifneq ($(ANALYZE),)
+ CFLAGS  += -fanalyzer -flto
+ LDFLAGS += $(CFLAGS)
+endif
+
+# ------------------------------------------------------------------------------
+
 $(EXE): $(OBJS)
 	$(CCACHE) $(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
 
@@ -139,7 +167,7 @@ clean:
 	    *.profraw *.log perf.data* callgrind.out* *.d tf2sim
 
 watch:
-	@while ls $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -c make; do\
+	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||(printf "\a";exit 1);kill -HUP $$(pidof cfgfs) 2>/dev/null;:'; do\
 		continue;\
 	done
 

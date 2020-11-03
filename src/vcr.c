@@ -2,13 +2,10 @@
 #define WITH_VCR
 #include "vcr.h"
 
-#include <stdlib.h>
-#include <stdio.h>
 #include <pthread.h>
 
-#include <lua.h>
-#include <lualib.h>
 #include <lauxlib.h>
+#include <lualib.h>
 
 #include "macros.h"
 
@@ -19,8 +16,8 @@ double vcr_get_timestamp(void) {
 }
 
 static pthread_mutex_t vcr_lock = PTHREAD_MUTEX_INITIALIZER;
-static FILE *vcr_outfile;
 static lua_State *L;
+static FILE *vcr_outfile;
 
 void _vcr_begin(void) {
 	pthread_mutex_lock(&vcr_lock);
@@ -33,6 +30,7 @@ void _vcr_begin(void) {
 		_finish=function()return'event { '..table.concat(t,', ')..' };\\n'end\
 		") != LUA_OK) lua_error(L);
 		vcr_outfile = fopen("vcr.log", "w");
+		assert(vcr_outfile != NULL);
 		static char buf[1024*1024*20];
 		setvbuf(vcr_outfile, buf, _IOFBF, sizeof(buf));
 	}

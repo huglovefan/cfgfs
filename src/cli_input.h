@@ -13,3 +13,10 @@ extern _Atomic(bool) cli_reading_line;
 
 void cli_input_init(void *L);
 void cli_input_deinit(void);
+
+// pretend the user typed an end-of-file character
+// this makes cfgfs exit
+void cli_input_manual_eof(void);
+// todo: demolish
+// its not really thread safe and doesn't work if the thread wasn't started
+// added it before thinking

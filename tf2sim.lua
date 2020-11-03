@@ -56,21 +56,6 @@ end
 
 --------------------------------------------------------------------------------
 
-local aliases = {}
-local commands = {}
-local variables = {}
-
---------------------------------------------------------------------------------
-
-local println = function (fmt, ...)
-	return io.write(string.format(fmt, ...),'\n')
-end
-local eprintln = function (fmt, ...)
-	return io.stderr:write(string.format(fmt, ...),'\n')
-end
-
---------------------------------------------------------------------------------
-
 local cvar = {}
 setmetatable(cvar, cvar)
 cvar.new = function (mt)
@@ -88,6 +73,23 @@ cvar.tointeger = function (self)
 	return math.floor(self:tointeger())
 end
 
+--------------------------------------------------------------------------------
+
+local aliases = {}
+local commands = {}
+local variables = {}
+
+--------------------------------------------------------------------------------
+
+local println = function (fmt, ...)
+	return io.write(string.format(fmt, ...),'\n')
+end
+local eprintln = function (fmt, ...)
+	return io.stderr:write(string.format(fmt, ...),'\n')
+end
+
+--------------------------------------------------------------------------------
+
 local gamedir = string.format('%s/.local/share/Steam/steamapps/common/Team Fortress 2/tf', os.getenv('HOME'))
 
 local cfg_search_dirs = {}
@@ -102,6 +104,8 @@ table.insert(cfg_search_dirs, string.format('%s/cfg', gamedir))
 
 local cfg_eval_command
 local cfg_eval_script
+
+local console_logfile <close> = assert(io.open(gamedir..'/console.log', 'a'))
 
 cfg_eval_command = function (cmd)
 
@@ -124,7 +128,7 @@ end
 cfg_eval_script = function (text)
 
 	for _, cmd in ipairs(cfg_parse_script(text)) do
---		println('+ "%s"', table.concat(cmd, '" "'))
+		println('+ "%s"', table.concat(cmd, '" "'))
 		cfg_eval_command(cmd)
 	end
 
@@ -168,40 +172,44 @@ commands.echo = function (cmd)
 	for i = 2, #cmd do
 		table.insert(t, cmd[i])
 	end
-	println('%s', table.concat(t, ' '))
+	local s = table.concat(t, ' ')
+	println('%s', s)
+	if console_logfile then
+		console_logfile:write(s, '\n')
+		console_logfile:flush()
+	end
 end
 
 --------------------------------------------------------------------------------
 
---[[
+-- so the dance tf2 does is
+-- 1. open -> stat -> close (determine if it exists)
+-- 2. open -> stat -> close (just because)
+-- 3. open -> stat -> read -> close
+-- can see the exact events if caching is disabled in fuse (cfgfs_init in main.c)
 
-event { what="getattr", path="/test.cfg", rv=0 };
-
-event { what="open",    path="/test.cfg", fd=97, rv=0 };
-event { what="release",   fd=97 };
-
-event { what="open",    path="/test.cfg", fd=98, rv=0 };
-event { what="release",   fd=98 };
-
-event { what="open",    path="/test.cfg", fd=99, rv=0 };
-event { what="read",      size=1024, offset=0, fd=99, rv=94, data="..." };
-event { what="read",      size=1024, offset=94, fd=99, rv=0, data="" };
-event { what="release",   fd=99 };
-
-]]
+-- if the config doesn't exist, it gives up on the first stat
+-- if the config exists outside cfgfs, we get the 3 stat calls but not the read
 
 local exec_lookup_cfg = function (name)
+	name = name:lower()
 	if not name:find('%.cfg$') then
 		name = (name .. '.cfg')
 	end
 	for _, dir in ipairs(cfg_search_dirs) do
 		local path = string.format('%s/%s', dir, name)
-		local st = lfs.attributes(path)
-		if st then
-			return path
+		local f = io.open(path, 'r')
+		if f then
+			assert(lfs.attributes(path)) -- unknown what happens if this fails
+			return f
+		else
+			-- it reads the directory to look for case-insensitive matches
+			-- (not implemented, assume they don't exist)
+			local dirpath = path:gsub('[^/]+$', '')
+			pcall(function () for _ in lfs.dir(dirpath) do end end)
 		end
 	end
-	return nil, nil
+	return nil
 end
 
 commands.exec = function (cmd)
@@ -212,23 +220,18 @@ commands.exec = function (cmd)
 
 	local name = cmd[2]
 
-	local path = exec_lookup_cfg(name)
-	if not path then
+	local f = exec_lookup_cfg(name)
+	if not f then
 		println('%s not present, not executing', name)
 		return
 	end
-
-	local f = io.open(path, 'r')
-	if not f then return end
 	f:close()
 
-	local f = io.open(path, 'r')
-	if not f then return end
+	local f = assert(exec_lookup_cfg(name)) -- unknown what happens if this fails
 	f:close()
 
-	local f = io.open(path, 'r')
-	if not f then return end
-	local s = f:read('a')
+	local f = assert(exec_lookup_cfg(name)) -- unknown what happens if this fails
+	local s = assert(f:read('a')) -- unknown what happens if this fails
 	f:close()
 
 	return cfg_eval_script(s)

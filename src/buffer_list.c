@@ -1,11 +1,11 @@
 #include "buffer_list.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
-#include "main.h"
 #include "macros.h"
+#include "main.h"
 
 // -----------------------------------------------------------------------------
 
@@ -78,9 +78,14 @@ struct buffer *buffer_list_grab_first_nonempty(struct buffer_list *self) {
 	return ent;
 }
 
+// assume(): silence gcc analyzer false positive
+// malloc does not fail on linux
+// https://www.etalabs.net/overcommit.html
+// https://lwn.net/Articles/833712/
 #define buffer_new() \
 	({ \
 	struct buffer *_new_ent = calloc(1, sizeof(struct buffer) + reported_cfg_size); \
+	assume(_new_ent != NULL); \
 	_new_ent->data = (char *)_new_ent + sizeof(struct buffer); \
 	_new_ent; \
 	})

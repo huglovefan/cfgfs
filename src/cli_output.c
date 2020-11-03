@@ -1,9 +1,9 @@
 #define _GNU_SOURCE // unlocked_stdio. there's no vfprintf_unlocked though
 #include "cli_output.h"
 
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <pthread.h>
 #include <stdlib.h>
 
 #pragma GCC diagnostic push
@@ -11,8 +11,8 @@
   #include <readline.h>
 #pragma GCC diagnostic pop
 
-#include "macros.h"
 #include "cli_input.h"
+#include "macros.h"
 
 static pthread_mutex_t output_lock = PTHREAD_MUTEX_INITIALIZER;
 

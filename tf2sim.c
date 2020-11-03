@@ -11,33 +11,33 @@ static const int tries = 1000;
 static char data[0xffff];
 
 static double tdms(struct timespec t0, struct timespec t1) {
-	return (t1.tv_sec-t0.tv_sec)*1000.0 + (t1.tv_nsec-t0.tv_nsec)/1000000.0;
+	return (double)(t1.tv_sec-t0.tv_sec)*1000.0 + (double)(t1.tv_nsec-t0.tv_nsec)/1000000.0;
 }
 
 int main(void) {
-	int fd;
-	ssize_t rv;
-	struct stat st;
-
 	struct timespec start;
 	clock_gettime(CLOCK_MONOTONIC, &start);
 
+	const char *path = "mnt/cfgfs/keys/+100.cfg"; // f9 if keys start from 1
+	FILE *f;
+	struct stat st;
 	for (int i = 0; i < tries; i++) {
 
-		stat("mnt/cfgfs/keys/+100.cfg", &st);
+		f = fopen(path, "r");
+		if (f == NULL) return 1;
+		stat(path, &st);
+		fclose(f);
 
-		fd = open("mnt/cfgfs/keys/+100.cfg", O_RDONLY);
-		if (fd == -1) return 1;
-		close(fd);
+		f = fopen(path, "r");
+		if (f == NULL) return 1;
+		stat(path, &st);
+		fclose(f);
 
-		fd = open("mnt/cfgfs/keys/+100.cfg", O_RDONLY);
-		if (fd == -1) return 1;
-		close(fd);
-
-		fd = open("mnt/cfgfs/keys/+100.cfg", O_RDONLY);
-		rv = read(fd, data, 1024);
-		if (rv > 0) rv = read(fd, data, 512);
-		close(fd);
+		f = fopen(path, "r");
+		if (f == NULL) return 1;
+		stat(path, &st);
+		fread(&data, 1, sizeof(data), f);
+		fclose(f);
 
 	}
 

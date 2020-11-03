@@ -3,6 +3,13 @@
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
+#define assume(v) \
+	({ \
+		__auto_type _assume_v = (v); \
+		if (!_assume_v) __builtin_unreachable(); \
+		_assume_v; \
+	})
+
 #ifndef V
  #define V if (0)
 #endif
@@ -14,14 +21,20 @@
 #endif
 
 // https://en.cppreference.com/w/cpp/utility/exchange
-#define exchange(T, var, newval) ({ T oldval = var; var = newval; oldval; })
+#define exchange(var, newval) \
+	({ \
+		__auto_type _exchange_p = &(var); \
+		__auto_type _exchange_oldval = *_exchange_p; \
+		*_exchange_p = (newval); \
+		_exchange_oldval; \
+	})
 
 // #include <sys/prctl.h>
 #define set_thread_name(s) \
-	do { \
-	_Static_assert(__builtin_strlen(s) <= 15, "thread name too long"); \
-	prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
-	} while (0)
+	({ \
+		_Static_assert(__builtin_strlen(s) <= 15, "thread name too long"); \
+		prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
+	})
 
 // -----------------------------------------------------------------------------
 
@@ -37,14 +50,14 @@
  #define __sanitizer_print_stack_trace()
 #endif
 
-#define assert2(x, s) \
-	({ __auto_type _assert_rv = (x); \
-	   if (unlikely(!_assert_rv)) { \
-	       fprintf(stderr, EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __func__, s); \
-	       __sanitizer_print_stack_trace(); \
-	       abort(); \
-	   } \
-	   _assert_rv; \
+#define assert2(v, s) \
+	({ \
+		__auto_type _assert_v = (v); \
+		if (unlikely(!_assert_v)) { \
+		    fprintf(stderr, EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __func__, (s)); \
+		    __sanitizer_print_stack_trace(); \
+		    __builtin_abort(); \
+		} \
 	})
 
 #define assert1(x) assert2(x, #x)
@@ -59,3 +72,42 @@
  #define assert1(x) assume(x)
  #define assert2(x, s) assume(x)
 #endif
+
+// -----------------------------------------------------------------------------
+
+// helpers for repetitive error checking
+
+// check that the return value from a function isn't -1
+// if it is, do "perror(what)" and execute the statement in "orelse" (should be goto or return)
+#define check_minus1(v_, what, orelse) \
+	({ \
+		__auto_type _check_v = (v_); \
+		if (unlikely(_check_v == -1)) { \
+			eprintln(what ": %s", strerror(errno)); \
+			orelse; \
+			__builtin_abort(); \
+		} \
+		_check_v; \
+	})
+
+// same as above, but for functions that return an errno value instead of setting it globally
+#define check_errcode(v_, what, orelse) \
+	({ \
+		__auto_type _check_v = (v_); \
+		if (unlikely(_check_v != 0)) { \
+			eprintln(what ": %s", strerror(_check_v)); \
+			orelse; \
+			__builtin_abort(); \
+		} \
+	})
+
+#define check_nonnull(v_, what, orelse) \
+	({ \
+		__auto_type _check_v = (v_); \
+		if (unlikely(_check_v == NULL)) { \
+			eprintln(what ": %s", strerror(errno)); \
+			orelse; \
+			__builtin_abort(); \
+		} \
+		_check_v; \
+	})

@@ -246,7 +246,7 @@ end
 local jump_dn = '+jump;slot6;spec_mode'
 local jump_up = '-jump'
 
-if 1 + 1 == 2 then
+if 1 + 1 == 3 then
 	local dn = 100
 	local jump = 697 -- 695? 697? 703? 706?
 	local jumping = nil
@@ -429,7 +429,7 @@ bind('f7',			'')
 cmd.bind('f8',			'exec cfgfs/buffer')
 cmd.bind('f9',			'exec cfgfs/buffer')
 bind('f10',			function ()
-				    local old = tonumber(cvar.con_enable)
+				    local old = cvar.con_enable
 				    cvar.con_enable = 1
 				    cmd.toggleconsole()
 				    cvar.con_enable = old
@@ -543,22 +543,5 @@ bind('kp_enter',		'')
 
 bind('kp_ins',			'')
 bind('kp_del',			'')
-
---bind('f9', function ()
---	cmd('toggleconsole')
---	cmd('+attack')
---	cmd('cl_crosshair_color', '123')
---	cmd('say', 'test test test test test')
---	cmd('say', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
---	cmd('say', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
---	cmd('say', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
---	cmd('-attack')
---	cmd('+jump')
---	cmd('-jump')
---	cmd('cl_crosshair_file', 'crosshair123')
---	cmd('cl_crosshair_red', '255')
---	cmd('cl_crosshair_green', '0')
---	cmd('cl_crosshair_blue', '255')
---end) -- @@ tf2sim @@
 
 cmd.echo('</script.lua>')

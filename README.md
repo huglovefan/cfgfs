@@ -51,7 +51,6 @@ Some other interesting features of `cfgfs` are:
 - `libreadline`
 - `libx11`, `libxtst`
 - `libjemalloc`
-- `clang` compiler
 
 Due to lack of interest and development resources, `cfgfs` is currently not
 compatible with the Microsoft® Windows® operating system.

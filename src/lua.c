@@ -1,17 +1,22 @@
 #define _GNU_SOURCE // unlocked_stdio
 #include "lua.h"
-#include "buffers.h"
-#include "macros.h"
-#include "main.h"
-#include "keys.h"
-#include "click.h"
-#include "attention.h"
-#include "cli_output.h"
 
 #include <errno.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include <lualib.h>
+#include <lauxlib.h>
+
+#include "attention.h"
+#include "buffers.h"
+#include "cli_output.h"
+#include "click.h"
+#include "keys.h"
+#include "macros.h"
+#include "main.h"
 
 // -----------------------------------------------------------------------------
 
@@ -25,7 +30,7 @@ bool LUA_TRYLOCK(void) { return (0 == pthread_mutex_trylock(&lua_mutex)); }
 // -----------------------------------------------------------------------------
 
 __attribute__((cold))
-int lua_print_backtrace(lua_State *L) {
+static int lua_print_backtrace(lua_State *L) {
 	if (!lua_checkstack(L, 2)) return 0;
 	 lua_getglobal(L, "debug");
 	  lua_getfield(L, -1, "traceback");
@@ -401,11 +406,13 @@ lua_State *lua_init(void) {
 	 lua_pushcfunction(L, l_init);
 	lua_setglobal(L, "_init");
 
+	attention_init_lua(L);
+
 	char cwd[PATH_MAX];
-	if (getcwd(cwd, sizeof(cwd)) == NULL) {
-		eprintln("lua: getcwd: %s", strerror(errno));
-		exit(1);
-	}
+	check_nonnull(
+	    getcwd(cwd, sizeof(cwd)),
+	    "lua: getcwd",
+	    exit(1));
 
 	lua_pushstring(L, cwd); lua_setglobal(L, "cwd");
 

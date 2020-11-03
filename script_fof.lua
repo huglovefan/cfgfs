@@ -60,7 +60,7 @@ cmd.bind('f8',			'exec cfgfs/buffer')
 bind('f9',			release_all_keys)
 
 bind('f10',			function ()
-				    local old = tonumber(cvar.con_enable)
+				    local old = cvar.con_enable
 				    cvar.con_enable = 1
 				    cmd.toggleconsole()
 				    cvar.con_enable = old

@@ -1,17 +1,21 @@
 #include "reloader.h"
-#include "lua.h"
-#include "buffers.h"
-#include "macros.h"
 
-#include <sys/poll.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/inotify.h>
+#include <sys/poll.h>
 #include <sys/prctl.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <errno.h>
-#include <string.h>
 
+#include <lua.h>
+
+#include "buffers.h"
 #include "cli_output.h"
+#include "lua.h"
+#include "macros.h"
 
 // -----------------------------------------------------------------------------
 
@@ -28,16 +32,14 @@ enum msg_action {
 
 #define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
 
+__attribute__((cold))
 static bool wait_for_event(const char *path, int fd) {
 	bool success = false;
 
 	// just re-add the watch each time
 	// some editors replace the file instead of modifying the existing one
 	int wd = inotify_add_watch(fd, path, IN_MODIFY);
-	if (wd == -1) {
-		eprintln("reloader: inotify_add_watch: %s", strerror(errno));
-		goto out;
-	}
+	check_minus1(wd, "reloader: inotify_add_watch", goto out);
 
 	struct pollfd fds[2] = {
 		{.fd = fd,         .events = POLLIN},
@@ -63,10 +65,7 @@ static bool wait_for_event(const char *path, int fd) {
 		if (likely(fds[0].revents & POLLIN)) {
 			char buf[sizeof(struct inotify_event) + PATH_MAX + 1];
 			ssize_t in_rv = read(fd, buf, sizeof(buf));
-			if (in_rv == -1) {
-				eprintln("reloader: read: %s", strerror(errno));
-				goto out;
-			}
+			check_minus1(in_rv, "reloader: read", goto out);
 			success = true;
 			goto out;
 		}
@@ -76,6 +75,7 @@ out:
 	return success;
 }
 
+__attribute__((cold))
 static void do_reload(lua_State *L) {
 	LUA_LOCK();
 
@@ -103,15 +103,16 @@ D	assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
 
 // -----------------------------------------------------------------------------
 
+__attribute__((cold))
 static void *reloader_main(void *ud) {
 	set_thread_name("reloader");
 	lua_State *L = ud;
 
 	int fd = inotify_init();
-	if (fd == -1) {
-		eprintln("reloader: inotify_init: %s", strerror(errno));
-		goto out;
-	}
+	check_minus1(
+	    fd,
+	    "reloader: inotify_init",
+	    goto out);
 
 	const char *filename = (getenv("CFGFS_SCRIPT") ?: "./script.lua");
 	while (wait_for_event(filename, fd)) {
@@ -126,31 +127,35 @@ out:
 
 static pthread_t thread;
 
+__attribute__((cold))
 void reloader_init(void *L) {
 	if (thread != 0) return;
-	if (pipe(msgpipe) == -1) {
-		eprintln("reloader: pipe: %s", strerror(errno));
-		goto err;
-	}
-	int err = pthread_create(&thread, NULL, reloader_main, (void *)L);
-	if (err != 0) {
-		thread = 0;
-		eprintln("reloader: pthread_create: %s", strerror(err));
-		goto err;
-	}
+
+	check_minus1(
+	    pipe(msgpipe),
+	    "reloader: pipe",
+	    goto err);
+
+	check_errcode(
+	    pthread_create(&thread, NULL, reloader_main, (void *)L),
+	    "reloader: pthread_create",
+	    goto err);
+
 	return;
 err:
-	if (msgpipe[0] != -1) close(exchange(int, msgpipe[0], -1));
-	if (msgpipe[1] != -1) close(exchange(int, msgpipe[1], -1));
+	thread = 0;
+	if (msgpipe[0] != -1) close(exchange(msgpipe[0], -1));
+	if (msgpipe[1] != -1) close(exchange(msgpipe[1], -1));
 }
 
+__attribute__((cold))
 void reloader_deinit(void) {
 	if (thread == 0) return;
 
 	msg_write(msg_exit);
 
-	pthread_join(exchange(pthread_t, thread, 0), NULL);
+	pthread_join(exchange(thread, 0), NULL);
 
-	close(exchange(int, msgpipe[0], -1));
-	close(exchange(int, msgpipe[1], -1));
+	close(exchange(msgpipe[0], -1));
+	close(exchange(msgpipe[1], -1));
 }

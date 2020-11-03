@@ -1,25 +1,29 @@
 #define _GNU_SOURCE // unlocked_stdio
 #include "cli_input.h"
+
 #include <errno.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <sys/prctl.h>
 #include <unistd.h>
-#include <pthread.h>
-
-#include "main.h"
-#include "lua.h"
-#include "click.h"
-#include "vcr.h"
-#include "buffers.h"
-#include "macros.h"
-#include "cli_output.h"
 
 #pragma GCC diagnostic push
  #pragma GCC diagnostic ignored "-Wstrict-prototypes"
   #include <readline.h>
 #pragma GCC diagnostic pop
 #include <readline/history.h>
+
+#include <lua.h>
+
+#include "buffers.h"
+#include "cli_output.h"
+#include "click.h"
+#include "lua.h"
+#include "macros.h"
+#include "main.h"
+#include "vcr.h"
 
 _Atomic(bool) cli_reading_line;
 
@@ -30,6 +34,7 @@ static int msgpipe[2] = {-1, -1};
 enum msg_action {
 	msg_winch = 1,
 	msg_exit = 2,
+	msg_manual_eof = 3,
 };
 
 #define msg_write(c) ({ char c_ = (c); write(msgpipe[1], &c_, 1); })
@@ -40,6 +45,7 @@ enum msg_action {
 static _Atomic(bool) cli_exiting;
 static lua_State *g_L;
 
+__attribute__((cold))
 static void linehandler(char *line) {
 	cli_reading_line = false;
 	double tm = vcr_get_timestamp();
@@ -77,6 +83,7 @@ end:
 
 // -----------------------------------------------------------------------------
 
+__attribute__((cold))
 static void winch_handler(int signal) {
 	(void)signal;
 	msg_write(msg_winch);
@@ -86,10 +93,11 @@ static void winch_handler(int signal) {
 
 #define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
 
+__attribute__((cold))
 static void *cli_main(void *ud) {
+	set_thread_name("cli");
 	lua_State *L = ud;
 	g_L = L;
-	set_thread_name("cli");
 
 	signal(SIGWINCH, winch_handler);
 
@@ -120,6 +128,15 @@ static void *cli_main(void *ud) {
 				cli_unlock_output_norestore();
 				break;
 			case msg_exit:
+				goto out;
+			case msg_manual_eof:
+				{
+				double tm = vcr_get_timestamp();
+				vcr_event {
+					vcr_add_string("what", "cli_eof");
+					vcr_add_double("timestamp", tm);
+				}
+				}
 				goto out;
 			default:
 				assert(false);
@@ -153,32 +170,42 @@ out:
 
 static pthread_t thread;
 
+__attribute__((cold))
 void cli_input_init(void *L) {
 	if (thread != 0) return;
 	if (!isatty(STDIN_FILENO)) return;
-	if (pipe(msgpipe) == -1) {
-		eprintln("cli: pipe: %s", strerror(errno));
-		goto err;
-	}
-	int err = pthread_create(&thread, NULL, cli_main, L);
-	if (err != 0) {
-		thread = 0;
-		eprintln("cli: pthread_create: %s", strerror(err));
-		goto err;
-	}
+
+	check_minus1(
+	    pipe(msgpipe),
+	    "cli: pipe",
+	    goto err);
+
+	check_errcode(
+	    pthread_create(&thread, NULL, cli_main, L),
+	    "cli: pthread_create",
+	    goto err);
+
 	return;
 err:
-	if (msgpipe[0] != -1) close(exchange(int, msgpipe[0], -1));
-	if (msgpipe[1] != -1) close(exchange(int, msgpipe[1], -1));
+	thread = 0;
+	if (msgpipe[0] != -1) close(exchange(msgpipe[0], -1));
+	if (msgpipe[1] != -1) close(exchange(msgpipe[1], -1));
 }
 
+__attribute__((cold))
 void cli_input_deinit(void) {
 	if (thread == 0) return;
 
 	msg_write(msg_exit);
 
-	pthread_join(exchange(pthread_t, thread, 0), NULL);
+	pthread_join(exchange(thread, 0), NULL);
 
-	close(exchange(int, msgpipe[0], -1));
-	close(exchange(int, msgpipe[1], -1));
+	close(exchange(msgpipe[0], -1));
+	close(exchange(msgpipe[1], -1));
+}
+
+// -----------------------------------------------------------------------------
+
+void cli_input_manual_eof(void) {
+	msg_write(msg_manual_eof);
 }

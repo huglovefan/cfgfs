@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdlib.h>
+#include <stddef.h>
 
 extern const size_t max_line_length;
 extern const size_t max_cfg_size;

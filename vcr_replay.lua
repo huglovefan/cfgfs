@@ -7,6 +7,7 @@ to produce logs, build cfgfs like "make -B VCR=1"
 things that currently aren't recorded but should be:
 - contents of script.lua on load/reload -- just need to do it
 - terminal signals/eof -- starting to regret this
+- attention -- do by changing the terminal title
 
 ]]
 
@@ -119,6 +120,9 @@ local actions = {
 		return libvcr.ttype(tty_fd, t.text..'\n')
 		-- i hope this works because im too sick of it to test it any further
 		-- need to implement signals/^D too
+	end,
+	cli_eof = function (t)
+		-- how to do this?
 	end,
 }
 if false then -- disable checking. it's not that slow though

@@ -1,6 +1,8 @@
 assert(_print)
+_println = _print
 println = function (fmt, ...) return _print(string.format(fmt, ...)) end
 assert(_eprint)
+_eprintln = _eprint
 eprintln = function (fmt, ...) return _eprint(string.format(fmt, ...)) end
 
 setmetatable(_G, {
@@ -507,7 +509,7 @@ local run_timeouts = function ()
 	-- ugly slow wrong code but luckily timeouts aren't very useful
 	-- (what was wrong about it?)
 	-- was it due to emptying the timeouts list first
-	-- cfgfs can't cancel timeouts so that shouldn't be a problem
+	-- cfgfs can't remove timeouts from it so that shouldn't be a problem
 
 end
 
@@ -617,9 +619,12 @@ exec_path = function (path)
 			end
 		end
 
+-- next (number) times cfgfs_getattr() gets a request about this file, say it doesn't exist
 		local m = path:after('unmask_next/')
 		if m then
-			unmask_next[m] = 3
+			local newval = 3
+--			eprintln('unmask_next[%s]: %d -> %d (lua)', m, unmask_next[m] or 0, newval)
+			unmask_next[m] = newval
 			return
 		end
 
@@ -772,6 +777,7 @@ release_all_keys = function ()
 end
 
 local is_active = (_get_attention() == cfgfs.game_window_title)
+_update_attention(is_active)
 _attention = function (title)
 	local was_active = is_active
 	is_active = (title ~= nil and title == cfgfs.game_window_title)
@@ -781,6 +787,10 @@ _attention = function (title)
 			eprintln('error: %s', err)
 		end
 	end
+	if cfgfs.game_window_title == nil then
+		return _update_attention(nil)
+	end
+	return _update_attention(is_active) -- send it to C. this whole thing is dumb but i'm too tired to fix it anymore today
 end
 is_game_window_active = function ()
 	return is_active
@@ -831,7 +841,7 @@ _cli_input = function (line)
 end
 
 _game_console_output = function (line)
-	println('%s', line)
+	_println(line)
 	local ok, err = xpcall(function () return fire_event('game_console_output', line) end, debug.traceback)
 	if not ok then
 		eprintln('error: %s', err)
