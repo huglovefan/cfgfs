@@ -106,6 +106,7 @@ static void do_xevents(Display *display,
 	int cnt = 0;
 	bool did_attention = false;
 again:
+	if (!XPending(display)) return;
 	XNextEvent(display, &event);
 
 	if (event.type == 28 &&
@@ -128,7 +129,7 @@ again:
 		if (prop.value) XFree(prop.value);
 	}
 
-	if (++cnt <= 10 && XPending(display)) goto again;
+	if (++cnt <= 10) goto again;
 }
 
 __attribute__((cold))
@@ -152,9 +153,9 @@ static void *attention_main(void *ud) {
 	int conn = ConnectionNumber(display);
 	assert(conn >= 0);
 
-	while (wait_for_event(conn)) {
+	do {
 		do_xevents(display, net_active_window, net_wm_name, L);
-	}
+	} while (wait_for_event(conn));
 out:
 	if (display) XCloseDisplay(display);
 	return NULL;

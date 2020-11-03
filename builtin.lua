@@ -776,22 +776,27 @@ release_all_keys = function ()
 	end
 end
 
-local is_active = (_get_attention() == cfgfs.game_window_title)
+--
+
+local is_active = nil
+
 _update_attention(is_active)
+
 _attention = function (title)
 	local was_active = is_active
-	is_active = (title ~= nil and title == cfgfs.game_window_title)
+	if cfgfs.game_window_title == nil then
+		return _update_attention(nil)
+	end
+	is_active = (title == cfgfs.game_window_title)
 	if is_active ~= was_active then
 		local ok, err = xpcall(function () return fire_event('attention', is_active) end, debug.traceback)
 		if not ok then
 			eprintln('error: %s', err)
 		end
 	end
-	if cfgfs.game_window_title == nil then
-		return _update_attention(nil)
-	end
 	return _update_attention(is_active) -- send it to C. this whole thing is dumb but i'm too tired to fix it anymore today
 end
+
 is_game_window_active = function ()
 	return is_active
 end
