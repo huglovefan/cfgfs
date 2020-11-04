@@ -57,7 +57,7 @@ void main_stop(void) {
 	static _Atomic(bool) called;
 	struct fuse_session *fuse_instance = g_fuse_instance;
 	const char *mountpoint = g_mountpoint;
-	if (fuse_instance != NULL && mountpoint != NULL && !called++) {
+	if (fuse_instance != NULL && mountpoint != NULL && !clang_atomics_bug(called++)) {
 		fuse_session_exit(fuse_instance);
 
 		// fuse_session_exit() only sets a flag, need to wake it up

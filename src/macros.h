@@ -36,6 +36,12 @@
 		prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
 	})
 
+// https://gist.github.com/4d2a407a2866402b6cb9678b0c18f71c
+// if using post-increment on an _Atomic(_Bool) in an if statement, wrap this
+// around it like:
+//   if (!clang_atomics_bug(bool++)) ...
+#define clang_atomics_bug(expr) ((int)(expr))
+
 // -----------------------------------------------------------------------------
 
 #undef assert

@@ -40,14 +40,14 @@ static bool click_init(void) {
 
 void click(void) {
 	static _Atomic(bool) clicking = false;
-	if (unlikely(clicking++)) goto out;
+	if (unlikely(clang_atomics_bug(clicking++))) return;
 	if (unlikely(game_window_is_active == game_window_inactive)) goto out;
 	if (unlikely(!display) && !click_init()) goto out;
 	XTestFakeKeyEvent(display, keycode, True, 0);
 	XTestFakeKeyEvent(display, keycode, False, 0);
 	XFlush(display);
 out:
-	clicking--;
+	clicking = false;
 }
 
 // -----------------------------------------------------------------------------
