@@ -6,6 +6,9 @@ typedef struct lua_State lua_State;
 
 lua_State *lua_init(void);
 
+int lua_print_backtrace(lua_State *L);
+int lua_do_nothing(lua_State *L);
+
 // lock that protects
 // - the main lua state
 // - buffers in buffers.c (since they can be modified from lua)

@@ -10,9 +10,7 @@
 #include "macros.h"
 
 double vcr_get_timestamp(void) {
-	struct timespec ts;
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+	return mono_ms();
 }
 
 static pthread_mutex_t vcr_lock = PTHREAD_MUTEX_INITIALIZER;

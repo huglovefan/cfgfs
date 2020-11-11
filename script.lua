@@ -1,6 +1,6 @@
 cmd.echo('<script.lua>')
 
-cfgfs.game_window_title = 'Team Fortress 2 - OpenGL'
+cfgfs.game_window_title_is('Team Fortress 2 - OpenGL')
 cfgfs.init_after_cfg['comfig/modules_run.cfg'] = true
 cfgfs.intercept_blackhole['comfig/echo.cfg'] = true
 
@@ -107,8 +107,8 @@ local xh_update = function (slot)
 end
 add_listener('slotchange', xh_update)
 
-add_key_listener('tab', function (pressed)
-	if pressed and is_pressed['ctrl'] then
+add_listener({'+tab', '-tab'}, function ()
+	if is_pressed['tab'] and is_pressed['ctrl'] then
 		if #xhs[class][slot] > 1 then
 			table.insert(xhs[class][slot], xhs[class][slot][1])
 			table.remove(xhs[class][slot], 1)
@@ -246,9 +246,9 @@ end
 local jump_dn = '+jump;slot6;spec_mode'
 local jump_up = '-jump'
 
-if 1 + 1 == 3 then
+if 1 + 1 == 2 then
 	local dn = 100
-	local jump = 697 -- 695? 697? 703? 706?
+	local jump = 698 -- was 697
 	local jumping = nil
 
 	local cmd_dn = jump_dn
@@ -259,11 +259,11 @@ if 1 + 1 == 3 then
 		local t = {} jumping = t
 		while true do
 			cfg(cmd_dn)
-			wait2(dn)
+			wait(dn)
 			if jumping ~= t then break end
 
 			cfg(cmd_up)
-			wait2(jump-dn)
+			wait(jump-dn)
 			if jumping ~= t then break end
 		end
 	end
@@ -401,10 +401,10 @@ bind('f5',			function ()
 						}) do
 							local tm = 20
 							cmd.join_class(class)
-							wait2(tm)
+							wait(tm)
 							if not is_pressed['f5'] then goto out end
 							cmd.voicemenu(0, 0)
-							wait2(510-tm)
+							wait(510-tm)
 							if not is_pressed['f5'] then goto out end
 						end
 					end
@@ -418,7 +418,7 @@ bind('f6',			function ()
 						cmd.destroy(3)
 						cmd.build(3)
 						cmd('+attack')
-						wait2(115)
+						wait(115)
 						cmd('-attack')
 						if not is_pressed['f6'] then goto out end
 					end
@@ -543,5 +543,22 @@ bind('kp_enter',		'')
 
 bind('kp_ins',			'')
 bind('kp_del',			'')
+
+bind('f9', 'toggleconsole') -- tf2sim
+
+bind('f5', function ()
+	local p = '/sys/devices/system/cpu/cpufreq/boost'
+	local f <close> = assert(io.open(p, 'r'))
+	local newval = f:read('n')~1
+	if not os.execute(string.format('exec doas sh -c "echo %d >%s"', newval, p)) then
+		cmd.echo('toggling turbo failed')
+		return
+	end
+	if newval ~= 0 then
+		cmd.echo('turbo is now on')
+	else
+		cmd.echo('turbo is now off')
+	end
+end)
 
 cmd.echo('</script.lua>')

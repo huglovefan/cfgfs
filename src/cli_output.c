@@ -44,33 +44,50 @@ void eprintln(const char *fmt, ...) {
 
 static struct {
 	char *line_buffer;
-	int end; // line length. set to -1 if we shouldn't restore it
+	int end; // line length (or the enum below)
 	int point; // cursor position
+	size_t buffer_alloc;
 } saved;
+enum {
+	restore_nothing = -1,
+	restore_empty_line = 0,
+};
+
+__attribute__((cold))
+static void ensure_buffer(size_t sz) {
+	do {
+		saved.buffer_alloc = (saved.buffer_alloc) ? saved.buffer_alloc*2 : 128;
+		saved.line_buffer = realloc(saved.line_buffer, saved.buffer_alloc);
+	} while (unlikely(saved.buffer_alloc < sz));
+}
 
 void cli_lock_output(void) {
 	pthread_mutex_lock(&output_lock);
 	if (likely(cli_reading_line)) {
 		saved.end = rl_end;
-		saved.point = rl_point;
-		assert(saved.end >= 0);
-
-		saved.line_buffer = realloc(saved.line_buffer, (size_t)saved.end+1);
-		memcpy(saved.line_buffer, rl_line_buffer, (size_t)saved.end);
-		saved.line_buffer[saved.end] = '\0';
-
+D		assert(saved.end >= 0);
+		if (unlikely(saved.end != restore_empty_line)) {
+			size_t len = (size_t)saved.end;
+			if (unlikely(saved.buffer_alloc < len+1)) {
+				ensure_buffer(len+1);
+			}
+			memcpy(saved.line_buffer, rl_line_buffer, len+1);
+			saved.point = rl_point;
+			rl_replace_line("", 0);
+		}
 		rl_save_prompt();
-		rl_replace_line("", 0);
 		rl_redisplay();
 	} else {
-		saved.end = -1;
+		saved.end = restore_nothing;
 	}
 }
 void cli_unlock_output(void) {
-	if (likely(saved.end >= 0)) {
+	if (likely(saved.end != restore_nothing)) {
+		if (unlikely(saved.end != restore_empty_line)) {
+			rl_replace_line(saved.line_buffer, 0);
+			rl_point = saved.point;
+		}
 		rl_restore_prompt();
-		rl_replace_line(saved.line_buffer, 0);
-		rl_point = saved.point;
 		rl_redisplay();
 	}
 	pthread_mutex_unlock(&output_lock);

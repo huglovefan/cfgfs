@@ -24,27 +24,17 @@
 #include "buffers.h"
 #include "cli_input.h"
 #include "cli_output.h"
+#include "click.h"
 #include "logtail.h"
 #include "lua.h"
 #include "macros.h"
 #include "reloader.h"
 #include "vcr.h"
 
-const size_t max_line_length = 510;
-const size_t max_cfg_size = 1048576;
-const size_t max_argc = 63;
-
-// how big we report config files to be.
-// one can contain less data than this but not more
-// * the lowest safe value is 529 (`max_line_length + strlen("\nexec cfgfs/buffer\n")`)
-//   but 1024 is the lowest value that still works well
-const size_t reported_cfg_size = 1024;
-
 _Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
 
-// whether to define these useless functions
+// uncomment to define this useless function for testing
 //#define WITH_RELEASE
-//#define WITH_READDIR
 
 // -----------------------------------------------------------------------------
 
@@ -72,13 +62,14 @@ static void hup_handler(int signal) {
 	g_reexec = true;
 
 	// call main_stop() but safely
-	cli_input_manual_eof();
-	// raise(SIGTERM) doesn't work either since it needs to be woken up
+	// todo: this isn't really safe
+	if (g_fuse_instance != NULL) cli_input_manual_eof();
+	// raise(SIGTERM) doesn't work since it needs to be woken up
 }
 
 // -----------------------------------------------------------------------------
 
-static _Atomic(lua_State *) g_L;
+static lua_State *g_L;
 
 static lua_State *get_state(void) {
 	return g_L;
@@ -93,6 +84,7 @@ static int have_file(const char *restrict path) {
 	size_t len = strlen(path);
 
 	if (likely(len >= strlen("/cfgfs"))) {
+		// forgot the memcmp("/cfgfs/") call here but it works
 		if (likely(*(path+strlen("/cfgfs")) == '/')) {
 			if (memcmp(path+len-strlen(".cfg"), ".cfg", sizeof(".cfg")) == 0) {
 				return 0xf;
@@ -109,7 +101,7 @@ static int have_file(const char *restrict path) {
 	// todo:
 	// could this just check if it ends with .cfg?
 	// has this thing ever worked for intercepting non-cfg files?
-	// it doesn't sound that useful
+	// it doesn't sound like something that would be used in practice
 	{
 	const char *p = path+len;
 	do {
@@ -145,7 +137,7 @@ do_lua_check:
 		  lua_rawset(L, -4);
 		lua_pop(L, 2);
 D		assert(stack_is_clean(L));
-//D		eprintln("unmask_next[%s]: %ld -> %ld", path+1, cnt+1, cnt);
+VV		eprintln("unmask_next[%s]: %ld -> %ld", path+1, cnt+1, cnt);
 
 		LUA_UNLOCK();
 		return 0x0;
@@ -189,8 +181,7 @@ V	eprintln("cfgfs_getattr: %s", path);
 	}
 
 	// these affect how much is read() at once (details unclear)
-	// less reads may be better, most reads output very little stuff
-	// this logic is in glibc (lua file reads work the same)
+	// file reads from lua work the same so the logic must be in glibc
 	stbuf->st_size = reported_cfg_size;
 	stbuf->st_blksize = (reported_cfg_size-1);
 	stbuf->st_blocks = 1;
@@ -350,85 +341,8 @@ V	eprintln("cfgfs_release: %s", path);
 
 // ~
 
-#if defined(WITH_READDIR)
-
-#define add(name, mode) \
-	({ \
-		struct stat st = {0}; \
-		st.st_mode = mode; \
-		if (!failed) failed += !!filler(buf, name, &st, 0, (enum fuse_fill_dir_flags)0); \
-	})
-#define add_dir(name) add(name, S_IFDIR)
-#define add_file(name) add(name, S_IFREG)
-
-// this is pretty useless
-// the whole filesystem is useless outside the game
-// the game doesn't do anything useful with this
-
-__attribute__((cold))
-static int cfgfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-                         off_t offset, struct fuse_file_info *fi,
-                         enum fuse_readdir_flags flags) {
-V	eprintln("cfgfs_readdir: %s", path);
-	(void)fi;
-	(void)flags;
-	bool failed = false;
-	if (offset != 0) return -EINVAL;
-	add_dir(".");
-	add_dir("..");
-	if (strcmp(path, "/") == 0) {
-		add_dir("cfgfs");
-		return 0;
-	} else if (strcmp(path, "/cfgfs") == 0) {
-		add_dir("alias");
-		add_dir("keys");
-		add_dir("resume");
-		add_dir("unmask_next");
-		add_file("buffer.cfg");
-		add_file("init.cfg");
-		add_file("license.cfg");
-		return 0;
-	} else if (strcmp(path, "/cfgfs/alias") == 0) {
-		LUA_LOCK();
-		lua_State *L = get_state();
-		lua_getglobal(L, "cmd");
-		lua_pushnil(L);
-		while (lua_next(L, -2)) {
-			lua_pop(L, 1); // don't need the value
-			if (lua_type(L, -1) == LUA_TSTRING) {
-				char namebuf[max_line_length+1];
-				*namebuf = '\0';
-				snprintf(namebuf, sizeof(namebuf), "%s.cfg", lua_tostring(L, -1));
-				if (*namebuf) add_file(namebuf);
-			}
-		}
-		lua_pop(L, 1);
-		assert(stack_is_clean(L));
-		LUA_UNLOCK();
-		return 0;
-	} else if (strcmp(path, "/cfgfs/keys") == 0) {
-		return -ENOSYS;
-	} else if (strcmp(path, "/cfgfs/resume") == 0) {
-		return -ENOSYS;
-	} else if (strcmp(path, "/cfgfs/unmask_next") == 0) {
-		return -ENOSYS;
-	} else {
-		return -ENOENT;
-	}
-}
-
-#undef add
-#undef add_dir
-#undef add_file
-
-#endif
-
-// ~
-
 __attribute__((cold))
 static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
-	lua_State *L = get_state();
-
 	// https://github.com/libfuse/libfuse/blob/0105e06/include/fuse_common.h#L421
 	(void)conn;
 
@@ -449,22 +363,6 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	// "negative_timeout = DBL_MAX" breaks unmask_next
 	// with "entry_timeout = 0", unmask_next needs to set 4 instead of 3
 
-	 lua_getglobal(L, "cwd");
-	 const char *cwd = lua_tostring(L, -1);
-	 check_minus1(
-	     chdir(cwd),
-	     "cfgfs_init: chdir",
-	     goto err);
-	lua_pop(L, 1);
-
-	cli_input_init(L);
-	logtail_init(L);
-	reloader_init(L);
-	attention_init(L);
-
-	return (void *)L;
-err:
-	raise(SIGTERM);
 	return NULL;
 }
 
@@ -477,35 +375,31 @@ static const struct fuse_operations cfgfs_oper = {
 #if defined(WITH_RELEASE)
 	.release = cfgfs_release,
 #endif
-#if defined(WITH_READDIR)
-	.readdir = cfgfs_readdir,
-#endif
 	.init = cfgfs_init,
 };
 
 __attribute__((cold))
 int main(int argc, char **argv) {
 
-#ifdef SANITIZER
-	fprintf(stderr, "NOTE: cfgfs was built with %s\n", SANITIZER);
+#if defined(SANITIZER)
+	eprintln("NOTE: cfgfs was built with %s", SANITIZER);
 #endif
 
 #if defined(PGO) && PGO == 1
-	fprintf(stderr, "NOTE: this is a PGO profiling build, rebuild with PGO=2 when finished\n");
+	eprintln("NOTE: this is a PGO profiling build, rebuild with PGO=2 when finished");
 #endif
 
-D	fprintf(stderr, "NOTE: debug code is enabled\n");
-V	fprintf(stderr, "NOTE: verbose messages are enabled\n");
-VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
+D	eprintln("NOTE: debug code is enabled");
+V	eprintln("NOTE: verbose messages are enabled");
+VV	eprintln("NOTE: very verbose messages are enabled");
 
 #if defined(WITH_VCR)
-	fprintf(stderr, "NOTE: events are being logged to vcr.log\n");
+	eprintln("NOTE: events are being logged to vcr.log");
 #endif
 
-	signal(SIGCHLD, SIG_IGN); // zombie killer
 	signal(SIGHUP, hup_handler);
 
-	// ---------------------------------------------------------------------
+	// ~ init fuse ~
 
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct fuse *fuse;
@@ -515,13 +409,11 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 	if (fuse_parse_cmdline(&args, &opts) != 0) {
 		return 1;
 	}
-
 	if (opts.show_version) {
 		fuse_lowlevel_version();
 		res = 0;
 		goto out_no_fuse;
 	}
-
 	if (opts.show_help) {
 		if (args.argv[0][0] != '\0') {
 			println("usage: %s [options] <mountpoint>", args.argv[0]);
@@ -532,7 +424,6 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 		res = 0;
 		goto out_no_fuse;
 	}
-
 	if (!opts.show_help && !opts.mountpoint) {
 		eprintln("error: no mountpoint specified");
 		res = 2;
@@ -541,9 +432,22 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 
 	opts.foreground = true;
 
-	// ---------------------------------------------------------------------
+	fuse = fuse_new(&args, &cfgfs_oper, sizeof(cfgfs_oper), NULL);
+	if (fuse == NULL) {
+		res = 3;
+		goto out_no_fuse;
+	}
+	if (fuse_mount(fuse, opts.mountpoint) != 0) {
+		res = 4;
+		goto out_fuse_newed;
+	}
+	struct fuse_session *se = fuse_get_session(fuse);
+	if (fuse_set_signal_handlers(se) != 0) {
+		res = 6;
+		goto out_fuse_newed_and_mounted;
+	}
 
-	// boot up lua
+	// ~ boot up lua ~
 
 	lua_State *L = lua_init();
 	g_L = L;
@@ -588,29 +492,15 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 
 	assert(stack_is_clean(L));
 
-	// ---------------------------------------------------------------------
+	// ~ boot up threads ~
 
-	fuse = fuse_new(&args, &cfgfs_oper, sizeof(cfgfs_oper), L);
-	if (fuse == NULL) {
-		res = 3;
-		goto out_no_fuse;
-	}
+	attention_init(L);
+	cli_input_init(L);
+	click_init();
+	logtail_init(L);
+	reloader_init(L);
 
-	if (fuse_mount(fuse, opts.mountpoint) != 0) {
-		res = 4;
-		goto out_fuse_inited;
-	}
-
-	if (fuse_daemonize(opts.foreground) != 0) {
-		res = 5;
-		goto out_fuse_inited_and_mounted;
-	}
-
-	struct fuse_session *se = fuse_get_session(fuse);
-	if (fuse_set_signal_handlers(se) != 0) {
-		res = 6;
-		goto out_fuse_inited_and_mounted;
-	}
+	// ~ boot up fuse ~
 
 	g_mountpoint = opts.mountpoint;
 	g_fuse_instance = se;
@@ -628,19 +518,20 @@ VV	fprintf(stderr, "NOTE: very verbose messages are enabled\n");
 	}
 
 	fuse_remove_signal_handlers(se);
-out_fuse_inited_and_mounted:
+out_fuse_newed_and_mounted:
 	fuse_unmount(fuse);
-out_fuse_inited:
+out_fuse_newed:
 	fuse_destroy(fuse);
 out_no_fuse:
 	vcr_save();
 	g_mountpoint = NULL;
 	g_fuse_instance = NULL;
-	cli_input_deinit();
 	attention_deinit();
-	reloader_deinit();
+	cli_input_deinit();
+	click_deinit();
 	logtail_deinit();
-	if (g_L != NULL) lua_close(g_L);
+	reloader_deinit();
+	if (g_L != NULL) lua_close(exchange(g_L, NULL));
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
 	if (g_reexec) {

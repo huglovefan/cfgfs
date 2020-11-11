@@ -1,9 +1,14 @@
-assert(_print)
-_println = _print
+_println = assert(_print)
 println = function (fmt, ...) return _print(string.format(fmt, ...)) end
-assert(_eprint)
-_eprintln = _eprint
+_eprintln = assert(_eprint)
 eprintln = function (fmt, ...) return _eprint(string.format(fmt, ...)) end
+print = function (...)
+	local t = {...}
+	for i = 1, #t do
+		t[i] = tostring(t[i])
+	end
+	return println('%s', table.concat(t, '\t'))
+end
 
 setmetatable(_G, {
 	__index = function (self, k)
@@ -45,7 +50,7 @@ end
 
 --------------------------------------------------------------------------------
 
--- machinery to reset all state so that we can reload script.lua
+-- machinery to reset all state for reloading script.lua
 
 local reset_callbacks = {}
 
@@ -71,6 +76,143 @@ end
 
 --------------------------------------------------------------------------------
 
+-- crappy event loop thing
+
+local sym_ok = {}
+local sym_wait = {}
+
+local ev_loop_co
+local ev_loop_fn
+ev_loop_fn = function (...)
+	local t = {...}
+	local ok, rv = xpcall(function ()
+		local t = t
+		while true do
+			t[1](select(2, table.unpack(t)))
+			if ev_loop_co ~= coroutine.running() then
+				break
+			end
+			t = {coroutine.yield(sym_ok)}
+		end
+	end, debug.traceback)
+	if not ok then
+		eprintln('error: %s', rv)
+	end
+	ev_loop_co = coroutine.create(ev_loop_fn)
+end
+ev_loop_co = coroutine.create(ev_loop_fn)
+
+local ev_handle_return = function (co, ok, rv1)
+	if not ok then
+		-- idiot forgot to use pcall
+		return error(rv1)
+	end
+end
+
+local ev_call = function (fn, ...)
+	if coroutine.running() == ev_loop_co then
+		ev_loop_co = coroutine.create(ev_loop_fn)
+	end
+	return ev_handle_return(ev_loop_co, coroutine.resume(ev_loop_co, fn, ...))
+end
+local ev_resume = function (co, ...)
+	return ev_handle_return(co, coroutine.resume(co, ...))
+end
+
+local ev_timeouts = make_resetable_table()
+
+local ev_wait = function (ms)
+	local target = 0
+	if ms > 0 then
+		target = _ms()+ms
+		_click_at(target)
+	else
+		_click()
+	end
+	if coroutine.running() == ev_loop_co then
+		ev_loop_co = coroutine.create(ev_loop_fn)
+	end
+	table.insert(ev_timeouts, {
+		target = target,
+		co = assert(coroutine.running()),
+	})
+	return coroutine.yield(sym_wait)
+end
+
+local ev_do_timeouts = function ()
+	local ts = ev_timeouts
+	if #ts == 0 then return end
+
+	local newts = {}
+	ev_timeouts = {}
+
+	local now = nil
+	for i = 1, #ts do
+		now = now or _ms()
+		local t = ts[i]
+		if now >= t.target then
+			ev_resume(t.co)
+			now = nil
+		else
+			table.insert(newts, t)
+		end
+	end
+	if #newts > 0 then
+		if #ev_timeouts > 0 then -- new ones were added
+			for _, t in ipairs(ev_timeouts) do
+				table.insert(newts, t)
+			end
+		end
+		ev_timeouts = newts
+	end
+end
+
+local ev_spinoff = function (fn)
+	return ev_call(function ()
+		local ok, rv = xpcall(function ()
+			return fn(v)
+		end, debug.traceback)
+		if not ok then
+			eprintln('error: %s', rv)
+		end
+	end)
+end
+
+-- i think these worked
+set_timeout = function (fn, ms)
+	local cancelled = false
+	spinoff(function ()
+		wait(ms)
+		if cancelled then return end
+		return fn()
+	end)
+	return {
+		cancel = function ()
+			cancelled = true
+		end,
+	}
+end
+set_interval = function (fn, ms)
+	local cancelled = false
+	spinoff(function ()
+		while true do
+			wait(ms)
+			if cancelled then break end
+			fn()
+		end
+	end)
+	return {
+		cancel = function ()
+			cancelled = true
+		end,
+	}
+end
+
+wait = ev_wait
+spinoff = ev_spinoff
+
+--------------------------------------------------------------------------------
+
 -- settings table
 
 do
@@ -78,8 +220,8 @@ do
 local init_settings = function ()
 	cfgfs = {
 		-- run fuse in single-threaded mode
-		-- ~10% faster but can cause lockups if script.lua accesses the cfgfs mount from outside
-		-- (requests can't be processed until the script returns)
+		-- ~10% faster but can cause lockups if something in script.lua accesses the cfgfs mount
+		-- (the request can't be processed until the script returns)
 		fuse_singlethread = true,
 
 		-- output the "initial output" of script.lua when it's reloaded
@@ -115,7 +257,7 @@ local init_settings = function ()
 			['user.scr'] = true,
 		},
 
-		-- prevent the game from seeing these configs
+		-- prevent the game from executing these configs
 		intercept_blackhole = {
 			-- ['example.cfg'] = true,
 		},
@@ -127,10 +269,8 @@ local init_settings = function ()
 			['slot'] = 'slotchange',
 		},
 
-		-- avoid using alias command for games that don't have it (fof)
+		-- work around lack of alias command for games that don't have it (fof)
 		compat_noalias = false,
-
-		-- game_window_title = '',
 	}
 end
 
@@ -151,10 +291,6 @@ local events = make_resetable_table()
 unmask_next = make_resetable_table()
 is_pressed = make_resetable_table()
 
--- how many times script.lua has been reloaded
--- (0 on the initial load, 1 on the first reload ...)
-reload_count = global('reload_count', 0)
-
 --------------------------------------------------------------------------------
 
 -- cfg/cmd magic tables
@@ -163,11 +299,11 @@ cfg = assert(_cfg)
 
 cfgf = function (fmt, ...) return cfg(string.format(fmt, ...)) end
 
-cmd = setmetatable(make_resetable_table(), {
+cmd = setmetatable({}, {
 	__index = function (self, k)
-		local f = function (...) return cmd(k, ...) end
-		rawset(self, k, f)
-		return f
+		local fn = function (...) return cmd(k, ...) end
+		rawset(self, k, fn)
+		return fn
 	end,
 	__newindex = function (self, k, v)
 		if cfgfs.compat_noalias then
@@ -193,90 +329,75 @@ cmd = setmetatable(make_resetable_table(), {
 	__call = assert(_cmd),
 })
 
---[[
-run_capturing_output = function (fn)
+run_capturing_output = function (cmd)
 	local f <close> = assert(io.open((gamedir or '.') .. '/console.log', 'r'))
 	f:seek('end')
-	local id = string.format('-capture%d', math.random(0xffffffff))
-	cmd('echo', id..'a')
-	fn()
-	cmd('echo', id..'b')
-	yield()
-	local on = false
-	local lines = {}
+	if type(cmd) ~= 'function' then
+		cfg(cmd)
+	else
+		cmd()
+	end
+	wait(0)
+	local t = {}
 	for l in f:lines() do
-		if on then
-			if l ~= id..'b ' then -- echo puts a space after it
-				lines[#lines+1] = l
-			else
-				on = false
-			end
-		else
-			if l == id..'a ' then
-				on = true
-			end
+		table.insert(t, l)
+	end
+	return t
+end
+
+local get_cvars = function (t)
+	local rv = {}
+	for _, l in ipairs(run_capturing_output(function ()
+		for _, k in ipairs(t) do
+			cmd.help(k)
+		end
+	end)) do
+		local mk, mv = l:match('"([^"]+)" = "([^"]*)"')
+		if mk then
+			rv[mk] = mv
 		end
 	end
-	return lines
+	return rv
 end
--- fixme: merge these
--- probably use the old one (no math.random = simpler and better for vcr)
--- edit: what can we do now that logtail calls a function here? line listener?
+-- note: the match pattern does not use "^"
+-- due to mysteries, the console output sometimes comes up jumbled with the
+--  order of words messed up
+-- like
+--[[
+	] help con_enable
+	 archive"con_enable" = "1"
+	 ( def. "0" ) - Allows the console to be activated.
+	] help con_enable
+	 - Allows the console to be activated.
+	"con_enable" = "1" ( def. "0" )
+	 archive
+	] help con_enable
+	 ( def. "0" )"con_enable" = "1"
+	 archive
+	 - Allows the console to be activated.
 ]]
+-- etc etc
+-- i wonder what causes it
+-- luckily the `"name" = "value"` part is always intact
 
 cvar = setmetatable({}, {
 	__index = function (_, k)
-		return cvar({k})[k]
+		return get_cvars({k})[k]
 	end,
 	__newindex = function (_, k, v)
 		-- ignore nil i guess
-		if v ~= nil then return cmd(k, v) end
+		if v == nil then return end
+		return cmd(k, v)
 	end,
+	-- calling this should get multiple cvars in one go but i'm not sure how it should be used
+	-- like should t be like a list or a map with default values
+	-- aa
+	-- and doesn't calling this look more like it's going to set them instead of getting
+	-- especially with default values it would
+	-- even if this could set multiple at once there would be no advantage over doing them separately
+	-- but what matters more is what it looks like it's doing
 	__call = function (_, t)
-		if type(t) == 'string' then
-			return cvar({t})[t]
-		end
-		if #t == 0 then
-			for k, n in pairs(t) do
-				cmd(k, v)
-			end
-			return
-		end
-		local f <close> = assert(io.open((gamedir or '.') .. '/console.log', 'r'))
-		f:seek('end')
-		for _, k in ipairs(t) do
-			cmd('help', k)
-			-- is there no way to do this silently?
-			-- con_filter_enable doesn't apply until later for some reason
-		end
-		yield()
-		for l in f:lines() do
-			local mk, mv = l:match('"([^"]+)" = "([^"]*)"')
-			if mk then
-				t[mk] = mv
-			end
-		end
-		return t
-		-- note: the match pattern does not use "^"
-		-- due to mysteries, console output in source sometimes
-		--  comes up jumbled with the order of words messed up
-		-- like
-		--[[
-			] help con_enable
-			 archive"con_enable" = "1"
-			 ( def. "0" ) - Allows the console to be activated.
-			] help con_enable
-			 - Allows the console to be activated.
-			"con_enable" = "1" ( def. "0" )
-			 archive
-			] help con_enable
-			 ( def. "0" )"con_enable" = "1"
-			 archive
-			 - Allows the console to be activated.
-		]]
-		-- etc etc
-		-- i wonder what causes it
-		-- the `"name" = "value"` part is luckily always intact
+		return error('not supported')
 	end,
 })
 
@@ -292,16 +413,16 @@ bind = function (key, cmd, cmd2)
 	if not cfgfs.compat_noalias then
 		if not binds_down[key] then
 			local cmd = _G.cmd
-			cmd.alias('+key'..n, 'exec', 'cfgfs/keys/+'..n..'.cfg')
-			cmd.alias('-key'..n, 'exec', 'cfgfs/keys/-'..n..'.cfg')
+			cmd.alias('+key'..n, 'exec', 'cfgfs/keys/+'..n)
+			cmd.alias('-key'..n, 'exec', 'cfgfs/keys/-'..n)
 			cmd.bind(key, '+key'..n)
 		end
 	else
 		local cmd = _G.cmd
 		if cmd2 then
-			cmd.bind(key, '+jlook;exec cfgfs/keys/^'..n..'.cfg//')
+			cmd.bind(key, '+jlook;exec cfgfs/keys/^'..n..'//')
 		else
-			cmd.bind(key, 'exec cfgfs/keys/@'..n..'.cfg')
+			cmd.bind(key, 'exec cfgfs/keys/@'..n)
 		end
 		-- (if cmd2 then ...):
 		-- the bind string needs to start with + to run something on key release too
@@ -318,6 +439,17 @@ bind = function (key, cmd, cmd2)
 	binds_down[key] = cmd
 	binds_up[key] = cmd2
 end
+-- at some point, should try making this bind simple string commands directly
+-- (so that they don't call into cfgfs)
+-- add_key_listener() needs to work though
+-- * check here if the key has listeners -> don't bind directly
+-- * check in add_key_listener() if it didn't have listeners before -> make exec
+-- * check in remove_key_listeners() if it was the last one -> make direct
+-- my most pressed keys are already functions though
+-- ** this would help with commands that need a key bound to them directly
+-- ** calling into cfgfs for everything helped(?) do timeouts when click() didn't exist
+-- *** fug what do i do now that add_key_listener() is gone
+--     -> reinstate but use the new events internally
 
 --------------------------------------------------------------------------------
 
@@ -336,270 +468,128 @@ end
 --------------------------------------------------------------------------------
 
 -- crappy event system
-
--- todo: be careful with where i am calling these
--- they need to be able to yield
-
---[[
-
-these should be the events:
-
-classchange   a class config was executed
-slotchange*   weapon slot changed
-startup       fired after script.lua is executed for the first time
-reload        fired after script.lua is reloaded due to being modified
-
-more? are these even right?
-
-]]
+-- now slightly less crappy
 
 add_listener = function (name, cb)
+	if type(name) == 'table' then
+		for _, name in ipairs(name) do
+			add_listener(name, cb)
+		end
+		return
+	end
 	events[name] = events[name] or {}
 	table.insert(events[name], cb)
 end
 
-fire_event = function (name, v)
-	if not events[name] then return end
-	for _, cb in ipairs(events[name]) do
-		cb(v)
-	end
-end
-
-has_listeners = function (name)
-	return not not events[name]
-end
-
---------------------------------------------------------------------------------
-
-local coros = make_resetable_table()
-local co_id = 0
-
-local main_co = nil
-local main_fn = nil
-
-local sym_main_ok = {}
-local sym_timeout = {}
-
-local timeouts = make_resetable_table()
-
-yield = coroutine.yield
-
---[[wait = function (ms) -- what was this for
-	return yield(sym_timeout, ms)
-end]]
-
-wait2 = function (ms) -- todo: rename
-	local t = _ms()+ms
-	_click_after(ms)
-	return yield(sym_timeout, t)
-end
-
--- id: numeric id in the `coros` table (nil for the "main" coroutine)
--- co: the coroutine to resume
--- arg: additional argument to resume with
-local resume_co = function (id, co, arg)
-	local ok, rv, rv2 = coroutine.resume(co, arg)
-	if not ok then
-		eprintln('error: %s', rv)
-		if co == main_co then
-			main_co = coroutine.create(main_fn)
-		end
-		return
-	end
-	if not id then
-		if rv == sym_main_ok then
-			return
-		end
-		main_co = coroutine.create(main_fn)
-	end
-	if rv == sym_timeout then
-		if not id then
-			id = co_id
-			co_id = co_id + 1
-		end
-		return table.insert(timeouts, {
-			at = rv2,
-			co = co,
-			id = id,
-		})
-	end
-	if coroutine.status(co) == 'dead' then
-		return
-	end
-	if rv ~= nil then
-		eprintln('warning: yielded unknown value %s', tostring(rv))
-	end
-
-	-- resume this next time i guess
-
-	if not id then
-		id = co_id
-		co_id = co_id + 1
-	end
-
-	coros[id] = co
-	return cmd.exec('cfgfs/resume/'..id)
-end
-
--- adds a new coroutine to the machine
-spinoff = function (fn, ...)
-	local id = co_id
-	co_id = co_id + 1
-	return resume_co(id, coroutine.create(fn), ...)
-end
-
--- mostly untested
-set_timeout = function (fn, ms)
-	local cancelled = false
-	spinoff(function ()
-		wait2(ms)
-		if cancelled then return end
-		return fn()
-	end)
-	return {
-		cancel = function ()
-			cancelled = true
-		end,
-	}
-end
-set_interval = function (fn, ms)
-	local cancelled = false
-	spinoff(function ()
-		while true do
-			wait2(ms)
-			if cancelled then break end
-			fn()
-		end
-	end)
-	return {
-		cancel = function ()
-			cancelled = true
-		end,
-	}
-end
-
-local run_timeouts = function ()
-
-	local ts = timeouts
-
-	if #ts == 0 then return end
-
-	local newts = {}
-	timeouts = {}
-
-	local now = nil
-	for i = 1, #ts do
-		now = now or _ms()
-		local t = ts[i]
-		if now >= t.at then
-			resume_co(t.id, t.co)
-			now = nil
-		else
-			table.insert(newts, t)
-		end
-	end
-	if #newts > 0 then
-		if #timeouts > 0 then
-			for _, t in ipairs(timeouts) do
-				table.insert(newts, t)
-			end
-		end
-		timeouts = newts
-	end
-	-- ugly slow wrong code but luckily timeouts aren't very useful
-	-- (what was wrong about it?)
-	-- was it due to emptying the timeouts list first
-	-- cfgfs can't remove timeouts from it so that shouldn't be a problem
-
-end
-
---------------------------------------------------------------------------------
-
--- these happen after normal binds
-
-local key_listeners = make_resetable_table()
-add_key_listener = function (key, f)
-	key_listeners[key] = (key_listeners[key] or {})
-	key_listeners[key][f] = true
-end
-remove_key_listener = function (key, f)
-	if key_listeners[key] then
-		key_listeners[key][f] = nil
-		if next(key_listeners[key]) == nil then
-			key_listeners[key] = nil
-		end
-	end
-end
-local fire_key_event = function (key, state)
-	local t = key_listeners[key]
+fire_event = function (name, ...)
+	local t = events[name]
 	if not t then return end
-	for fn in pairs(key_listeners[key]) do
-		resume_co(nil, main_co, function () return fn(state) end)
+	for _, cb in ipairs(t) do
+		ev_call(cb, ...)
 	end
 end
 
 --------------------------------------------------------------------------------
 
-main_fn = function (path)
-	local ok, rv = xpcall(function ()
-		local path = path
-		while true do
-			if type(path) == 'string' then
-				exec_path(path)
-			elseif type(path) == 'function' then
-				path()
-			else
-				return error('main_fn: path has wrong type')
-			end
-
-			-- was yielded?
-			if main_co ~= coroutine.running() then
-				break
-			end
-
-			path = coroutine.yield(sym_main_ok)
-		end
-	end, debug.traceback)
-	if not ok then
-		eprintln('error: %s', rv)
-	end
-end
--- ^ want: similar one for firing an event
--- event listeners need to be able to yield
--- make a loop like this one
-
-main_co = coroutine.create(main_fn)
-
-exec_path = function (path)
+_get_contents = function (path)
+	ev_do_timeouts()
 
 	-- keybind?
 	local t = bindfilenames[path]
 	if t then
+		local name = t.name
 		if t.type == 'down' then
-			return binds_down[t.name]()
+
+			is_pressed[name] = true
+			local v = binds_down[name]
+			if v then
+				if type(v) ~= 'function' then
+					cfg(v)
+				else
+					ev_call(v)
+				end
+			end
+			return fire_event('+'..name)
+
 		elseif t.type == 'up' then
-			return binds_up[t.name]()
+
+			is_pressed[name] = false
+			local v = binds_up[name]
+			if v then
+				if type(v) ~= 'function' then
+					cfg(v)
+				else
+					ev_call(v)
+				end
+			end
+			return fire_event('-'..name)
+
+		elseif t.type == 'toggle' then
+			if is_pressed[name] then
+
+				is_pressed[name] = false
+				local v = binds_up[name]
+				if v then
+					if type(v) ~= 'function' then
+						cfg(v)
+					else
+						ev_call(v)
+					end
+				end
+				return fire_event('-'..name)
+
+			else
+
+				is_pressed[name] = true
+				local v = binds_down[name]
+				if v then
+					if type(v) ~= 'function' then
+						cfg(v)
+					else
+						ev_call(v)
+					end
+				end
+				return fire_event('+'..name)
+
+			end
+		elseif t.type == 'once' then
+
+			is_pressed[name] = true
+			local v = binds_down[name]
+			if v then
+				if type(v) ~= 'function' then
+					cfg(v)
+				else
+					ev_call(v)
+				end
+			end
+			fire_event('+'..name)
+
+			is_pressed[name] = false
+			local v = binds_up[name]
+			if v then
+				if type(v) ~= 'function' then
+					cfg(v)
+				else
+					ev_call(v)
+				end
+			end
+			return fire_event('-'..name)
+
 		else
-			return error('exec_path: wrong type of bind')
+			return error('unknown bind type')
 		end
+		-- ^ this is duplicated because function calls are SLOW ^
+		return
+	end
+	if path == '/cfgfs/buffer.cfg' then
+		return
 	end
 
 	path = assert(path:after('/'))
-
 	local m = path:after('cfgfs/')
 	if m then
 		path = m
-
-		local m = path:between('resume/', '.cfg')
-		if m then
-			local id = tonumber(m)
-			local co = id and coros[id]
-			if not co then
-				return eprintln('warning: tried to resume nonexistent coroutine %s', m)
-			end
-			coros[id] = nil
-			return resume_co(id, co)
-		end
 
 		local m = path:between('alias/', '.cfg')
 		if m then
@@ -609,10 +599,10 @@ exec_path = function (path)
 			end
 			local f = rawget(cmd, t[1])
 			if f then
-				if type(f) == 'function' then
-					return f(select(2, table.unpack(t)))
-				else
+				if type(f) ~= 'function' then
 					return cfg(v)
+				else
+					return ev_call(f, select(2, table.unpack(t)))
 				end
 			else
 				return eprintln('warning: tried to exec nonexistent alias %s', m)
@@ -628,9 +618,28 @@ exec_path = function (path)
 			return
 		end
 
-		eprintln('warning: unknown cfgfs config "%s"', path)
+		if path == 'license.cfg' then
+			local f <close> = assert(io.open('LICENSE', 'r'))
+			for line in f:lines() do
+				cmd.echo(line)
+			end
+			return
+		end
+
+		if path == 'init.cfg' then
+			return _init()
+		end
+
+		return eprintln('warning: unknown cfgfs config "%s"', path)
 	else
 		local m = path:before('.cfg') or path
+
+		if m == 'config' then
+			cmd.echo('')
+			cmd.echo('cfgfs is free software released under the terms of the GNU AGPLv3 license.')
+			cmd.echo('Type `cfgfs_license\' for details.')
+			cmd.echo('')
+		end
 
 		if cfgfs.init_before_cfg[path] then
 			_init()
@@ -648,116 +657,6 @@ exec_path = function (path)
 			fire_event('classchange', m)
 		end
 	end
-
-end
-
-_get_contents = function (path)
-
-	--cmd.echo('>>', path)
-
-	-- keybind?
-	local t = bindfilenames[path]
-	if t then
-		if t.type == 'down' then
-			is_pressed[t.name] = true
-			local v = binds_down[t.name]
-			if not v then goto skip_main end
-			if type(v) ~= 'function' then
-				cfg(v)
-				fire_key_event(t.name, true)
-				goto skip_main
-			end
-			fire_key_event(t.name, true) -- XXX this is in the wrong place
-			goto do_main
-		elseif t.type == 'up' then
-			is_pressed[t.name] = nil
-			local v = binds_up[t.name]
-			if not v then goto skip_main end
-			if type(v) ~= 'function' then
-				cfg(v)
-				fire_key_event(t.name, false)
-				goto skip_main
-			end
-			fire_key_event(t.name, false) -- XXX this too
-			goto do_main
-		elseif t.type == 'toggle' then
-			local pressed = (not is_pressed[t.name])
-			is_pressed[t.name] = pressed or nil
-			local b = binds_down
-			if not pressed then
-				b = binds_up
-			end
-			local v = b[t.name]
-			if not v then goto skip_main end
-			if type(v) ~= 'function' then
-				cfg(v)
-			else
-				if pressed then
-					resume_co(nil, main_co, string.format('/cfgfs/keys/+%d.cfg', key2num[t.name]))
-				else
-					resume_co(nil, main_co, string.format('/cfgfs/keys/-%d.cfg', key2num[t.name]))
-				end
-			end
-			fire_key_event(t.name, pressed)
-			goto skip_main
-		elseif t.type == 'once' then
-			local vd = binds_down[t.name]
-			local vu = binds_up[t.name]
-			if vd ~= nil then
-				if type(vd) ~= 'function' then
-					cfg(vd)
-				else
-					is_pressed[t.name] = true
-					resume_co(nil, main_co, string.format('/cfgfs/keys/+%d.cfg', key2num[t.name]))
-				end
-			end
-			fire_key_event(t.name, true)
-			is_pressed[t.name] = nil
-			if vu ~= nil then
-				if type(vu) ~= 'function' then
-					cfg(vu)
-				else
-					resume_co(nil, main_co, string.format('/cfgfs/keys/-%d.cfg', key2num[t.name]))
-				end
-			end
-			fire_key_event(t.name, false)
-			goto skip_main
-		else
-			return error('unknown bind type')
-		end
-		-- ^ epic copypasta ^
-	end
-
-	if path == '/cfgfs/buffer.cfg' then
-		goto skip_main
-	end
-	if path == '/cfgfs/init.cfg' then
-		_init()
-		goto skip_main
-	end
-	if path == '/config.cfg' then
-		cmd.echo('')
-		cmd.echo('cfgfs is free software released under the terms of the GNU AGPLv3 license.')
-		cmd.echo('Type `cfgfs_license\' for details.')
-		cmd.echo('')
-		goto do_main
-	end
-	if path == '/cfgfs/license.cfg' then
-		local f <close> = assert(io.open('LICENSE', 'r'))
-		for line in f:lines() do
-			cmd.echo(line)
-		end
-		goto skip_main
-	end
-
-	::do_main::
-
-	resume_co(nil, main_co, path)
-
-	::skip_main::
-
-	return run_timeouts()
-
 end
 
 -- relief for buggy toggle keys
@@ -769,36 +668,51 @@ release_all_keys = function ()
 			if type(vu) ~= 'function' then
 				cfg(vu)
 			else
-				cmd.exec(string.format('cfgfs/keys/-%d.cfg', key2num[key]))
+				cmd.exec(string.format('cfgfs/keys/-%d', key2num[key]))
 				-- we're (probably) in the coroutine so can't resume it here, need to use exec
 			end
 		end
 	end
 end
 
---
+do
 
 local is_active = nil
+local game_title = nil
 
-_update_attention(is_active)
-
-_attention = function (title)
+_attention = function (active_title)
+	if game_title == nil then
+		return nil
+	end
 	local was_active = is_active
-	if cfgfs.game_window_title == nil then
-		return _update_attention(nil)
-	end
-	is_active = (title == cfgfs.game_window_title)
+	is_active = (active_title == game_title)
 	if is_active ~= was_active then
-		local ok, err = xpcall(function () return fire_event('attention', is_active) end, debug.traceback)
-		if not ok then
-			eprintln('error: %s', err)
-		end
+		fire_event('attention', is_active)
 	end
-	return _update_attention(is_active) -- send it to C. this whole thing is dumb but i'm too tired to fix it anymore today
+	return is_active
 end
 
 is_game_window_active = function ()
 	return is_active
+end
+
+local game_window_title_is = function (title)
+	game_title = title
+	return _update_attention(_attention(_get_attention()))
+end
+
+-- this shouldn't be a function but it is
+-- until there's a way to watch for property changes on the cfgfs table
+-- why can't i accept that there's no reason to ever change this after startup?
+-- why does it need to be changeable?
+-- because the value in the table can be changed at any time so it's natural that one would expect changing it to work
+-- this sucks
+cfgfs.game_window_title_is = game_window_title_is
+
+add_reset_callback(function ()
+	cfgfs.game_window_title_is = game_window_title_is
+end)
+
 end
 
 --------------------------------------------------------------------------------
@@ -808,18 +722,10 @@ local repl_fn = function (code)
 	if fn then
 		return fn
 	end
-	-- note: ",1" at the end is so that we can get the values after the first nil
-	-- (is there no better way?)
-	-- edit: http://lua-users.org/lists/lua-l/2020-10/msg00211.html
-	local fn = load('return '..code..',1', 'input')
+	local fn = load('return '..code, 'input')
 	if fn then
 		return function ()
-			local t = {fn()}
-			for i = 1, #t do
-				t[i] = tostring(t[i]) or 'nil'
-			end
-			t[#t] = nil
-			return println('%s', table.concat(t, '\t'))
+			return print(fn())
 		end
 	end
 	return nil, err1
@@ -832,12 +738,12 @@ _cli_input = function (line)
 			eprintln('%s', err)
 			return
 		end
-		return resume_co(nil, main_co, fn)
+		return ev_call(fn)
 	else
 		if line == 'cfgfs_license' then
 			local f <close> = assert(io.open('LICENSE', 'r'))
 			for line in f:lines() do
-				println(line)
+				println('%s', line)
 			end
 			return
 		end
@@ -847,10 +753,7 @@ end
 
 _game_console_output = function (line)
 	_println(line)
-	local ok, err = xpcall(function () return fire_event('game_console_output', line) end, debug.traceback)
-	if not ok then
-		eprintln('error: %s', err)
-	end
+	fire_event('game_console_output', line)
 	-- agpl backdoor (https://www.gnu.org/licenses/gpl-howto.en.html)
 	-- it doesn't work if you say it yourself
 	if line:find(':[\t ]*!cfgfs_agpl_source[\t ]*$') then
@@ -860,7 +763,7 @@ end
 assert((type(agpl_source_url) == 'string' and #agpl_source_url > 0), 'invalid agpl_source_url')
 
 cmd.cfgfs_license = 'exec cfgfs/license'
-cmd.cfgfs_source = function () cmd.echo(agpl_source_url) end
+cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
 
 --------------------------------------------------------------------------------
 
@@ -878,7 +781,6 @@ _reload_1 = function ()
 	local script = ok
 
 	do_reset()
-	reload_count = (reload_count + 1)
 
 	local ok, err = xpcall(script, debug.traceback)
 	if not ok then
@@ -905,24 +807,15 @@ _reload_2 = function (ok)
 
 	for name, evt in pairs(cfgfs.restore_globals_on_reload) do
 		if global(name) then
-			local ok, err = xpcall(function () return fire_event(evt, global(name)) end, debug.traceback)
-			if not ok then
-				eprintln('error: %s', err)
-			end
+			fire_event(evt, global(name))
 		end
 	end
 
-	local ok, err = xpcall(function () return fire_event('reload') end, debug.traceback)
-	if not ok then
-		eprintln('error: %s', err)
-	end
+	return fire_event('reload')
 end
 
 _fire_startup = function ()
-	local ok, err = xpcall(function () return fire_event('startup') end, debug.traceback)
-	if not ok then
-		eprintln('error: %s', err)
-	end
+	return fire_event('startup')
 end
 
 --------------------------------------------------------------------------------

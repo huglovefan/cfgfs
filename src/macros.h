@@ -36,6 +36,21 @@
 		prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
 	})
 
+#define mono_ms() \
+	({ \
+		struct timespec ts; \
+		clock_gettime(CLOCK_MONOTONIC, &ts); \
+		((double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0); \
+	})
+#define wall_ms() \
+	({ \
+		struct timespec ts; \
+		clock_gettime(CLOCK_REALTIME, &ts); \
+		((double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0); \
+	})
+
+// -----------------------------------------------------------------------------
+
 // https://gist.github.com/4d2a407a2866402b6cb9678b0c18f71c
 // if using post-increment on an _Atomic(_Bool) in an if statement, wrap this
 // around it like:

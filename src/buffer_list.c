@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cfg.h"
 #include "macros.h"
 #include "main.h"
 

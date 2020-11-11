@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/poll.h>
 #include <sys/prctl.h>
@@ -17,36 +18,7 @@
 #include "macros.h"
 
 // builtin.lua calls our C function to set this
-_Atomic(enum game_window_activeness) game_window_is_active;
-
-// -----------------------------------------------------------------------------
-
-// this is bad but it's only called like once
-__attribute__((cold))
-char *get_attention(void) {
-	Display *display;
-	char *rv = NULL;
-
-	display = XOpenDisplay(NULL);
-	if (display == NULL) goto out;
-
-	Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
-
-	Window focus;
-	int revert;
-	XGetInputFocus(display, &focus, &revert);
-
-	XTextProperty prop;
-	XGetTextProperty(display, focus, &prop, net_wm_name);
-
-	if (prop.value) {
-		rv = strdup((const char *)prop.value);
-		XFree(prop.value);
-	}
-out:
-	if (display) XCloseDisplay(display);
-	return rv;
-}
+_Atomic(enum game_window_activeness) game_window_is_active = activeness_unknown;
 
 // -----------------------------------------------------------------------------
 
@@ -97,6 +69,8 @@ out:
 	return success;
 }
 
+static int l_update_attention(lua_State *L);
+
 __attribute__((cold))
 static void do_xevents(Display *display,
                        Atom net_active_window,
@@ -121,8 +95,10 @@ again:
 		XGetTextProperty(display, focus, &prop, net_wm_name);
 
 		LUA_LOCK();
-		 lua_getglobal(L, "_attention");
-		  lua_pushstring(L, (const char *)prop.value);
+		 lua_pushcfunction(L, l_update_attention);
+		  lua_getglobal(L, "_attention");
+		   lua_pushstring(L, (const char *)prop.value);
+		  lua_call(L, 1, 1);
 		lua_call(L, 1, 0);
 		LUA_UNLOCK();
 
@@ -168,6 +144,7 @@ static pthread_t thread;
 __attribute__((cold))
 void attention_init(void *L) {
 	if (thread != 0) return;
+	if (getenv("CFGFS_NO_ATTENTION")) return;
 
 	check_minus1(
 	    pipe(msgpipe),
@@ -200,22 +177,71 @@ void attention_deinit(void) {
 
 // -----------------------------------------------------------------------------
 
-static int l_update_attention(lua_State *L) {
-	if (!lua_isnil(L, 1)) {
-		game_window_is_active = (lua_toboolean(L, 1))
-		                      ? game_window_active
-		                      : game_window_inactive;
-	} else {
-		game_window_is_active = game_window_unknown;
+// get the title of the active window
+// (not performance-critical)
+__attribute__((cold))
+static char *get_attention(void) {
+	Display *display;
+	char *rv = NULL;
+
+	display = XOpenDisplay(NULL);
+	if (display == NULL) goto out;
+
+	Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
+
+	Window focus;
+	int revert;
+	XGetInputFocus(display, &focus, &revert);
+
+	XTextProperty prop;
+	XGetTextProperty(display, focus, &prop, net_wm_name);
+
+	if (prop.value) {
+		rv = strdup((const char *)prop.value);
+		XFree(prop.value);
 	}
+out:
+	if (display) XCloseDisplay(display);
+	return rv;
+}
+
+// -----------------------------------------------------------------------------
+
+// get the title of the active window
+static int l_get_attention(lua_State *L) {
+	char *s = get_attention();
+	lua_pushstring(L, s);
+	free(s);
+	return 1;
+}
+
+// set the C global "game_window_is_active" (true, false, nil)
+static int l_update_attention(lua_State *L) {
+	int oldval = game_window_is_active;
+	int newval;
+	if (!lua_isnil(L, 1)) {
+		newval = (lua_toboolean(L, 1))
+		         ? activeness_active
+		         : activeness_inactive;
+	} else {
+		newval = activeness_unknown;
+	}
+VV	if (newval != oldval) eprintln("attention: %d -> %d", oldval, newval);
+	game_window_is_active = newval;
 	return 0;
 }
-// why don't i just
-// get the global
-// get the return value when calling the function
 
 __attribute__((cold))
 void attention_init_lua(void *L) {
-	lua_pushcfunction(L, l_update_attention);
-	lua_setglobal(L, "_update_attention");
+	if (!getenv("CFGFS_NO_ATTENTION")) {
+		 lua_pushcfunction(L, l_get_attention);
+		lua_setglobal(L, "_get_attention");
+		 lua_pushcfunction(L, l_update_attention);
+		lua_setglobal(L, "_update_attention");
+	} else {
+		 lua_pushcfunction(L, lua_do_nothing);
+		lua_setglobal(L, "_get_attention");
+		 lua_pushcfunction(L, lua_do_nothing);
+		lua_setglobal(L, "_update_attention");
+	}
 }

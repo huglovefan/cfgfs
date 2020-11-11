@@ -186,6 +186,7 @@ static pthread_t thread;
 __attribute__((cold))
 void logtail_init(void *L) {
 	if (thread != 0) return;
+	if (getenv("CFGFS_NO_LOGTAIL")) return;
 
 	check_minus1(
 	    pipe(msgpipe),

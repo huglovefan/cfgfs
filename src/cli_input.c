@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/prctl.h>
 #include <unistd.h>
 
@@ -174,6 +175,7 @@ __attribute__((cold))
 void cli_input_init(void *L) {
 	if (thread != 0) return;
 	if (!isatty(STDIN_FILENO)) return;
+	if (getenv("CFGFS_NO_CLI")) return;
 
 	check_minus1(
 	    pipe(msgpipe),

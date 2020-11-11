@@ -2,10 +2,6 @@
 
 #include <stddef.h>
 
-extern const size_t max_line_length;
-extern const size_t max_cfg_size;
-extern const size_t max_argc;
-
-extern const size_t reported_cfg_size;
+#define reported_cfg_size ((size_t)1024)
 
 void main_stop(void);
