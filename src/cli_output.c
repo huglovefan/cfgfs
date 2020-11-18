@@ -1,6 +1,7 @@
 #define _GNU_SOURCE // unlocked_stdio. there's no vfprintf_unlocked though
 #include "cli_output.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -36,6 +37,15 @@ void eprintln(const char *fmt, ...) {
 	va_end(args);
 	fputc_unlocked('\n', stderr);
 	cli_unlock_output();
+}
+
+__attribute__((cold))
+void perror(const char *s) {
+	if (likely(s != NULL && *s != '\0')) {
+		eprintln("%s: %s", s, strerror(errno));
+	} else {
+		eprintln("%s", strerror(errno));
+	}
 }
 
 // -----------------------------------------------------------------------------

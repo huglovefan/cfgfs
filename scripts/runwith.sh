@@ -58,7 +58,7 @@ shift $((comlen+1))
 command "$@"
 rv=$?
 
-fusermount -u mnt
+{ fusermount -u mnt || doas fusermount -u mnt; } 2>/dev/null
 wait
 
 exit $rv

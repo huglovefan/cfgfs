@@ -15,6 +15,7 @@ int lua_do_nothing(lua_State *L);
 void LUA_LOCK(void);
 void LUA_UNLOCK(void);
 bool LUA_TRYLOCK(void);
+bool LUA_TIMEDLOCK(double);
 
 // these are left on the stack (by main.c, reloader.c) for fast(?) access
 // grep for uses before changing

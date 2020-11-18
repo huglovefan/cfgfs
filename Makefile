@@ -1,9 +1,15 @@
-#SANITIZER := -fsanitize=thread,undefined
 #SANITIZER := -fsanitize=address,undefined
+#SANITIZER := -fsanitize=thread,undefined
 CC        := $(shell if [ -n "$$CC" ]; then echo $$CC; elif command -v clang >/dev/null 2>&1; then echo clang; else echo cc; fi)
 CCACHE    := $(shell if command -v ccache >/dev/null 2>&1; then echo ccache; fi)
 
 CFLAGS ?= -Ofast -g
+
+STATIC_LIBFUSE := 1
+
+#USE_ALLOCATOR := jemalloc
+#STATIC_TCMALLOC := 1
+#STATIC_JEMALLOC := 1
 
 # ------------------------------------------------------------------------------
 
@@ -20,8 +26,7 @@ SRCS = src/main.c \
        src/logtail.c \
        src/keys.c \
        src/click.c \
-       src/attention.c \
-       src/vcr.c
+       src/attention.c
 
 EXE := $(shell basename -- "$$(pwd)")
 OBJS = $(SRCS:.c=.o)
@@ -30,7 +35,10 @@ DEPS = $(SRCS:.c=.d)
 CPPFLAGS += -MMD -MP
 CFLAGS += -fdiagnostics-color
 
-ifeq (,$(findstring gcc,$(CC)))
+# be able to override functions from static libraries
+LDFLAGS += -Wl,-z,muldefs
+
+ifneq (,$(findstring clang,$(CC)))
 # clang
 CFLAGS += -Weverything \
           -Werror=implicit-function-declaration \
@@ -72,11 +80,6 @@ ifneq ($(VV),)
 endif
 ifneq ($(D),)
  CPPFLAGS += -DD="if(1)"
-endif
-
-# vcr.c
-ifneq ($(VCR),)
- CPPFLAGS += -DWITH_VCR
 endif
 
 # pgo
@@ -137,14 +140,22 @@ else
 endif
 
 # malloc (a few places)
-ifeq ($(STATIC_TCMALLOC),)
- LIBS += -ltcmalloc_minimal
-else
- LIBS += /usr/lib64/libtcmalloc_minimal.a -lstdc++
+ifeq ($(USE_ALLOCATOR),jemalloc)
+ ifeq ($(STATIC_JEMALLOC),)
+  LIBS += -ljemalloc
+ else
+  LIBS += /usr/lib64/libjemalloc.a
+ endif
+else ifeq ($(USE_ALLOCATOR),tcmalloc)
+ ifeq ($(STATIC_TCMALLOC),)
+  LIBS += -ltcmalloc_minimal
+ else
+  #LIBS += /usr/lib64/libtcmalloc_minimal.a -lstdc++
+  LIBS += /usr/lib64/libtcmalloc_minimal.a /usr/lib/gcc/x86_64-pc-linux-gnu/10.2.0/libstdc++.a
+  CFLAGS += $(CXXFLAGS)
+  LDFLAGS += $(CXXFLAGS)
+ endif
 endif
-# tc    1,856.30 1,854.86 1,867.92
-# glibc 1,872.29 1,882.45 1,855.77
-# je    1,920.62 1,920.18 1,904.82
 
 # ------------------------------------------------------------------------------
 
@@ -159,21 +170,19 @@ $(EXE): $(OBJS)
 
 # ~
 
-libvcr.so: libvcr.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -fPIC -shared $^ -o $@ -pthread
-
 tf2sim: tf2sim.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@
+	$(CCACHE) $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@
 
 # ~
 
 clean:
 	rm -f -- $(EXE) $(DEPS) $(OBJS) core.[0-9]* vgcore.[0-9]* *.profdata \
-	    *.profraw *.log perf.data* callgrind.out* *.d tf2sim *.so
+	    *.profraw *.log perf.data* callgrind.out* *.d tf2sim *.so plot \
+	    .error
 
 watch:
-	@while :; do\
-		ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cds 'make||{ printf "\a";exit 1;};kill -HUP $$(pidof cfgfs) 2>/dev/null;:';\
+	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >.cfgfs_reexec;pkill -INT cfgfs||rm .cfgfs_reexec'; do\
+		continue;\
 	done
 
 analyze:
@@ -181,16 +190,36 @@ analyze:
 	CC=gcc CFLAGS="-O2 -fanalyzer -flto" LDFLAGS="-O2 -fanalyzer -flto" make -B; \
 	rm -f -- $(EXE) $(OBJS)
 
+# ~
+
 ubench: $(EXE) tf2sim
 	@export CFGFS_NO_ATTENTION=1 CFGFS_NO_CLI=1 CFGFS_NO_CLICK=1 \
 	        CFGFS_NO_LOGTAIL=1 CFGFS_NO_RELOADER=1; \
-	sh scripts/runwith.sh ./cfgfs mnt -- hyperfine --warmup 1 --runs 20 -s basic ./tf2sim
-# ^ measures tf2sim time, look at the lowest system and wall clock times
+	sh scripts/runwith.sh \
+	  time ./$(EXE) $(CFGFS_FLAGS) mnt \
+	  -- \
+	  loop 30 ./tf2sim
 
 pubench: $(EXE) tf2sim
 	@export CFGFS_NO_ATTENTION=1 CFGFS_NO_CLI=1 CFGFS_NO_CLICK=1 \
 	        CFGFS_NO_LOGTAIL=1 CFGFS_NO_RELOADER=1; \
-	sh scripts/runwith.sh perf stat ./cfgfs mnt -- sh -c 'loop 30 ./tf2sim >/dev/null'
+	sh scripts/runwith.sh \
+	  perf stat ./$(EXE) $(CFGFS_FLAGS) mnt \
+	  -- \
+	  sh -c 'loop 30 ./tf2sim >/dev/null'
+
+plot: $(EXE) tf2sim
+	@export CFGFS_NO_ATTENTION=1 CFGFS_NO_CLI=1 CFGFS_NO_CLICK=1 \
+	        CFGFS_NO_LOGTAIL=1 CFGFS_NO_RELOADER=1; \
+	( isolated sh scripts/runwith.sh \
+	    ./$(EXE) $(CFGFS_FLAGS) mnt \
+	    -- \
+	    sh -c './tf2sim >/dev/null && loop 500 ./tf2sim' \
+	) | dd bs=1M of=plot 2>/dev/null
+
+graph: plot
+	@awk '/^[.0-9]+ms$$/ { sub("ms", ""); print(++i, $$0); }' plot | \
+	  graph -T X -y - - 0.0005 2>/dev/null
 
 # ------------------------------------------------------------------------------
 
@@ -202,29 +231,28 @@ FOFMNT := ~/.local/share/Steam/steamapps/common/Fistful\ of\ Frags/fof/custom/!c
 # start in game (tf2) directory
 start: $(EXE)
 	@set -e; \
-	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
+	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
 	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
 	ln -fs $(TF2MNT) $(MNTLNK); \
-	exec ./$(EXE) -o auto_unmount $(TF2MNT); \
-	#             ^^^^^^^^^^^^^^^ how to set this from C?
+	exec ./$(EXE) $(CFGFS_FLAGS) $(TF2MNT)
 
 # start in game (fof) directory
 startfof: $(EXE)
 	@set -e; \
-	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
+	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
 	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	[ -d $(FOFMNT) ] || mkdir -p $(FOFMNT); \
 	ln -fs $(FOFMNT) $(MNTLNK); \
-	CFGFS_SCRIPT=./script_fof.lua exec ./$(EXE) -o auto_unmount $(FOFMNT)
+	CFGFS_SCRIPT=./script_fof.lua exec ./$(EXE) $(CFGFS_FLAGS) $(FOFMNT)
 
 # start it here
 start2: $(EXE)
 	@set -e; \
-	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
+	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
 	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	mkdir -p $(MNTLNK); \
-	exec ./$(EXE) -o auto_unmount $(MNTLNK)
+	exec ./$(EXE) $(CFGFS_FLAGS) $(MNTLNK)

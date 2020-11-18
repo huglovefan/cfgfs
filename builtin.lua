@@ -76,6 +76,64 @@ end
 
 --------------------------------------------------------------------------------
 
+-- settings table
+
+do
+
+local init_settings = function ()
+	cfgfs = {
+		-- output the "initial output" of script.lua when it's reloaded
+		-- (should only disable if you're testing things manually and it gets in the way)
+		init_on_reload = (gamedir) and true or false,
+
+		-- output the "initial output" of script.lua each time after any of these these configs are executed
+		-- probably should be something that's always executed late during the game startup process
+		init_after_cfg = {
+			-- ['example.cfg'] = true,
+		},
+
+		-- same as init_after_cfg but before the config
+		-- (maybe not very useful?)
+		init_before_cfg = {
+			-- ['example.cfg'] = true,
+		},
+		-- avoid interfering with the execution these "configs"
+		-- add files from the cfg directory that aren't in cfg format here
+		-- (messing with them causes problems)
+		intercept_blacklist = {
+			-- tf2
+			['mtp.cfg'] = true,
+			-- fof
+			['banned_ip.cfg'] = true,
+			['banned_user.cfg'] = true,
+		},
+		-- KeyValues Error: LoadFromBuffer: missing { in file cfg/pure_server_minimal.txt
+		-- KeyValues Error: LoadFromBuffer: missing { in file cfg/trusted_keys_base.txt
+
+		-- prevent the game from executing these configs
+		intercept_blackhole = {
+			-- ['example.cfg'] = true,
+		},
+
+		-- after script.lua is reloaded, "restore" these globals by firing the corresponding events with their values
+		-- (globals normally persist across reloads though)
+		restore_globals_on_reload = {
+			['class'] = 'classchange',
+			['slot'] = 'slotchange',
+		},
+
+		-- work around lack of alias command for games that don't have it (fof)
+		compat_noalias = false,
+	}
+end
+
+init_settings()
+add_reset_callback(init_settings)
+
+end
+
+--------------------------------------------------------------------------------
+
 -- crappy event loop thing
 
 local sym_ok = {}
@@ -169,9 +227,7 @@ end
 
 local ev_spinoff = function (fn)
 	return ev_call(function ()
-		local ok, rv = xpcall(function ()
-			return fn(v)
-		end, debug.traceback)
+		local ok, rv = xpcall(fn, debug.traceback)
 		if not ok then
 			eprintln('error: %s', rv)
 		end
@@ -210,74 +266,6 @@ end
 
 wait = ev_wait
 spinoff = ev_spinoff
-
---------------------------------------------------------------------------------
-
--- settings table
-
-do
-
-local init_settings = function ()
-	cfgfs = {
-		-- run fuse in single-threaded mode
-		-- ~10% faster but can cause lockups if something in script.lua accesses the cfgfs mount
-		-- (the request can't be processed until the script returns)
-		fuse_singlethread = true,
-
-		-- output the "initial output" of script.lua when it's reloaded
-		-- (should only disable if you're testing things manually and it gets in the way)
-		init_on_reload = (gamedir) and true or false,
-
-		-- output the "initial output" of script.lua each time after any of these these configs are executed
-		-- probably should be something that's always executed late during the game startup process
-		init_after_cfg = {
-			-- ['example.cfg'] = true,
-		},
-
-		-- same as init_after_cfg but before the config
-		-- (maybe not very useful?)
-		init_before_cfg = {
-			-- ['example.cfg'] = true,
-		},
-
-		-- avoid interfering with the execution these "configs"
-		-- add files from the cfg directory that aren't in cfg format here
-		-- (messing with them causes problems)
-		intercept_blacklist = {
-			-- tf2
-			['motd_entries.txt'] = true,
-			['mtp.cfg'] = true,
-			['server_blacklist.txt'] = true,
-			-- fof
-			['banned_ip.cfg'] = true,
-			['banned_user.cfg'] = true,
-			['pure_server_full.txt'] = true,
-			['server_blacklist.txt'] = true,
-			['settings.scr'] = true,
-			['user.scr'] = true,
-		},
-
-		-- prevent the game from executing these configs
-		intercept_blackhole = {
-			-- ['example.cfg'] = true,
-		},
-
-		-- after script.lua is reloaded, "restore" these globals by firing the corresponding events with their values
-		-- (globals normally persist across reloads though)
-		restore_globals_on_reload = {
-			['class'] = 'classchange',
-			['slot'] = 'slotchange',
-		},
-
-		-- work around lack of alias command for games that don't have it (fof)
-		compat_noalias = false,
-	}
-end
-
-init_settings()
-add_reset_callback(init_settings)
-
-end
 
 --------------------------------------------------------------------------------
 
@@ -389,15 +377,35 @@ cvar = setmetatable({}, {
 		if v == nil then return end
 		return cmd(k, v)
 	end,
-	-- calling this should get multiple cvars in one go but i'm not sure how it should be used
-	-- like should t be like a list or a map with default values
-	-- aa
-	-- and doesn't calling this look more like it's going to set them instead of getting
-	-- especially with default values it would
-	-- even if this could set multiple at once there would be no advantage over doing them separately
-	-- but what matters more is what it looks like it's doing
+	-- cvars list -> name/value map (gets the values)
+	-- name/value map -> nothing (sets the values)
 	__call = function (_, t)
-		return error('not supported')
+		local is_list = (t[1] ~= nil)
+		local is_map = true -- default to true for empty tables
+		for k in pairs(t) do
+			is_map = false -- not empty
+			if type(k) ~= 'number' then
+				is_map = true
+				break
+			end
+		end
+
+		if is_list ~= is_map then
+			if is_list then
+				return get_cvars(t)
+			else
+				for name, value in pairs(t) do
+					cvar[name] = value
+				end
+				return
+			end
+		else
+			if is_list then
+				return error('cvar: ambiguous table')
+			else
+				return {} -- t was empty
+			end
+		end
 	end,
 })
 
@@ -441,15 +449,8 @@ bind = function (key, cmd, cmd2)
 end
 -- at some point, should try making this bind simple string commands directly
 -- (so that they don't call into cfgfs)
--- add_key_listener() needs to work though
--- * check here if the key has listeners -> don't bind directly
--- * check in add_key_listener() if it didn't have listeners before -> make exec
--- * check in remove_key_listeners() if it was the last one -> make direct
--- my most pressed keys are already functions though
--- ** this would help with commands that need a key bound to them directly
--- ** calling into cfgfs for everything helped(?) do timeouts when click() didn't exist
--- *** fug what do i do now that add_key_listener() is gone
---     -> reinstate but use the new events internally
+-- * would hide the problem with commands that need a key bound to them directly
+-- * excess calls were preferred when click() didn't exist but that time is gone
 
 --------------------------------------------------------------------------------
 
@@ -466,9 +467,6 @@ for num, class in ipairs(num2class) do
 end
 
 --------------------------------------------------------------------------------
-
--- crappy event system
--- now slightly less crappy
 
 add_listener = function (name, cb)
 	if type(name) == 'table' then
@@ -632,12 +630,14 @@ _get_contents = function (path)
 
 		return eprintln('warning: unknown cfgfs config "%s"', path)
 	else
-		local m = path:before('.cfg') or path
-
-		if m == 'config' then
+		if path == 'config.cfg' then
 			cmd.echo('')
 			cmd.echo('cfgfs is free software released under the terms of the GNU AGPLv3 license.')
-			cmd.echo('Type `cfgfs_license\' for details.')
+			if cfgfs.compat_noalias then
+				cmd.echo('Type `exec cfgfs/license\' for details.')
+			else
+				cmd.echo('Type `cfgfs_license\' for details.')
+			end
 			cmd.echo('')
 		end
 
@@ -646,31 +646,34 @@ _get_contents = function (path)
 		end
 
 		if not cfgfs.intercept_blackhole[path] then
-			cfgf('exec"cfgfs/unmask_next/%s.cfg";exec"%s.cfg"', m, m)
+			cfgf('exec"cfgfs/unmask_next/%s";exec"%s"', path, path)
 		end
 
 		if cfgfs.init_after_cfg[path] then
 			_init()
 		end
 
-		if class2num[m] then
-			fire_event('classchange', m)
+		local cls = (path:before('.cfg') or path)
+		if class2num[cls] then
+			fire_event('classchange', cls)
 		end
 	end
 end
 
 -- relief for buggy toggle keys
 release_all_keys = function ()
-	for key in pairs(is_pressed) do
-		is_pressed[key] = nil
-		local vu = binds_up[key]
-		if vu ~= nil then
-			if type(vu) ~= 'function' then
-				cfg(vu)
-			else
-				cmd.exec(string.format('cfgfs/keys/-%d', key2num[key]))
-				-- we're (probably) in the coroutine so can't resume it here, need to use exec
+	for key, pressedness in pairs(is_pressed) do
+		if pressedness then
+			is_pressed[key] = false
+			local vu = binds_up[key]
+			if vu ~= nil then
+				if type(vu) ~= 'function' then
+					cfg(vu)
+				else
+					ev_call(vu)
+				end
 			end
+			fire_event('-'..key)
 		end
 	end
 end
@@ -764,6 +767,12 @@ assert((type(agpl_source_url) == 'string' and #agpl_source_url > 0), 'invalid ag
 
 cmd.cfgfs_license = 'exec cfgfs/license'
 cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
+
+--------------------------------------------------------------------------------
+
+_control = function (line)
+	return fire_event('control_message', line)
+end
 
 --------------------------------------------------------------------------------
 

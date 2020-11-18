@@ -83,10 +83,8 @@ V	eprintln("click_set_key: key set to %s (ks=%ld, kc=%d)", name, ks, kc);
 
 static void mono_ms_wait_until(double target) {
 VV	eprintln("click: waiting %lf ms", target-mono_ms());
-	struct timespec ts = {
-		.tv_sec = (time_t)(target/1000.0),
-		.tv_nsec = (long)(fmod(target,1000.0)*1000000.0),
-	};
+	struct timespec ts;
+	ms2ts(ts, target);
 	int err;
 again:
 	err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);

@@ -40,13 +40,22 @@
 	({ \
 		struct timespec ts; \
 		clock_gettime(CLOCK_MONOTONIC, &ts); \
-		((double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0); \
+		ts2ms(ts); \
 	})
 #define wall_ms() \
 	({ \
 		struct timespec ts; \
 		clock_gettime(CLOCK_REALTIME, &ts); \
-		((double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0); \
+		ts2ms(ts); \
+	})
+
+#define ts2ms(ts) \
+	((double)(ts).tv_sec * 1000.0 + (double)(ts).tv_nsec / 1000000.0)
+
+#define ms2ts(ts, ms) \
+	({ \
+		(ts).tv_sec = (time_t)((ms)/1000.0); \
+		(ts).tv_nsec = (long)(fmod((ms),1000.0)*1000000.0); \
 	})
 
 // -----------------------------------------------------------------------------

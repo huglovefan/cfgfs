@@ -356,6 +356,9 @@ local checkwm = function ()
 	if class == 'sniper' and slot == 1 then
 		use_world_model = 0 -- huntsman
 	end
+	if class == 'soldier' and slot == 1 then
+		use_world_model = 1 -- the trash one
+	end
 	if class == 'spy' then
 		use_world_model = 0 -- cloak
 	end
@@ -544,7 +547,9 @@ bind('kp_enter',		'')
 bind('kp_ins',			'')
 bind('kp_del',			'')
 
-bind('f9', 'toggleconsole') -- tf2sim
+bind('f9', function ()
+	return cmd('toggleconsole')
+end) -- tf2sim
 
 bind('f5', function ()
 	local p = '/sys/devices/system/cpu/cpufreq/boost'

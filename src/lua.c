@@ -2,6 +2,7 @@
 #include "lua.h"
 
 #include <errno.h>
+#include <math.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -26,22 +27,29 @@ static pthread_mutex_t lua_mutex = PTHREAD_MUTEX_INITIALIZER;
 void LUA_LOCK(void) { pthread_mutex_lock(&lua_mutex); }
 void LUA_UNLOCK(void) { pthread_mutex_unlock(&lua_mutex); }
 bool LUA_TRYLOCK(void) { return (0 == pthread_mutex_trylock(&lua_mutex)); }
-//                   confusingly this ^ returns 0 (false) if we got the lock
+
+__attribute__((noinline))
+bool LUA_TIMEDLOCK(double sec) {
+	struct timespec ts;
+	int rv = clock_gettime(CLOCK_REALTIME, &ts); // timedlock wants realtime
+D	if (unlikely(rv == -1)) {
+		perror("LUA_TIMEDLOCK: clock_gettime");
+		return false;
+	}
+	ms2ts(ts, ts2ms(ts)+sec*1000);
+	return (0 == pthread_mutex_timedlock(&lua_mutex, &ts));
+}
 
 // -----------------------------------------------------------------------------
 
 __attribute__((cold))
 int lua_print_backtrace(lua_State *L) {
-	if (!lua_checkstack(L, 2)) return 0;
-	 lua_getglobal(L, "debug");
-	  lua_getfield(L, -1, "traceback");
-	  lua_rotate(L, -2, 1);
-	 lua_pop(L, 1);
-	 lua_call(L, 0, 1);
-	 eprintln("%s", lua_tostring(L, -1));
+	if (!lua_checkstack(L, 1)) return 0;
+	 luaL_traceback(L, L, NULL, 0);
+	 const char *s = lua_tostring(L, -1);
+	 if (s) eprintln("%s", s);
 	lua_pop(L, 1);
 	return 0;
-	// todo: change to luaL_traceback
 }
 
 int lua_do_nothing(lua_State *L) {
@@ -52,9 +60,9 @@ int lua_do_nothing(lua_State *L) {
 __attribute__((cold))
 static int l_panic(lua_State *L) {
 	 eprintln("fatal error: %s", lua_tostring(L, -1));
-	lua_print_backtrace(L);
-	__sanitizer_print_stack_trace();
-	return 0;
+	 lua_print_backtrace(L);
+	 __sanitizer_print_stack_trace();
+	 return 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -133,6 +141,29 @@ error:
 	return luaL_error(L, "invalid argument");
 }
 
+static int l_string_trim(lua_State *L) {
+	const char *s = lua_tostring(L, 1);
+	if (unlikely(!s)) goto error;
+
+	const char *first = NULL, *last = s;
+	while (*s != '\0') {
+		if (*s > 0x20) {
+			first = first ?: s;
+			last = s;
+		}
+		s++;
+	}
+	if (unlikely(!first)) first = s;
+	// may write past the end if the string was empty but addresssanitizer doesn't complain
+	char tmp = exchange(*((char *)(uintptr_t)last+1), '\0');
+	lua_pushstring(L, first);
+	*((char *)(uintptr_t)last+1) = tmp;
+
+	return 1;
+error:
+	return luaL_error(L, "invalid argument");
+}
+
 // -----------------------------------------------------------------------------
 
 static int l_ms(lua_State *L) {
@@ -192,6 +223,8 @@ lua_State *lua_init(void) {
 	 lua_setfield(L, -2, "before");
 	  lua_pushcfunction(L, l_string_between);
 	 lua_setfield(L, -2, "between");
+	  lua_pushcfunction(L, l_string_trim);
+	 lua_setfield(L, -2, "trim");
 	lua_pop(L, 1);
 
 	lua_newtable(L); lua_setglobal(L, "num2key");

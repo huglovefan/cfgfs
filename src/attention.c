@@ -70,10 +70,10 @@ out:
 }
 
 static int l_update_attention(lua_State *L);
+static Display *display;
 
 __attribute__((cold))
-static void do_xevents(Display *display,
-                       Atom net_active_window,
+static void do_xevents(Atom net_active_window,
                        Atom net_wm_name,
                        lua_State *L) {
 	XEvent event;
@@ -113,12 +113,6 @@ static void *attention_main(void *ud) {
 	set_thread_name("attention");
 	lua_State *L = ud;
 
-	Display *display = XOpenDisplay(NULL);
-	if (display == NULL) {
-		eprintln("attention: failed to open display!");
-		goto out;
-	}
-
 	Atom net_active_window = XInternAtom(display, "_NET_ACTIVE_WINDOW", 0);
 	Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
 
@@ -130,10 +124,9 @@ static void *attention_main(void *ud) {
 	assert(conn >= 0);
 
 	do {
-		do_xevents(display, net_active_window, net_wm_name, L);
+		do_xevents(net_active_window, net_wm_name, L);
 	} while (wait_for_event(conn));
-out:
-	if (display) XCloseDisplay(display);
+
 	return NULL;
 }
 
@@ -145,6 +138,12 @@ __attribute__((cold))
 void attention_init(void *L) {
 	if (thread != 0) return;
 	if (getenv("CFGFS_NO_ATTENTION")) return;
+
+	display = XOpenDisplay(NULL);
+	if (display == NULL) {
+		eprintln("attention: failed to open display!");
+		goto err;
+	}
 
 	check_minus1(
 	    pipe(msgpipe),
@@ -158,9 +157,10 @@ void attention_init(void *L) {
 
 	return;
 err:
-	thread = 0;
 	if (msgpipe[0] != -1) close(exchange(msgpipe[0], -1));
 	if (msgpipe[1] != -1) close(exchange(msgpipe[1], -1));
+	if (display != NULL) XCloseDisplay(exchange(display, NULL));
+	thread = 0;
 }
 
 __attribute__((cold))
@@ -169,13 +169,19 @@ void attention_deinit(void) {
 
 	msg_write(msg_exit);
 
-	pthread_join(exchange(thread, 0), NULL);
+	pthread_join(thread, NULL);
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));
+
+	XCloseDisplay(exchange(display, NULL));
+
+	thread = 0;
 }
 
 // -----------------------------------------------------------------------------
+
+#define display dpy /* silence -Wshadow. can't use the global as it is not thread-safe */
 
 // get the title of the active window
 // (not performance-critical)

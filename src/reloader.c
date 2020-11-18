@@ -144,9 +144,9 @@ void reloader_init(void *L) {
 
 	return;
 err:
-	thread = 0;
 	if (msgpipe[0] != -1) close(exchange(msgpipe[0], -1));
 	if (msgpipe[1] != -1) close(exchange(msgpipe[1], -1));
+	thread = 0;
 }
 
 __attribute__((cold))
@@ -155,8 +155,10 @@ void reloader_deinit(void) {
 
 	msg_write(msg_exit);
 
-	pthread_join(exchange(thread, 0), NULL);
+	pthread_join(thread, NULL);
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));
+
+	thread = 0;
 }

@@ -24,7 +24,6 @@
 #include "lua.h"
 #include "macros.h"
 #include "main.h"
-#include "vcr.h"
 
 _Atomic(bool) cli_reading_line;
 
@@ -35,7 +34,6 @@ static int msgpipe[2] = {-1, -1};
 enum msg_action {
 	msg_winch = 1,
 	msg_exit = 2,
-	msg_manual_eof = 3,
 };
 
 #define msg_write(c) ({ char c_ = (c); write(msgpipe[1], &c_, 1); })
@@ -49,24 +47,13 @@ static lua_State *g_L;
 __attribute__((cold))
 static void linehandler(char *line) {
 	cli_reading_line = false;
-	double tm = vcr_get_timestamp();
 
 	if (unlikely(line == NULL)) {
-		vcr_event {
-			vcr_add_string("what", "cli_eof");
-			vcr_add_double("timestamp", tm);
-		}
 		cli_exiting = true;
 		msg_write(msg_exit);
 		goto end;
 	}
 	if (unlikely(*line == '\0')) goto end;
-
-	vcr_event {
-		vcr_add_string("what", "cli_input");
-		vcr_add_string("text", line);
-		vcr_add_double("timestamp", tm);
-	}
 
 	LUA_LOCK();
 	lua_State *L = g_L;
@@ -80,6 +67,8 @@ static void linehandler(char *line) {
 end:
 	if (unlikely(cli_exiting)) rl_callback_handler_remove();
 	// ^ has to be called from here so it doesn't print another prompt
+
+	free(line);
 }
 
 // -----------------------------------------------------------------------------
@@ -130,22 +119,18 @@ static void *cli_main(void *ud) {
 				break;
 			case msg_exit:
 				goto out;
-			case msg_manual_eof:
-				{
-				double tm = vcr_get_timestamp();
-				vcr_event {
-					vcr_add_string("what", "cli_eof");
-					vcr_add_double("timestamp", tm);
-				}
-				}
-				goto out;
 			default:
 				assert(false);
 			}
 		}
 		if (likely(fds[0].revents & POLLIN)) {
+			cli_lock_output_nosave(); cli_unlock_output_norestore();
 			rl_callback_read_char();
 			cli_reading_line = !cli_exiting;
+			cli_lock_output_nosave(); cli_unlock_output_norestore();
+			// threadsanitizer complains if these locks/unlocks are removed
+			// something to do with the save/restore code in cli_output.c
+			// i don't see how this could make it any safer though
 		}
 	}
 out:
@@ -162,7 +147,7 @@ out:
 	// we're executing this line because
 	// 1. user typed end-of-input character -> want main to quit in this case
 	// 2. main is already quitting and telling us to quit -> no harm in calling this
-	main_stop();
+	main_quit();
 
 	return NULL;
 }
@@ -174,8 +159,8 @@ static pthread_t thread;
 __attribute__((cold))
 void cli_input_init(void *L) {
 	if (thread != 0) return;
-	if (!isatty(STDIN_FILENO)) return;
 	if (getenv("CFGFS_NO_CLI")) return;
+	if (!isatty(STDIN_FILENO)) return;
 
 	check_minus1(
 	    pipe(msgpipe),
@@ -189,9 +174,9 @@ void cli_input_init(void *L) {
 
 	return;
 err:
-	thread = 0;
 	if (msgpipe[0] != -1) close(exchange(msgpipe[0], -1));
 	if (msgpipe[1] != -1) close(exchange(msgpipe[1], -1));
+	thread = 0;
 }
 
 __attribute__((cold))
@@ -200,14 +185,10 @@ void cli_input_deinit(void) {
 
 	msg_write(msg_exit);
 
-	pthread_join(exchange(thread, 0), NULL);
+	pthread_join(thread, NULL);
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));
-}
 
-// -----------------------------------------------------------------------------
-
-void cli_input_manual_eof(void) {
-	msg_write(msg_manual_eof);
+	thread = 0;
 }

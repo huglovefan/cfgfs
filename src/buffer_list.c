@@ -33,17 +33,23 @@ static bool buffer_may_add_line(const struct buffer *self, size_t sz) {
 static void buffer_add_line(struct buffer *restrict self,
                             const char *buf,
                             size_t sz) {
-	memcpy(((char *)self->data)+self->size, buf, sz);
-	((char *)self->data)[self->size+sz] = '\n';
+	char *p = (char *)self->data+self->size;
 	self->size += sz+1;
+	p[sz] = '\n';
+	memcpy(p, buf, sz);
 }
 
+__attribute__((cold))
 static void buffer_make_full(struct buffer *self) {
 D	assert(!self->full);
 	self->full = true;
-	buffer_add_line(self, cfg_exec_next_cmd, strlen(cfg_exec_next_cmd));
+
+	char *p = (char *)self->data+self->size;
+	self->size += strlen(cfg_exec_next_cmd "\n");
+	memcpy(p, cfg_exec_next_cmd "\n", strlen(cfg_exec_next_cmd "\n"));
 }
 
+__attribute__((cold))
 static void buffer_copy_from_that_to_this(struct buffer *self,
                                           const struct buffer *restrict buf) {
 	self->size = buf->size;
@@ -55,12 +61,14 @@ static void buffer_copy_from_that_to_this(struct buffer *self,
 
 // struct buffer_list
 
+__attribute__((cold)) // only used by reloader
 void buffer_list_swap(struct buffer_list *self, struct buffer_list *bl) {
 	struct buffer_list tmp = *bl;
 	*bl = *self;
 	*self = tmp;
 }
 
+__attribute__((cold)) // only used by reloader
 void buffer_list_reset(struct buffer_list *self) {
 	for (struct buffer *next, *ent = self->first; ent != NULL; ent = next) {
 		next = ent->next;
@@ -71,11 +79,15 @@ void buffer_list_reset(struct buffer_list *self) {
 
 struct buffer *buffer_list_grab_first_nonempty(struct buffer_list *self) {
 	struct buffer *ent = self->first;
+
 	if (unlikely(ent == NULL || ent->size == 0)) return NULL;
-	self->first = ent->next;
-	if (likely(self->last == ent)) self->last = NULL;
-	if (likely(self->nonfull == ent)) self->nonfull = ent->next;
-	ent->next = NULL;
+
+	struct buffer *next = exchange(ent->next, NULL);
+
+	self->first = next;
+	if (likely(self->last == ent)) self->last = next;
+	if (likely(self->nonfull == ent)) self->nonfull = next;
+
 	return ent;
 }
 
@@ -113,8 +125,8 @@ static struct buffer *buffer_list_get_next_for(struct buffer_list *self,
                                                struct buffer *ent) {
 	struct buffer *rv = ent->next;
 	if (likely(rv == NULL)) {
-D		assert(self->first != NULL);
-D		assert(ent == self->last);
+D		assert(self->first != NULL); // (old) can't be empty, has at least `ent` somewhere
+D		assert(ent == self->last); // (old) only last's next is null
 		rv = buffer_new();
 		ent->next = rv;
 		self->last = rv;
@@ -126,15 +138,23 @@ D		assert(ent == self->last);
 bool buffer_list_maybe_unshift_fake_buf(struct buffer_list *self,
                                         struct buffer *buf,
                                         char *data) {
-	if (unlikely(self->first != NULL && self->first->size != 0)) return false;
+	// isn't the next check the same as !buffer_list_is_empty(self)?
+D	assert(!buffer_list_is_empty(self) == (self->first != NULL && self->first->size != 0));
+
+	//if (unlikely(self->first != NULL && self->first->size != 0)) return false;
+	if (unlikely(!buffer_list_is_empty(self))) return false;
+
+	// if it's empty then these are always null too
+D	assert(self->first == NULL);
+D	assert(self->last == NULL);
 
 	buf->size = 0;
 	buf->full = false;
 	buf->data = data;
-	buf->next = self->first;
+	buf->next = NULL /*self->first*/;
 
 	self->first = buf;
-	if (likely(self->last == NULL)) self->last = buf;
+	/*if (likely(self->last == NULL))*/ self->last = buf;
 	self->nonfull = buf;
 
 	return true;
@@ -147,9 +167,11 @@ D	assert(self->first == buf);
 	if (likely(self->last == buf)) self->last = NULL;
 }
 
+__attribute__((cold)) // only used in _init()
 void buffer_list_append_from_that_to_this(struct buffer_list *self,
                                           const struct buffer_list *that) {
 	const struct buffer *buf = that->first;
+
 	if (unlikely(buf == NULL || buf->size == 0)) return;
 
 	struct buffer *nonfull = buffer_list_get_nonfull(self);

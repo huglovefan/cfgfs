@@ -38,9 +38,10 @@ static void _init_badchars(void) {
 
 #undef ok_range
 
-static bool str_is_ok(const char *restrict s, size_t sz) {
+static bool str_is_ok(const char *s, size_t sz) {
+	if (unlikely(sz == 0)) return 0;
 	char bad = 0;
-	for (size_t i = 0; i < sz; i++) bad |= badchars[(int)*s++];
+	do bad |= badchars[(int)*s]; while (*++s);
 	return !bad;
 }
 
@@ -75,18 +76,14 @@ static int l_cmd(lua_State *L) {
 		if (unlikely(len+sz > max_line_length)) goto toolong;
 
 		if (likely(str_is_ok(s, sz))) {
-			if (likely(len != 0 && buf[len-1] != '"')) {
-				buf[len++] = ' ';
-				// ^ don't need a space after a quote
-			}
+			if (len != 0) buf[len++] = ' ';
 			memcpy(buf+len, s, sz);
 			len += sz;
 		} else {
 			buf[len++] = '"';
 			memcpy(buf+len, s, sz);
 			len += sz;
-			if (likely(i != top)) buf[len++] = '"';
-			// ^ don't need to close the last quote
+			buf[len++] = '"';
 		}
 
 		// this is now accurate
