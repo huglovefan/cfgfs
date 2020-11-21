@@ -310,13 +310,11 @@ V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 }
 
 static void control_do_line(const char *line, size_t size) {
-	char tmp = exchange(((char *)(uintptr_t)line)[size], '\0');
 V	eprintln("cfgfs_write: line=[%s]", line);
 	lua_State *L = get_state();
 	 lua_getglobal(L, "_control");
-	  lua_pushstring(L, line);
+	  lua_pushlstring(L, line, size);
 	lua_call(L, 1, 0);
-	((char *)(uintptr_t)line)[size] = tmp;
 }
 
 // ~

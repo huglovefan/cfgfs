@@ -109,11 +109,11 @@
 
 // check that the return value from a function isn't -1
 // if it is, do "perror(what)" and execute the statement in "orelse" (should be goto or return)
-#define check_minus1(v_, what, orelse) \
+#define check_minus1(v, what, orelse) \
 	({ \
-		__auto_type _check_v = (v_); \
+		__auto_type _check_v = (v); \
 		if (unlikely(_check_v == -1)) { \
-			eprintln(what ": %s", strerror(errno)); \
+			perror(what); \
 			orelse; \
 			__builtin_abort(); \
 		} \
@@ -121,9 +121,9 @@
 	})
 
 // same as above, but for functions that return an errno value instead of setting it globally
-#define check_errcode(v_, what, orelse) \
+#define check_errcode(v, what, orelse) \
 	({ \
-		__auto_type _check_v = (v_); \
+		__auto_type _check_v = (v); \
 		if (unlikely(_check_v != 0)) { \
 			eprintln(what ": %s", strerror(_check_v)); \
 			orelse; \
@@ -131,11 +131,11 @@
 		} \
 	})
 
-#define check_nonnull(v_, what, orelse) \
+#define check_nonnull(v, what, orelse) \
 	({ \
-		__auto_type _check_v = (v_); \
+		__auto_type _check_v = (v); \
 		if (unlikely(_check_v == NULL)) { \
-			eprintln(what ": %s", strerror(errno)); \
+			perror(what); \
 			orelse; \
 			__builtin_abort(); \
 		} \

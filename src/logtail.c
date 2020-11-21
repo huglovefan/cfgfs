@@ -1,3 +1,4 @@
+#define _GNU_SOURCE // unlocked_stdio
 #include "logtail.h"
 
 #include <errno.h>
@@ -43,17 +44,19 @@ static bool wait_for_event(int fd) {
 		int rv = poll(fds, 2, -1);
 		if (unlikely(rv == -1)) {
 			if (likely(errno == EINTR)) continue;
-			eprintln("logtail: poll: %s", strerror(errno));
+			perror("logtail: poll");
 			break;
 		}
-		if (unlikely(fds[0].revents & POLLNOTGOOD)) break;
-		if (unlikely(fds[1].revents & POLLNOTGOOD)) break;
+		if (unlikely((fds[0].revents|fds[1].revents) & POLLNOTGOOD)) {
+			break;
+		}
 		if (unlikely(fds[1].revents & POLLIN)) {
 			switch (msg_read()) {
 			case msg_exit:
 				goto out;
 			default:
-				assert(false);
+D				assert(0);
+				__builtin_unreachable();
 			}
 		}
 		if (likely(fds[0].revents & POLLIN)) {
@@ -70,42 +73,47 @@ out:
 
 // -----------------------------------------------------------------------------
 
-static void got_line(lua_State *L, const char *line) {
-	if (unlikely(*line == '\0')) return;
+static struct {
+	char linebuf[2048];
+	size_t len;
+} state;
 
+static void got_line(lua_State *L);
+
+static void read_it(lua_State *L, FILE *logfile) {
 	LUA_LOCK();
-	 lua_getglobal(L, "_game_console_output");
-	  lua_pushstring(L, line);
-	lua_call(L, 1, 0);
+	int c;
+	for (;;) {
+		c = fgetc_unlocked(logfile);
+newchar:
+		if (unlikely(c == EOF || c == '\n')) break;
+		if (unlikely(state.len == sizeof(state.linebuf))) {
+			state.len--; // too long, will ignore this
+		}
+		state.linebuf[state.len++] = (char)c;
+	}
+	__asm__(""); // do not put the below stuff inside the loop
+	if (unlikely(c == '\n')) {
+		got_line(L);
+		state.len = 0;
+		c = fgetc_unlocked(logfile);
+		if (unlikely(c != EOF)) goto newchar;
+	}
+	clearerr_unlocked(logfile);
 	opportunistic_click();
 	LUA_UNLOCK();
 }
+// ^ should this unlock it between lines?
 
-static char *linebuf;
-static size_t linebufsz;
-
-static void barf(lua_State *L, FILE *logfile) {
-	static char *p;
-	for (;;) {
-		int c = fgetc(logfile);
-		if (unlikely(c == EOF)) {
-			clearerr(logfile); // forget eof
-			break;
-		}
-		if (unlikely(p == NULL || (size_t)(p-linebuf) >= linebufsz)) {
-			size_t used = (p != NULL) ? (size_t)(p-linebuf) : 0;
-			linebufsz = (linebufsz) ? linebufsz*2 : 512;
-			linebuf = realloc(linebuf, linebufsz);
-			p = linebuf+used;
-		}
-		if (unlikely(c == '\n')) {
-			*p = '\0';
-			got_line(L, linebuf);
-			p = linebuf;
-			continue;
-		}
-		*p++ = (char)c;
+static void got_line(lua_State *L) {
+	if (unlikely(state.len == sizeof(state.linebuf))) {
+D		eprintln("logtail: ignoring unreasonably long line");
+		return;
 	}
+	if (unlikely(state.len == 0)) return;
+	 lua_getglobal(L, "_game_console_output");
+	  lua_pushlstring(L, state.linebuf, state.len);
+	lua_call(L, 1, 0);
 }
 
 // -----------------------------------------------------------------------------
@@ -125,7 +133,7 @@ static bool ugly_init(lua_State *L, FILE **logfile_out, int *fd_out) {
 	lua_pop(L, 1);
 	LUA_UNLOCK();
 
-	// create log file it doesn't exist
+	// create the log file it doesn't exist
 	logfile = fopen(logpath, "a");
 	check_nonnull(logfile, "logtail: fopen", goto err);
 	fclose(logfile);
@@ -167,7 +175,7 @@ static void *logtail_main(void *ud) {
 	if (!ugly_init(L, &logfile, &fd)) return NULL;
 
 	while (wait_for_event(fd)) {
-		barf(L, logfile);
+		read_it(L, logfile);
 	}
 	ugly_deinit(logfile, fd);
 	return NULL;
@@ -209,9 +217,6 @@ void logtail_deinit(void) {
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));
-
-	free(exchange(linebuf, NULL));
-	linebufsz = 0;
 
 	thread = 0;
 }

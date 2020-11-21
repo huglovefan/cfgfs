@@ -24,9 +24,17 @@
 
 static pthread_mutex_t lua_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void LUA_LOCK(void) { pthread_mutex_lock(&lua_mutex); }
-void LUA_UNLOCK(void) { pthread_mutex_unlock(&lua_mutex); }
-bool LUA_TRYLOCK(void) { return (0 == pthread_mutex_trylock(&lua_mutex)); }
+void LUA_LOCK(void) {
+	pthread_mutex_lock(&lua_mutex);
+}
+
+void LUA_UNLOCK(void) {
+	pthread_mutex_unlock(&lua_mutex);
+}
+
+bool LUA_TRYLOCK(void) {
+	return (0 == pthread_mutex_trylock(&lua_mutex));
+}
 
 __attribute__((noinline))
 bool LUA_TIMEDLOCK(double sec) {
@@ -39,6 +47,18 @@ D	if (unlikely(rv == -1)) {
 	ms2ts(ts, ts2ms(ts)+sec*1000);
 	return (0 == pthread_mutex_timedlock(&lua_mutex, &ts));
 }
+
+// ideas for this:
+// - automatically do opportunistic_click()
+// - collect timing stats
+// - avoid deadlocks due to calling from script.lua?
+//   ^ slightly harder with threaded fuse, can't just check if the tid is the same
+// - warn on contention (print thread id of who had the lock)
+//   ^ D only, needs a second lock to do it in a non-racy way
+//   ^ protecting the lock with a lock (lol)
+// - check stack/buffers consistency in lock and unlock
+//   ^ this needs a way to get the lua state. why is it in main instead of here anyway
+// cfgfs_* needs non-bloated versions though?
 
 // -----------------------------------------------------------------------------
 
@@ -91,56 +111,53 @@ error:
 	return luaL_error(L, "invalid argument");
 }
 
+// string.after('/cfgfs/buffer.cfg', '/cfgfs/') -> 'buffer.cfg'
 static int l_string_after(lua_State *L) {
-	const char *rv = NULL;
 	size_t l1, l2;
 	const char *s1 = lua_tolstring(L, 1, &l1);
 	const char *s2 = lua_tolstring(L, 2, &l2);
 	if (unlikely(!s1 || !s2)) goto error;
 	if (likely(l1 >= l2 && memcmp(s1, s2, l2) == 0)) {
-		rv = s1+l2;
+		lua_pushlstring(L, s1+l2, l1-l2);
+		return 1;
 	}
-	lua_pushstring(L, rv);
-	return 1;
+	return 0;
 error:
-	return luaL_error(L, "invalid argument");
+	return luaL_error(L, "string.after: invalid argument");
 }
 
+// string.before('buffer.cfg', '.cfg') -> 'buffer'
 static int l_string_before(lua_State *L) {
-	char *rv = NULL;
 	size_t l1, l2;
 	const char *s1 = lua_tolstring(L, 1, &l1);
 	const char *s2 = lua_tolstring(L, 2, &l2);
 	if (unlikely(!s1 || !s2)) goto error;
 	if (likely(l1 >= l2 && memcmp(s1+l1-l2, s2, l2) == 0)) {
-		rv = alloca(l1-l2+1);
-		memcpy(rv, s1, l1-l2);
-		rv[l1-l2] = '\0';
+		lua_pushlstring(L, s1, l1-l2);
+		return 1;
 	}
-	lua_pushstring(L, rv);
-	return 1;
+	return 0;
 error:
-	return luaL_error(L, "invalid argument");
+	return luaL_error(L, "string.before: invalid argument");
 }
 
+// string.between('/cfgfs/buffer.cfg', '/cfgfs/', '.cfg') -> 'buffer'
 static int l_string_between(lua_State *L) {
-	char *rv = NULL;
 	size_t l1, l2, l3;
 	const char *s1 = lua_tolstring(L, 1, &l1);
 	const char *s2 = lua_tolstring(L, 2, &l2);
 	const char *s3 = lua_tolstring(L, 3, &l3);
 	if (unlikely(!s1 || !s2 || !s3)) goto error;
 	if (likely(l1 >= l2+l3 && memcmp(s1, s2, l2) == 0 && memcmp(s1+l1-l3, s3, l3) == 0)) {
-		rv = alloca(l1-(l2+l3)+1);
-		memcpy(rv, s1+l2, l1-(l2+l3));
-		rv[l1-(l2+l3)] = '\0';
+		lua_pushlstring(L, s1+l2, l1-l2-l3);
+		return 1;
 	}
-	lua_pushstring(L, rv);
-	return 1;
+	return 0;
 error:
-	return luaL_error(L, "invalid argument");
+	return luaL_error(L, "string.between: invalid argument");
 }
 
+// removes whitespace from the start and end
 static int l_string_trim(lua_State *L) {
 	const char *s = lua_tostring(L, 1);
 	if (unlikely(!s)) goto error;
@@ -153,15 +170,15 @@ static int l_string_trim(lua_State *L) {
 		}
 		s++;
 	}
-	if (unlikely(!first)) first = s;
-	// may write past the end if the string was empty but addresssanitizer doesn't complain
-	char tmp = exchange(*((char *)(uintptr_t)last+1), '\0');
-	lua_pushstring(L, first);
-	*((char *)(uintptr_t)last+1) = tmp;
+	if (likely(first)) {
+		lua_pushlstring(L, first, (size_t)(last-first)+1);
+	} else {
+		lua_pushlstring(L, "", 0);
+	}
 
 	return 1;
 error:
-	return luaL_error(L, "invalid argument");
+	return luaL_error(L, "string.trim: invalid argument");
 }
 
 // -----------------------------------------------------------------------------
@@ -231,12 +248,12 @@ lua_State *lua_init(void) {
 	lua_newtable(L); lua_setglobal(L, "key2num");
 	lua_newtable(L); lua_setglobal(L, "bindfilenames");
 
-	lua_getglobal(L, "num2key");
-	for (int i = 0; keys[i].name != NULL; i++) {
-		lua_pushinteger(L, (lua_Integer)i+1); // the number doesn't matter
-		lua_pushstring(L, keys[i].name);
-		lua_settable(L, -3);
-	}
+	 lua_getglobal(L, "num2key");
+	 for (int i = 0; keys[i].name != NULL; i++) {
+	  lua_pushinteger(L, (lua_Integer)i+1);
+	   lua_pushstring(L, keys[i].name);
+	 lua_settable(L, -3);
+	 }
 	lua_pop(L, 1);
 
 	if (luaL_dostring(L, "\
@@ -251,7 +268,6 @@ lua_State *lua_init(void) {
 		bindfilenames[once]   = {name = key, type = 'once'}\
 		key2num[key] = n\
 	end\
-	collectgarbage()\
 	") != LUA_OK) lua_error(L);
 
 	attention_init_lua(L);

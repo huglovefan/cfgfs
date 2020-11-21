@@ -114,7 +114,7 @@ add_listener({'+tab', '-tab'}, function ()
 			table.remove(xhs[class][slot], 1)
 			return xh_update(slot)
 		else
-			return cfg('slot6') -- makes the "selection failed" sound
+			return cfg('slot6')
 		end
 	end
 end)
@@ -241,14 +241,14 @@ end
 
 --------------------------------------------------------------------------------
 
--- i hate this
+-- this suck
 
 local jump_dn = '+jump;slot6;spec_mode'
 local jump_up = '-jump'
 
 if 1 + 1 == 2 then
 	local dn = 100
-	local jump = 698 -- was 697
+	local jump = 700
 	local jumping = nil
 
 	local cmd_dn = jump_dn
@@ -299,6 +299,29 @@ cmd.top = wrap('top -bn1')
 cmd.cfgfs_init = 'exec cfgfs/init'
 
 cmd.release_all_keys = release_all_keys
+
+--------------------------------------------------------------------------------
+
+-- huntsman charge bell
+
+local t = nil
+local on_mouse1_dn = function ()
+	if slot ~= 1 then return end
+	t = set_timeout(function ()
+		cmd.slot6() -- makes the "selection failed" sound
+		fire_event('huntsman_charged')
+	end, 1000)
+	wait_for_event({'-mouse1', '+mouse2', 'slotchange', 'huntsman_charged'})
+	if t then t:cancel() t = nil end
+end
+
+add_listener('classchange', function (class)
+	if class == 'sniper' then
+		add_listener('+mouse1', on_mouse1_dn)
+	else
+		remove_listener('+mouse1', on_mouse1_dn)
+	end
+end)
 
 --------------------------------------------------------------------------------
 
@@ -355,9 +378,6 @@ local checkwm = function ()
 	local use_world_model = 1
 	if class == 'sniper' and slot == 1 then
 		use_world_model = 0 -- huntsman
-	end
-	if class == 'soldier' and slot == 1 then
-		use_world_model = 1 -- the trash one
 	end
 	if class == 'spy' then
 		use_world_model = 0 -- cloak
@@ -551,19 +571,173 @@ bind('f9', function ()
 	return cmd('toggleconsole')
 end) -- tf2sim
 
-bind('f5', function ()
-	local p = '/sys/devices/system/cpu/cpufreq/boost'
-	local f <close> = assert(io.open(p, 'r'))
-	local newval = f:read('n')~1
-	if not os.execute(string.format('exec doas sh -c "echo %d >%s"', newval, p)) then
-		cmd.echo('toggling turbo failed')
-		return
+--------------------------------------------------------------------------------
+
+-- detect bots on the server
+-- it just checks if their steam name is different and if they're on some lists
+
+local json = require 'json'
+
+table.includes = function (t, v)
+	for i = 1, #t do
+		if t[i] == v then return true end
 	end
-	if newval ~= 0 then
-		cmd.echo('turbo is now on')
-	else
-		cmd.echo('turbo is now off')
+	return false
+end
+
+local bad_steamids_milenko = {}
+local bad_steamids_pazer = {}
+local bad_names_pazer = {}
+add_listener('startup', function ()
+	-- https://github.com/PazerOP/tf2_bot_detector
+	local f = io.open(os.getenv('HOME')..'/git/tf2_bot_detector/staging/cfg/playerlist.official.json')
+	if f then
+		for _, t in ipairs(json.decode(f:read('a')).players) do
+			if table.includes(t.attributes, 'cheater') then
+				bad_steamids_pazer[t.steamid] = true
+				if t.last_seen and t.last_seen.player_name then
+					bad_names_pazer[t.last_seen.player_name] = true
+				end
+			end
+		end
+	end
+	-- https://github.com/incontestableness/milenko
+	local f = io.open(os.getenv('HOME')..'/git/milenko/playerlist.milenko-list.json')
+	if f then
+		for _, t in ipairs(json.decode(f:read('a')).players) do
+			bad_steamids_milenko[t.steamid] = true
+		end
 	end
 end)
+
+-- parse the player list from status
+-- can't use run_capturing_output() because status requests it from the server which takes a bit
+-- todo: this should have a timeout
+local get_playerlist = function ()
+	local players = {}
+	local count = -1
+	cfg('status')
+	for line in wait_for_events('game_console_output') do
+		local cnt = line:match('^players : ([0-9]+) humans, [0-9]+ bots %([0-9]+ max%)$')
+		if cnt then
+			count = tonumber(cnt)
+		end
+		-- userid, name, uniqueid, connected, ping, loss, state
+		local name, steamid = line:match(
+		    '# +[0-9]+ +"(.*)" +(%[U:[0-9]+:[0-9]+%]) +[0-9:]+ +[0-9]+ +[0-9]+ +[^ ]+')
+		if name then
+			local id32 = tonumber(steamid:match('^%[U:1:([0-9]+)%]$'))
+			local id64 = id32+76561197960265728
+			local t = {
+				name = name,
+				steamid = steamid,
+				steamid64 = id64,
+			}
+			table.insert(players, t)
+			players[tostring(id64)] = t
+		end
+		if count ~= -1 and #players == count then
+			break
+		end
+	end
+	if count == -1 then
+		cmd.echo('warning: failed to read player count from status!')
+	elseif count == 0 then
+		cmd.echo('warning: failed to parse any players from status!')
+	elseif #players ~= count then
+		cmd.echo('warning: failed to parse all players from status!')
+	end
+	return players
+end
+
+local shellquote = function (s)
+	return '\'' .. s:gsub('\'', '\'\\\'\'') .. '\''
+end
+local get_json = function (url)
+	local p <close> = assert(io.popen('timeout 3 curl -s ' .. shellquote(url), 'r'))
+	local s = p:read('a')
+	return json.decode(s)
+end
+
+local get_summaries = function (players)
+	local id64s = {}
+	for _, t in ipairs(players) do
+		table.insert(id64s, t.steamid64)
+	end
+	local url = string.format('http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?steamids=%s&key=%s',
+	    table.concat(id64s, ','),
+	    os.getenv('STEAM_APIKEY'))
+	return get_json(url)
+end
+
+cmd.echof = function (fmt, ...)
+	return cmd.echo(string.format(fmt, ...))
+end
+
+local printableish = function (name)
+	name = name:gsub('[^A-Za-z0-9_-]+', '')
+	if #name > 12 then
+		name = name:sub(1, 12) .. '...'
+	end
+	if #name == 0 then
+		name = '(unprintable)'
+	end
+	return name
+end
+cmd.bots = function ()
+	panic = function (err)
+		cmd.echo('an error occurred: ' .. err)
+	end
+	if not os.getenv('STEAM_APIKEY') then
+		cmd.echo('STEAM_APIKEY not set')
+		cmd.echo('get it from https://steamcommunity.com/dev/apikey')
+		return
+	end
+
+	local players = get_playerlist()
+	if #players == 0 then
+		return
+	end
+
+	local summaries = get_summaries(players)
+	if not (type(summaries) == 'table' and
+	        type(summaries.response) == 'table' and
+	        type(summaries.response.players) == 'table') then
+		cmd.echo('steam returned no data!')
+		return
+	end
+
+	cmd.echo('')
+	local found_any = false
+	for _, t in ipairs(summaries.response.players) do
+		local complain = function (fmt, ...)
+			found_any = true
+			cmd.echof('%s %s: ' .. fmt,
+			    printableish(players[t.steamid].name),
+			    players[t.steamid].steamid,
+			    ...)
+		end
+		if t.personaname ~= players[t.steamid].name then
+			complain('steam name differs: %s', printableish(t.personaname))
+		end
+		if bad_steamids_pazer[players[t.steamid].steamid] then
+			complain('steamid is included in the pazer list')
+		end
+		if bad_steamids_milenko[players[t.steamid].steamid] then
+			complain('steamid is included in the milenko list')
+		end
+		if bad_names_pazer[players[t.steamid].name] then
+			complain('in-game name is included in the pazer list')
+		end
+		if bad_names_pazer[t.personaname] then
+			complain('steam name is included in the pazer list')
+		end
+	end
+	if not found_any then
+		cmd.echo('no bots found?')
+	end
+end
+
+--------------------------------------------------------------------------------
 
 cmd.echo('</script.lua>')

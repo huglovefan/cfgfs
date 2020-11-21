@@ -17,6 +17,10 @@
 #include "lua.h"
 #include "macros.h"
 
+// enhancement:
+// should put the window title comparison in C
+// no need to use lua except for firing the event
+
 // builtin.lua calls our C function to set this
 _Atomic(enum game_window_activeness) game_window_is_active = activeness_unknown;
 

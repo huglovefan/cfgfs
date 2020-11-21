@@ -1,3 +1,5 @@
+local ev_error_handlers
+
 _println = assert(_print)
 println = function (fmt, ...) return _print(string.format(fmt, ...)) end
 _eprintln = assert(_eprint)
@@ -14,6 +16,13 @@ setmetatable(_G, {
 	__index = function (self, k)
 		eprintln('warning: tried to access nonexistent variable %s', tostring(k))
 		eprintln('%s', debug.traceback(nil, 2))
+	end,
+	__newindex = function (self, k, v)
+		if k == 'panic' then
+			ev_error_handlers[coroutine.running()] = v
+			return
+		end
+		return rawset(self, k, v)
 	end,
 })
 
@@ -136,44 +145,67 @@ end
 
 -- crappy event loop thing
 
-local sym_ok = {}
+-- ev_loop_co is used for calling functions in a coroutine context without
+--  creating a new coroutine each time for that
+-- if the function yields, ev_loop_co gets replaced with a new coroutine
+
+local sym_ready = {}
 local sym_wait = {}
 
 local ev_loop_co
 local ev_loop_fn
+
+local ev_call
+
+local ev_outoftheway = function () -- i had a descriptive name for this before but i forgot what it was
+	if coroutine.running() == ev_loop_co then
+		ev_loop_co = coroutine.create(ev_loop_fn)
+	end
+end
+
+ev_error_handlers = setmetatable({}, {__mode = 'k'}) -- local
+
 ev_loop_fn = function (...)
-	local t = {...}
+	local args = {...}
+	local this_co = coroutine.running()
 	local ok, rv = xpcall(function ()
-		local t = t
+		local args = args
+		local this_co = this_co
 		while true do
-			t[1](select(2, table.unpack(t)))
-			if ev_loop_co ~= coroutine.running() then
+			args[1](select(2, table.unpack(args)))
+			if ev_loop_co ~= this_co then
 				break
 			end
-			t = {coroutine.yield(sym_ok)}
+			args = {coroutine.yield(sym_ready)}
 		end
-	end, debug.traceback)
-	if not ok then
-		eprintln('error: %s', rv)
-	end
-	ev_loop_co = coroutine.create(ev_loop_fn)
+	end, function (err)
+		local handler = ev_error_handlers[this_co]
+		ev_error_handlers[this_co] = nil
+		if handler then
+			return ev_call(handler, err)
+		else
+			eprintln('error: %s', debug.traceback(err, 2))
+		end
+	end)
 end
 ev_loop_co = coroutine.create(ev_loop_fn)
 
 local ev_handle_return = function (co, ok, rv1)
+	if co == ev_loop_co and rv1 ~= sym_ready then
+		ev_loop_co = coroutine.create(ev_loop_fn)
+	end
 	if not ok then
 		-- idiot forgot to use pcall
 		return error(rv1)
 	end
 end
 
-local ev_call = function (fn, ...)
-	if coroutine.running() == ev_loop_co then
-		ev_loop_co = coroutine.create(ev_loop_fn)
-	end
+ev_call = function (fn, ...) -- local
+	ev_outoftheway()
 	return ev_handle_return(ev_loop_co, coroutine.resume(ev_loop_co, fn, ...))
 end
 local ev_resume = function (co, ...)
+	-- assert(co ~= coroutine.running())
 	return ev_handle_return(co, coroutine.resume(co, ...))
 end
 
@@ -187,12 +219,9 @@ local ev_wait = function (ms)
 	else
 		_click()
 	end
-	if coroutine.running() == ev_loop_co then
-		ev_loop_co = coroutine.create(ev_loop_fn)
-	end
 	table.insert(ev_timeouts, {
 		target = target,
-		co = assert(coroutine.running()),
+		co = coroutine.running(),
 	})
 	return coroutine.yield(sym_wait)
 end
@@ -231,6 +260,7 @@ local ev_spinoff = function (fn)
 		if not ok then
 			eprintln('error: %s', rv)
 		end
+		-- todo: this should support the panic function
 	end)
 end
 
@@ -287,7 +317,8 @@ cfg = assert(_cfg)
 
 cfgf = function (fmt, ...) return cfg(string.format(fmt, ...)) end
 
-cmd = setmetatable({}, {
+-- note: this has to be resetable so that it correctly defines the aliases on reload
+cmd = setmetatable(make_resetable_table(), {
 	__index = function (self, k)
 		local fn = function (...) return cmd(k, ...) end
 		rawset(self, k, fn)
@@ -379,6 +410,7 @@ cvar = setmetatable({}, {
 	end,
 	-- cvars list -> name/value map (gets the values)
 	-- name/value map -> nothing (sets the values)
+	-- (untested)
 	__call = function (_, t)
 		local is_list = (t[1] ~= nil)
 		local is_map = true -- default to true for empty tables
@@ -475,15 +507,62 @@ add_listener = function (name, cb)
 		end
 		return
 	end
-	events[name] = events[name] or {}
-	table.insert(events[name], cb)
+	local t = events[name]
+	if not t then
+		t = {}
+		events[name] = t
+	else
+		if t[cb] then return end
+	end
+	table.insert(t, cb)
+	t[cb] = true
+end
+remove_listener = function (name, cb)
+	if type(name) == 'table' then
+		for _, name in ipairs(name) do
+			remove_listener(name, cb)
+		end
+		return
+	end
+	local t = events[name]
+	if not (t and t[cb]) then return end
+	if #t == 1 then
+		events[name] = nil
+		return
+	end
+	for i = 1, #t do
+		if t[i] == cb then
+			table.remove(t, i)
+		end
+	end
 end
 
 fire_event = function (name, ...)
 	local t = events[name]
 	if not t then return end
 	for _, cb in ipairs(t) do
-		ev_call(cb, ...)
+		if t[cb] then
+			if type(cb) == 'function' then
+				ev_call(cb, ...)
+			elseif type(cb) == 'thread' then
+				ev_resume(cb, ...)
+			end
+		end
+	end
+	-- it is unclear what happens if the list is modified during this loop
+	-- should probably handle that
+end
+
+wait_for_event = function (name)
+	local this_co = coroutine.running()
+	add_listener(name, this_co)
+	local rv = coroutine.yield()
+	remove_listener(name, this_co)
+	return rv
+end
+wait_for_events = function (name)
+	return function ()
+		return wait_for_event(name)
 	end
 end
 

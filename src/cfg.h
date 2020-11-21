@@ -1,7 +1,5 @@
 #pragma once
 
-#include <stddef.h>
-
 #define max_line_length ((size_t)510)
 #define max_cfg_size    ((size_t)1048576)
 #define max_argc        (63)

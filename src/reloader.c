@@ -17,6 +17,9 @@
 #include "lua.h"
 #include "macros.h"
 
+// bug: editing the script with nano makes this get in an infinite loop. does it
+// modify the file in place instead of replacing it? why does that break this?
+
 // -----------------------------------------------------------------------------
 
 static int msgpipe[2] = {-1, -1};
