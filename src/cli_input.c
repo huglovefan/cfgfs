@@ -1,4 +1,6 @@
-#define _GNU_SOURCE // unlocked_stdio
+#ifndef _GNU_SOURCE
+ #define _GNU_SOURCE 1 // unlocked_stdio
+#endif
 #include "cli_input.h"
 
 #include <errno.h>
@@ -16,7 +18,11 @@
 #pragma GCC diagnostic pop
 #include <readline/history.h>
 
-#include <lua.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lua.h>
+#endif
 
 #include "buffers.h"
 #include "cli_output.h"
@@ -26,6 +32,11 @@
 #include "main.h"
 
 _Atomic(bool) cli_reading_line;
+
+#define DEFAULT_PROMPT "] "
+
+// protected by cli_(un)lock_output()
+static char *prompt;
 
 // -----------------------------------------------------------------------------
 
@@ -47,6 +58,7 @@ static lua_State *g_L;
 __attribute__((cold))
 static void linehandler(char *line) {
 	cli_reading_line = false;
+	lua_State *L;
 
 	if (unlikely(line == NULL)) {
 		cli_exiting = true;
@@ -56,12 +68,11 @@ static void linehandler(char *line) {
 	if (unlikely(*line == '\0')) goto end;
 
 	LUA_LOCK();
-	lua_State *L = g_L;
+	L = g_L;
 	 lua_getglobal(L, "_cli_input");
 	  lua_pushstring(L, line);
 	lua_call(L, 1, 0);
-	opportunistic_click();
-	LUA_UNLOCK();
+	opportunistic_click_and_unlock();
 
 	add_history(line);
 end:
@@ -86,14 +97,15 @@ static void winch_handler(int signal) {
 __attribute__((cold))
 static void *cli_main(void *ud) {
 	set_thread_name("cli");
-	lua_State *L = ud;
+	lua_State *L = (lua_State *)ud;
 	g_L = L;
 
 	signal(SIGWINCH, winch_handler);
 
 	cli_lock_output_nosave();
+	 if (!prompt) prompt = strdup(DEFAULT_PROMPT);
 	 cli_reading_line = true;
-	 rl_callback_handler_install("] ", linehandler);
+	 rl_callback_handler_install(prompt, linehandler);
 	 rl_bind_key('\t', rl_insert); // disable filename completion
 	cli_unlock_output_norestore();
 
@@ -105,11 +117,10 @@ static void *cli_main(void *ud) {
 		int rv = poll(fds, 2, -1);
 		if (unlikely(rv == -1)) {
 			if (likely(errno == EINTR)) continue;
-			eprintln("cli: poll: %s", strerror(errno));
+			perror("cli: poll");
 			break;
 		}
-		if (unlikely(fds[0].revents & POLLNOTGOOD)) break;
-		if (unlikely(fds[1].revents & POLLNOTGOOD)) break;
+		if (unlikely((fds[0].revents|fds[1].revents) & POLLNOTGOOD)) break;
 		if (unlikely(fds[1].revents & POLLIN)) {
 			switch (msg_read()) {
 			case msg_winch:
@@ -120,7 +131,8 @@ static void *cli_main(void *ud) {
 			case msg_exit:
 				goto out;
 			default:
-				assert(false);
+D				assert(0);
+				__builtin_unreachable();
 			}
 		}
 		if (likely(fds[0].revents & POLLIN)) {
@@ -137,6 +149,7 @@ out:
 	signal(SIGWINCH, SIG_DFL);
 
 	cli_lock_output_nosave();
+	 free(exchange(prompt, NULL));
 	 // put the next thing on its own line again
 	 // for some reason, stdout here doesn't print it if you did ^C
 	 fputc_unlocked('\n', stderr);
@@ -159,7 +172,6 @@ static pthread_t thread;
 __attribute__((cold))
 void cli_input_init(void *L) {
 	if (thread != 0) return;
-	if (getenv("CFGFS_NO_CLI")) return;
 	if (!isatty(STDIN_FILENO)) return;
 
 	check_minus1(
@@ -191,4 +203,24 @@ void cli_input_deinit(void) {
 	close(exchange(msgpipe[1], -1));
 
 	thread = 0;
+}
+
+// -----------------------------------------------------------------------------
+
+// this was easier than expected
+static int l_set_prompt(lua_State *L) {
+	const char *newone = lua_tostring(L, 1) ?: DEFAULT_PROMPT;
+	cli_lock_output();
+	free(prompt);
+	prompt = strdup(newone);
+	rl_set_prompt(prompt);
+	cli_unlock_output();
+	return 0;
+}
+
+__attribute__((cold))
+void cli_input_init_lua(void *L_) {
+	lua_State *L = (lua_State *)L_;
+	 lua_pushcfunction(L, l_set_prompt);
+	lua_setglobal(L, "_set_prompt");
 }

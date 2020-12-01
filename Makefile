@@ -7,14 +7,16 @@ CFLAGS ?= -Ofast -g
 
 STATIC_LIBFUSE := 1
 
-#USE_ALLOCATOR := jemalloc
-#STATIC_TCMALLOC := 1
-#STATIC_JEMALLOC := 1
+# i wonder if this would be at all profitable
+# edit: no
+#CPPFLAGS += -DTEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK
 
 # ------------------------------------------------------------------------------
 
-$(shell if [ "$$(id -u)" = 0 ]; then >&2 echo "don't run this as root idiot"; kill $$PPID; fi)
+EXE := $(shell echo $${PWD\#\#*/})
 
+OBJS = $(SRCS:.c=.o)
+DEPS = $(SRCS:.c=.d)
 SRCS = src/main.c \
        src/buffer_list.c \
        src/buffers.c \
@@ -28,18 +30,12 @@ SRCS = src/main.c \
        src/click.c \
        src/attention.c
 
-EXE := $(shell basename -- "$$(pwd)")
-OBJS = $(SRCS:.c=.o)
-DEPS = $(SRCS:.c=.d)
-
+# make it make dependency files for make
 CPPFLAGS += -MMD -MP
-CFLAGS += -fdiagnostics-color
 
 # be able to override functions from static libraries
 LDFLAGS += -Wl,-z,muldefs
 
-ifneq (,$(findstring clang,$(CC)))
-# clang
 CFLAGS += -Weverything \
           -Werror=implicit-function-declaration \
           -Wno-alloca \
@@ -57,14 +53,19 @@ CFLAGS += -Weverything \
           -Wno-padded \
           -Wno-reserved-id-macro \
           -Wno-vla
-else
-# gcc
-CFLAGS += -Wall \
-          -Wextra \
-          -Werror=implicit-function-declaration \
-          -Wno-bool-operation \
-          -Wno-misleading-indentation \
-          -Wno-unused-result
+
+# idiot compiling in c++ mode
+ifneq (,$(findstring ++,$(CC)))
+ CXXFLAGS += -fno-exceptions
+ CFLAGS += $(CXXFLAGS)
+ CFLAGS += -Wno-address-of-temporary \
+           -Wno-c++98-compat-pedantic \
+           -Wno-c11-extensions \
+           -Wno-c99-extensions \
+           -Wno-deprecated \
+           -Wno-old-style-cast \
+           -Wno-zero-as-null-pointer-constant
+ CPPFLAGS+=-Drestrict=
 endif
 
 # ------------------------------------------------------------------------------
@@ -111,50 +112,27 @@ endif
 
 ## requirancies
 
-CFLAGS += -pthread
 CPPFLAGS += -pthread
-LIBS += -pthread
+LDLIBS += -pthread
 
-# assert in macros.h
 CPPFLAGS += -DEXE='"$(EXE)"'
 
-# readline (cli.c)
-CFLAGS += $(shell pkg-config --cflags readline)
-LIBS   += $(shell pkg-config --libs   readline)
+# readline
+CPPFLAGS += -I/usr/include/readline
+LDLIBS += -lreadline
 
-# xlib (attention.c, click.c)
-CFLAGS += $(shell pkg-config --cflags x11 xtst)
-LIBS   += $(shell pkg-config --libs   x11 xtst)
+# xlib
+LDLIBS += -lX11 -lXtst
 
-# lua (lua.c)
-# (it only works with lua 5.4)
-LIBS += -llua -ldl -lm
+# lua
+LDLIBS += -Wl,-export-dynamic -llua -ldl -lm
 
-# fuse (main.c)
-CFLAGS += $(shell pkg-config --cflags fuse3)
-CPPFLAGS += -DFUSE_USE_VERSION=35
+# fuse
+CPPFLAGS += -I/usr/include/fuse3 -DFUSE_USE_VERSION=35
 ifeq ($(STATIC_LIBFUSE),)
- LIBS  += $(shell pkg-config --libs   fuse3)
+ LDLIBS += -lfuse3
 else
- LIBS  += /usr/lib64/libfuse3.a -lpthread
-endif
-
-# malloc (a few places)
-ifeq ($(USE_ALLOCATOR),jemalloc)
- ifeq ($(STATIC_JEMALLOC),)
-  LIBS += -ljemalloc
- else
-  LIBS += /usr/lib64/libjemalloc.a
- endif
-else ifeq ($(USE_ALLOCATOR),tcmalloc)
- ifeq ($(STATIC_TCMALLOC),)
-  LIBS += -ltcmalloc_minimal
- else
-  #LIBS += /usr/lib64/libtcmalloc_minimal.a -lstdc++
-  LIBS += /usr/lib64/libtcmalloc_minimal.a /usr/lib/gcc/x86_64-pc-linux-gnu/10.2.0/libstdc++.a
-  CFLAGS += $(CXXFLAGS)
-  LDFLAGS += $(CXXFLAGS)
- endif
+ LDLIBS += /usr/lib64/libfuse3.a
 endif
 
 # ------------------------------------------------------------------------------
@@ -162,64 +140,21 @@ endif
 ## make targets
 
 $(EXE): $(OBJS)
-	$(CCACHE) $(CC) $(LDFLAGS) $^ -o $@ $(LIBS)
+	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
 -include $(DEPS)
 .c.o:
-	$(CCACHE) $(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
-
-# ~
-
-tf2sim: tf2sim.c
-	$(CCACHE) $(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ -o $@
+	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
 
 # ~
 
 clean:
-	rm -f -- $(EXE) $(DEPS) $(OBJS) core.[0-9]* vgcore.[0-9]* *.profdata \
-	    *.profraw *.log perf.data* callgrind.out* *.d tf2sim *.so plot \
-	    .error
+	@rm -fv -- $(EXE) $(OBJS) $(DEPS)
 
 watch:
 	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >.cfgfs_reexec;pkill -INT cfgfs||rm .cfgfs_reexec'; do\
 		continue;\
 	done
-
-analyze:
-	@set -e; \
-	CC=gcc CFLAGS="-O2 -fanalyzer -flto" LDFLAGS="-O2 -fanalyzer -flto" make -B; \
-	rm -f -- $(EXE) $(OBJS)
-
-# ~
-
-ubench: $(EXE) tf2sim
-	@export CFGFS_NO_ATTENTION=1 CFGFS_NO_CLI=1 CFGFS_NO_CLICK=1 \
-	        CFGFS_NO_LOGTAIL=1 CFGFS_NO_RELOADER=1; \
-	sh scripts/runwith.sh \
-	  time ./$(EXE) $(CFGFS_FLAGS) mnt \
-	  -- \
-	  loop 30 ./tf2sim
-
-pubench: $(EXE) tf2sim
-	@export CFGFS_NO_ATTENTION=1 CFGFS_NO_CLI=1 CFGFS_NO_CLICK=1 \
-	        CFGFS_NO_LOGTAIL=1 CFGFS_NO_RELOADER=1; \
-	sh scripts/runwith.sh \
-	  perf stat ./$(EXE) $(CFGFS_FLAGS) mnt \
-	  -- \
-	  sh -c 'loop 30 ./tf2sim >/dev/null'
-
-plot: $(EXE) tf2sim
-	@export CFGFS_NO_ATTENTION=1 CFGFS_NO_CLI=1 CFGFS_NO_CLICK=1 \
-	        CFGFS_NO_LOGTAIL=1 CFGFS_NO_RELOADER=1; \
-	( isolated sh scripts/runwith.sh \
-	    ./$(EXE) $(CFGFS_FLAGS) mnt \
-	    -- \
-	    sh -c './tf2sim >/dev/null && loop 500 ./tf2sim' \
-	) | dd bs=1M of=plot 2>/dev/null
-
-graph: plot
-	@awk '/^[.0-9]+ms$$/ { sub("ms", ""); print(++i, $$0); }' plot | \
-	  graph -T X -y - - 0.0005 2>/dev/null
 
 # ------------------------------------------------------------------------------
 

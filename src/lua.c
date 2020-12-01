@@ -1,4 +1,6 @@
-#define _GNU_SOURCE // unlocked_stdio
+#ifndef _GNU_SOURCE
+ #define _GNU_SOURCE 1 // unlocked_stdio
+#endif
 #include "lua.h"
 
 #include <errno.h>
@@ -8,12 +10,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <lualib.h>
-#include <lauxlib.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lualib.h>
+ #include <lauxlib.h>
+#endif
 
 #include "attention.h"
 #include "buffers.h"
 #include "cfg.h"
+#include "cli_input.h"
 #include "cli_output.h"
 #include "click.h"
 #include "keys.h"
@@ -22,43 +29,56 @@
 
 // -----------------------------------------------------------------------------
 
+#define TIME_LOCKING 0
+
 static pthread_mutex_t lua_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+#if TIME_LOCKING
+static double lock_taken;
+static double worst_lock;
+#endif
 
 void LUA_LOCK(void) {
 	pthread_mutex_lock(&lua_mutex);
+#if TIME_LOCKING
+	lock_taken = mono_ms();
+#endif
 }
 
 void LUA_UNLOCK(void) {
+#if TIME_LOCKING
+	double locked_time = mono_ms()-lock_taken;
+	if (locked_time > worst_lock) {
+		eprintln("LUA_UNLOCK: was locked for %lf ms", locked_time);
+		worst_lock = locked_time;
+	}
+#endif
 	pthread_mutex_unlock(&lua_mutex);
 }
 
 bool LUA_TRYLOCK(void) {
-	return (0 == pthread_mutex_trylock(&lua_mutex));
+	bool rv = (0 == pthread_mutex_trylock(&lua_mutex));
+#if TIME_LOCKING
+	if (rv) lock_taken = mono_ms();
+#endif
+	return rv;
 }
 
 __attribute__((noinline))
 bool LUA_TIMEDLOCK(double sec) {
 	struct timespec ts;
-	int rv = clock_gettime(CLOCK_REALTIME, &ts); // timedlock wants realtime
-D	if (unlikely(rv == -1)) {
+	int err = clock_gettime(CLOCK_REALTIME, &ts); // timedlock wants realtime
+D	if (unlikely(err == -1)) {
 		perror("LUA_TIMEDLOCK: clock_gettime");
 		return false;
 	}
 	ms2ts(ts, ts2ms(ts)+sec*1000);
-	return (0 == pthread_mutex_timedlock(&lua_mutex, &ts));
+	bool rv = (0 == pthread_mutex_timedlock(&lua_mutex, &ts));
+#if TIME_LOCKING
+	if (rv) lock_taken = mono_ms();
+#endif
+	return rv;
 }
-
-// ideas for this:
-// - automatically do opportunistic_click()
-// - collect timing stats
-// - avoid deadlocks due to calling from script.lua?
-//   ^ slightly harder with threaded fuse, can't just check if the tid is the same
-// - warn on contention (print thread id of who had the lock)
-//   ^ D only, needs a second lock to do it in a non-racy way
-//   ^ protecting the lock with a lock (lol)
-// - check stack/buffers consistency in lock and unlock
-//   ^ this needs a way to get the lua state. why is it in main instead of here anyway
-// cfgfs_* needs non-bloated versions though?
 
 // -----------------------------------------------------------------------------
 
@@ -160,9 +180,11 @@ error:
 // removes whitespace from the start and end
 static int l_string_trim(lua_State *L) {
 	const char *s = lua_tostring(L, 1);
+	const char *first, *last;
 	if (unlikely(!s)) goto error;
 
-	const char *first = NULL, *last = s;
+	first = NULL;
+	last = s;
 	while (*s != '\0') {
 		if (*s > 0x20) {
 			first = first ?: s;
@@ -273,6 +295,7 @@ lua_State *lua_init(void) {
 	attention_init_lua(L);
 	buffers_init_lua(L);
 	cfg_init_lua(L);
+	cli_input_init_lua(L);
 	click_init_lua(L);
 
 	assert(lua_gettop(L) == 0);

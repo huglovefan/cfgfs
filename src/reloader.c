@@ -10,10 +10,15 @@
 #include <sys/prctl.h>
 #include <unistd.h>
 
-#include <lua.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lua.h>
+#endif
 
 #include "buffers.h"
 #include "cli_output.h"
+#include "click.h"
 #include "lua.h"
 #include "macros.h"
 
@@ -42,7 +47,7 @@ static bool wait_for_event(const char *path, int fd) {
 	// just re-add the watch each time
 	// some editors replace the file instead of modifying the existing one
 	int wd = inotify_add_watch(fd, path, IN_MODIFY);
-	check_minus1(wd, "reloader: inotify_add_watch", goto out);
+	check_minus1(wd, "reloader: inotify_add_watch", return false);
 
 	struct pollfd fds[2] = {
 		{.fd = fd,         .events = POLLIN},
@@ -52,17 +57,17 @@ static bool wait_for_event(const char *path, int fd) {
 		int rv = poll(fds, 2, -1);
 		if (unlikely(rv == -1)) {
 			if (likely(errno == EINTR)) continue;
-			eprintln("reloader: poll: %s", strerror(errno));
+			perror("reloader: poll");
 			break;
 		}
-		if (unlikely(fds[0].revents & POLLNOTGOOD)) break;
-		if (unlikely(fds[1].revents & POLLNOTGOOD)) break;
+		if (unlikely((fds[0].revents|fds[1].revents) & POLLNOTGOOD)) break;
 		if (unlikely(fds[1].revents & POLLIN)) {
 			switch (msg_read()) {
 			case msg_exit:
 				goto out;
 			default:
-				assert(false);
+D				assert(0);
+				__builtin_unreachable();
 			}
 		}
 		if (likely(fds[0].revents & POLLIN)) {
@@ -99,9 +104,8 @@ static void do_reload(lua_State *L) {
 	  lua_getfield(L, -1, "intercept_blacklist");
 	  lua_rotate(L, -2, 1);
 	 lua_pop(L, 1);
-D	assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
 
-	LUA_UNLOCK();
+	opportunistic_click_and_unlock();
 }
 
 // -----------------------------------------------------------------------------
@@ -109,15 +113,16 @@ D	assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
 __attribute__((cold))
 static void *reloader_main(void *ud) {
 	set_thread_name("reloader");
-	lua_State *L = ud;
+	lua_State *L = (lua_State *)ud;
 
+	const char *filename;
 	int fd = inotify_init();
 	check_minus1(
 	    fd,
 	    "reloader: inotify_init",
 	    goto out);
 
-	const char *filename = (getenv("CFGFS_SCRIPT") ?: "./script.lua");
+	filename = (getenv("CFGFS_SCRIPT") ?: "./script.lua");
 	while (wait_for_event(filename, fd)) {
 		do_reload(L);
 	}
@@ -133,7 +138,6 @@ static pthread_t thread;
 __attribute__((cold))
 void reloader_init(void *L) {
 	if (thread != 0) return;
-	if (getenv("CFGFS_NO_RELOADER")) return;
 
 	check_minus1(
 	    pipe(msgpipe),

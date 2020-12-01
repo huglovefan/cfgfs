@@ -6,7 +6,7 @@ _eprintln = assert(_eprint)
 eprintln = function (fmt, ...) return _eprint(string.format(fmt, ...)) end
 print = function (...)
 	local t = {...}
-	for i = 1, #t do
+	for i = 1, select('#', ...) do
 		t[i] = tostring(t[i])
 	end
 	return println('%s', table.concat(t, '\t'))
@@ -14,11 +14,12 @@ end
 
 setmetatable(_G, {
 	__index = function (self, k)
-		eprintln('warning: tried to access nonexistent variable %s', tostring(k))
-		eprintln('%s', debug.traceback(nil, 2))
+		return error('tried to access nonexistent variable ' .. tostring(k), 2)
 	end,
 	__newindex = function (self, k, v)
 		if k == 'panic' then
+			assert(coroutine.running(), 'tried to set panic function outside a coroutine')
+			assert(type(v) == 'function', 'panic function must be a function')
 			ev_error_handlers[coroutine.running()] = v
 			return
 		end
@@ -211,7 +212,7 @@ end
 
 local ev_timeouts = make_resetable_table()
 
-local ev_wait = function (ms)
+wait = function (ms)
 	local target = 0
 	if ms > 0 then
 		target = _ms()+ms
@@ -254,7 +255,7 @@ local ev_do_timeouts = function ()
 	end
 end
 
-local ev_spinoff = function (fn)
+spinoff = function (fn)
 	return ev_call(function ()
 		local ok, rv = xpcall(fn, debug.traceback)
 		if not ok then
@@ -294,9 +295,6 @@ set_interval = function (fn, ms)
 	}
 end
 
-wait = ev_wait
-spinoff = ev_spinoff
-
 --------------------------------------------------------------------------------
 
 local aliases = make_resetable_table()
@@ -307,7 +305,11 @@ local binds_up = make_resetable_table()
 local events = make_resetable_table()
 
 unmask_next = make_resetable_table()
-is_pressed = make_resetable_table()
+
+is_pressed = {}
+for key in pairs(key2num) do
+	is_pressed[key] = false
+end
 
 --------------------------------------------------------------------------------
 
@@ -346,6 +348,20 @@ cmd = setmetatable(make_resetable_table(), {
 		return cmd.alias(k, v)
 	end,
 	__call = assert(_cmd),
+})
+cmdv = setmetatable({--[[ empty ]]}, {
+	__index = function (self, k)
+		local fn = function (...) return cmdv(k, ...) end
+		rawset(self, k, fn)
+		return fn
+	end,
+	__newindex = function (self, k, v)
+		cmd[k] = v
+	end,
+	__call = function (self, ...)
+		cmd('echo', '+', ...)
+		return cmd(...)
+	end,
 })
 
 run_capturing_output = function (cmd)
@@ -433,7 +449,7 @@ cvar = setmetatable({}, {
 			end
 		else
 			if is_list then
-				return error('cvar: ambiguous table')
+				return error('ambiguous table passed to cvar', 2)
 			else
 				return {} -- t was empty
 			end
@@ -517,6 +533,7 @@ add_listener = function (name, cb)
 	table.insert(t, cb)
 	t[cb] = true
 end
+
 remove_listener = function (name, cb)
 	if type(name) == 'table' then
 		for _, name in ipairs(name) do
@@ -550,9 +567,10 @@ fire_event = function (name, ...)
 		end
 	end
 	-- it is unclear what happens if the list is modified during this loop
-	-- should probably handle that
 end
 
+-- this should probably return the event name too, in case multiple were specified
+-- need a way to get it from fire_event
 wait_for_event = function (name)
 	local this_co = coroutine.running()
 	add_listener(name, this_co)
@@ -654,6 +672,7 @@ _get_contents = function (path)
 			return fire_event('-'..name)
 
 		else
+			-- fatal
 			return error('unknown bind type')
 		end
 		-- ^ this is duplicated because function calls are SLOW ^
@@ -800,41 +819,77 @@ end
 --------------------------------------------------------------------------------
 
 local repl_fn = function (code)
-	local fn, err1 = load(code, 'input')
-	if fn then
-		return fn
-	end
-	local fn = load('return '..code, 'input')
+	local fn, err1 = load('return '..code, 'input')
 	if fn then
 		return function ()
 			return print(fn())
 		end
 	end
+	local fn = load(code, 'input')
+	if fn then
+		return fn
+	end
 	return nil, err1
 end
 
+local lua_mode = false
+if lua_mode then _set_prompt('> ') end
+
 _cli_input = function (line)
-	if line:find('^!') then
-		local fn, err = repl_fn(line:sub(2))
+
+	if line == '>>' then
+		eprintln('Entered Lua mode. Type "]]" to return to cfg mode.')
+		lua_mode = true
+		_set_prompt('> ')
+		return
+	end
+
+	if line == ']]' then
+		eprintln('Entered cfg mode. Type ">>" to return to Lua mode.')
+		lua_mode = false
+		_set_prompt('] ')
+		return
+	end
+
+	if line == 'cfgfs_license' then
+		local f <close> = assert(io.open('LICENSE', 'r'))
+		for line in f:lines() do
+			println('%s', line)
+		end
+		return
+	end
+
+	local do_lua = false
+	if not lua_mode and fine:find('^!') then
+		line = line:sub(2)
+		do_lua = true
+	end
+	do_lua = (do_lua or lua_mode)
+
+	if do_lua then
+		local fn, err = repl_fn(line)
 		if not fn then
 			eprintln('%s', err)
 			return
 		end
 		return ev_call(fn)
 	else
-		if line == 'cfgfs_license' then
-			local f <close> = assert(io.open('LICENSE', 'r'))
-			for line in f:lines() do
-				println('%s', line)
-			end
-			return
-		end
 		return cfg(line)
 	end
+
 end
 
 _game_console_output = function (line)
-	_println(line)
+	if line ~= '' then
+		-- remove color codes
+		-- mostly just want to remove the bell character so it doesn't blink my terminal
+		-- line="\7FFD700[RTD]\1 Rolled \00732CD32Lucky Sandvich\1."
+		if line:byte(1) < 0x20 then
+			line = line:gsub('\0[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
+			line = line:gsub('\7[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
+		end
+		_println(line)
+	end
 	fire_event('game_console_output', line)
 	-- agpl backdoor (https://www.gnu.org/licenses/gpl-howto.en.html)
 	-- it doesn't work if you say it yourself
@@ -846,6 +901,7 @@ assert((type(agpl_source_url) == 'string' and #agpl_source_url > 0), 'invalid ag
 
 cmd.cfgfs_license = 'exec cfgfs/license'
 cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
+-- ^ are these in the right place? do they always get defined properly?
 
 --------------------------------------------------------------------------------
 

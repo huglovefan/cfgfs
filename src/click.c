@@ -11,8 +11,12 @@
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
 
-#include <lua.h>
-#include <lauxlib.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lua.h>
+ #include <lauxlib.h>
+#endif
 
 #include "attention.h"
 #include "buffers.h"
@@ -21,19 +25,27 @@
 #include "lua.h"
 #include "macros.h"
 
+#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
+ #include "main.h"
+#endif
+
 static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 static Display *display;
 static KeyCode keycode;
 
 static void do_click(void) {
-	if (unlikely(game_window_is_active == activeness_inactive)) return;
-	pthread_mutex_lock(&click_lock);
-	 if (unlikely(display == NULL || keycode == 0)) goto out_locked;
-	 XTestFakeKeyEvent(display, keycode, True, 0);
-	 XTestFakeKeyEvent(display, keycode, False, 0);
-	 XFlush(display);
-out_locked:
-	pthread_mutex_unlock(&click_lock);
+	if (game_window_is_active != attn_inactive &&
+#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
+	    !read_waiting_for_lock &&
+#endif
+	    (0 == pthread_mutex_trylock(&click_lock))) {
+		if (display != NULL && keycode != 0) {
+			XTestFakeKeyEvent(display, keycode, True, CurrentTime);
+			XTestFakeKeyEvent(display, keycode, False, CurrentTime);
+			XFlush(display);
+		}
+		pthread_mutex_unlock(&click_lock);
+	}
 }
 
 static bool click_set_key(const char *name);
@@ -82,7 +94,6 @@ V	eprintln("click_set_key: key set to %s (ks=%ld, kc=%d)", name, ks, kc);
 // -----------------------------------------------------------------------------
 
 static void mono_ms_wait_until(double target) {
-VV	eprintln("click: waiting %lf ms", target-mono_ms());
 	struct timespec ts;
 	ms2ts(ts, target);
 	int err;
@@ -90,7 +101,7 @@ again:
 	err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
 	if (likely(err == 0)) return;
 	if (likely(err == EINTR)) goto again;
-	eprintln("click: clock_nanosleep: %s", strerror(err));
+	perror("click: clock_nanosleep");
 }
 
 static void *click_thread(void *msp) {
@@ -107,6 +118,7 @@ static void click_at(double ms) {
 	void *msp;
 	pthread_t thread;
 
+	_Static_assert(sizeof(msp) >= sizeof(ms));
 	memcpy(&msp, &ms, sizeof(double));
 	int err = pthread_create(&thread, NULL, click_thread, msp);
 	if (unlikely(err != 0)) {
@@ -122,9 +134,14 @@ static void click_after(double ms) {
 
 // -----------------------------------------------------------------------------
 
-void opportunistic_click(void) {
-	if (getenv("CFGFS_NO_CLICK")) return;
-	if (!buffer_list_is_empty(&buffers)) do_click();
+void opportunistic_click_and_unlock(void) {
+#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
+	bool should = (!read_waiting_for_lock && !buffer_list_is_empty(&buffers));
+#else
+	bool should = (!buffer_list_is_empty(&buffers));
+#endif
+	LUA_UNLOCK();
+	if (should) do_click();
 }
 
 // -----------------------------------------------------------------------------
@@ -156,24 +173,14 @@ static int l_click_set_key(lua_State *L) {
 }
 
 __attribute__((cold))
-void click_init_lua(void *L) {
-	if (!getenv("CFGFS_NO_CLICK")) {
-		 lua_pushcfunction(L, l_click);
-		lua_setglobal(L, "_click");
-		 lua_pushcfunction(L, l_click_after);
-		lua_setglobal(L, "_click_after");
-		 lua_pushcfunction(L, l_click_at);
-		lua_setglobal(L, "_click_at");
-		 lua_pushcfunction(L, l_click_set_key);
-		lua_setglobal(L, "_click_set_key");
-	} else {
-		 lua_pushcfunction(L, lua_do_nothing);
-		lua_setglobal(L, "_click");
-		 lua_pushcfunction(L, lua_do_nothing);
-		lua_setglobal(L, "_click_after");
-		 lua_pushcfunction(L, lua_do_nothing);
-		lua_setglobal(L, "_click_at");
-		 lua_pushcfunction(L, lua_do_nothing);
-		lua_setglobal(L, "_click_set_key");
-	}
+void click_init_lua(void *L_) {
+	lua_State *L = (lua_State *)L_;
+	 lua_pushcfunction(L, l_click);
+	lua_setglobal(L, "_click");
+	 lua_pushcfunction(L, l_click_after);
+	lua_setglobal(L, "_click_after");
+	 lua_pushcfunction(L, l_click_at);
+	lua_setglobal(L, "_click_at");
+	 lua_pushcfunction(L, l_click_set_key);
+	lua_setglobal(L, "_click_set_key");
 }

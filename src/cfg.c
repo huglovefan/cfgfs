@@ -3,9 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <lua.h>
-#include <lualib.h>
-#include <lauxlib.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lauxlib.h>
+#endif
 
 #include "buffers.h"
 #include "cli_output.h"
@@ -47,6 +49,14 @@ static bool str_is_ok(const char *s, size_t sz) {
 
 // -----------------------------------------------------------------------------
 
+// would it be better to do this without writing it to the stack buffer first?
+// would need to know the length in advance
+// loop over args first and get their length + need to quote
+
+// todo: fix command injection
+//   cmd.echo(' "; say cfgfs sucks // ')
+// need to convert " to '
+
 static int l_cmd_say(lua_State *L);
 static int cmd_toolong(lua_State *L, char *buf, size_t len);
 
@@ -54,29 +64,32 @@ static int l_cmd(lua_State *L) {
 	char buf[max_line_length+8];
 	size_t len = 0;
 	int top = lua_gettop(L);
+	size_t sz;
+	const char *s;
+	int i;
 
 	// note: first arg is the "cfg" table
 
 	if (unlikely(top <= 1)) return 0;
 	if (unlikely(top-1 > (ssize_t)max_argc)) goto toolong;
 
-	if (unlikely(top >= 3 &&
-	             lua_tostring(L, 2) != NULL &&
-	             (strcmp(lua_tostring(L, 2), "say") == 0 ||
-	              strcmp(lua_tostring(L, 2), "say_team") == 0))) {
+	i = 2;
+	s = lua_tolstring(L, i, &sz);
+
+	if (unlikely((sz == 3 && memcmp(s, "say", 3) == 0) ||
+	             (sz == 8 && memcmp(s, "say_team", 8) == 0))) {
 		return l_cmd_say(L);
 	}
 
-	for (int i = 2; i <= top; i++) {
-		size_t sz;
-		const char *s = lua_tolstring(L, i, &sz);
+	for (;;) {
 		if (unlikely(s == NULL)) goto typeerr;
 
 		// rough safety check
 		if (unlikely(len+sz > max_line_length)) goto toolong;
 
 		if (likely(str_is_ok(s, sz))) {
-			if (len != 0) buf[len++] = ' ';
+D			assert(sz != 0);
+			if (i != 2) buf[len++] = ' ';
 			memcpy(buf+len, s, sz);
 			len += sz;
 		} else {
@@ -88,6 +101,9 @@ static int l_cmd(lua_State *L) {
 
 		// this is now accurate
 		if (unlikely(len > max_line_length)) goto toolong;
+
+		if (unlikely(++i > top)) break;
+		s = lua_tolstring(L, i, &sz);
 	}
 
 	buffer_list_write_line(&buffers, buf, len);
@@ -181,7 +197,8 @@ toolong:
 
 // -----------------------------------------------------------------------------
 
-void cfg_init_lua(void *L) {
+void cfg_init_lua(void *L_) {
+	lua_State *L = (lua_State *)L_;
 	 lua_pushcfunction(L, l_cfg);
 	lua_setglobal(L, "_cfg");
 	 lua_pushcfunction(L, l_cmd);

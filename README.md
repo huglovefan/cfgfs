@@ -43,7 +43,6 @@ end
 - `libfuse3`
 - `libreadline`
 - `libx11`, `libxtst`
-- `libjemalloc`
 
 At the moment only GNU/Linux is supported. I don't have a Windows computer to
 test with and I don't <del>want one</del> know if this will even work on it.

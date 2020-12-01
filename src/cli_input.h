@@ -13,3 +13,5 @@ extern _Atomic(bool) cli_reading_line;
 
 void cli_input_init(void *L);
 void cli_input_deinit(void);
+
+void cli_input_init_lua(void *L);

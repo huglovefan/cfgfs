@@ -38,15 +38,15 @@
 
 #define mono_ms() \
 	({ \
-		struct timespec ts; \
-		clock_gettime(CLOCK_MONOTONIC, &ts); \
-		ts2ms(ts); \
+		struct timespec _mono_ms_ts; \
+		clock_gettime(CLOCK_MONOTONIC, &_mono_ms_ts); \
+		ts2ms(_mono_ms_ts); \
 	})
 #define wall_ms() \
 	({ \
-		struct timespec ts; \
-		clock_gettime(CLOCK_REALTIME, &ts); \
-		ts2ms(ts); \
+		struct timespec _wall_ms_ts; \
+		clock_gettime(CLOCK_REALTIME, &_wall_ms_ts); \
+		ts2ms(_wall_ms_ts); \
 	})
 
 #define ts2ms(ts) \

@@ -4,15 +4,6 @@ cfgfs.game_window_title_is('Team Fortress 2 - OpenGL')
 cfgfs.init_after_cfg['comfig/modules_run.cfg'] = true
 cfgfs.intercept_blackhole['comfig/echo.cfg'] = true
 
-add_listener('attention', function (active)
-	local exes = 'chrome'
-	if active then
-		os.execute('kill -STOP $(pidof '..exes..')')
-	else
-		os.execute('kill -CONT $(pidof '..exes..')')
-	end
-end)
-
 --------------------------------------------------------------------------------
 
 -- crosshair and slot thing
@@ -107,8 +98,8 @@ local xh_update = function (slot)
 end
 add_listener('slotchange', xh_update)
 
-add_listener({'+tab', '-tab'}, function ()
-	if is_pressed['tab'] and is_pressed['ctrl'] then
+add_listener('+tab', function ()
+	if is_pressed['ctrl'] then
 		if #xhs[class][slot] > 1 then
 			table.insert(xhs[class][slot], xhs[class][slot][1])
 			table.remove(xhs[class][slot], 1)
@@ -247,7 +238,7 @@ local jump_dn = '+jump;slot6;spec_mode'
 local jump_up = '-jump'
 
 if 1 + 1 == 2 then
-	local dn = 100
+	local dn = 350
 	local jump = 700
 	local jumping = nil
 
@@ -300,9 +291,22 @@ cmd.cfgfs_init = 'exec cfgfs/init'
 
 cmd.release_all_keys = release_all_keys
 
+cmd.disconnect2 = function ()
+	for i = 1, 41 do
+		cmd.cmd('cmd')
+	end
+end
+
+add_listener('+mouse2', function ()
+	if (class == 'engineer' or class == 'spy') and slot >= 4 then
+		cmd.pda_click()
+	end
+end)
+
 --------------------------------------------------------------------------------
 
 -- huntsman charge bell
+-- this should probably bell when it becomes wobbly too
 
 local t = nil
 local on_mouse1_dn = function ()
@@ -353,7 +357,7 @@ cvar.hud_combattext_doesnt_block_overhead_text = 1
 cvar.hud_fastswitch = 1
 cvar.hud_freezecamhide = 1
 cvar.hud_medicautocallers = 1
-cvar.hud_medicautocallersthreshold = 124
+cvar.hud_medicautocallersthreshold = 99
 cvar.hud_medichealtargetmarker = 1
 cvar.m_rawinput = 1
 cvar.snd_mute_losefocus = 0
@@ -398,6 +402,15 @@ cvar.tf_mm_custom_ping = 35
 
 -- https://wiki.teamfortress.com/wiki/List_of_default_keys
 
+-- things that need the key bound directly:
+-- * +reload for switching disguise team
+-- * say, say_team for using the chat
+-- * +taunt to use the normal taunt from the menu
+-- * lastinv to cancel the taunt menu
+
+-- command to pick up dropped weapons is +use_action_slot_item
+-- did the _server one work?
+
 cmd.unbindall()
 
 bind('mouse1',			attack1_dn, attack1_up)
@@ -413,41 +426,8 @@ bind('f1',			'incrementvar net_graph 0 6 6')
 bind('f2',			'screenshot')
 bind('f3',			'')
 bind('f4',			'player_ready_toggle')
-bind('f5',			function ()
-					if rawget(_G, 'spam_f5') then return end
-					_G.spam_f5 = true
-					while true do
-						for _, class in ipairs({
-							'scout', 'soldier', 'pyro',
-							'demoman', 'heavyweapons', 'engineer',
-							'medic', 'sniper', 'spy',
-						}) do
-							local tm = 20
-							cmd.join_class(class)
-							wait(tm)
-							if not is_pressed['f5'] then goto out end
-							cmd.voicemenu(0, 0)
-							wait(510-tm)
-							if not is_pressed['f5'] then goto out end
-						end
-					end
-					::out::
-					_G.spam_f5 = nil
-				end)
-bind('f6',			function ()
-					if rawget(_G, 'spam_f6') then return end
-					_G.spam_f6 = true
-					while true do
-						cmd.destroy(3)
-						cmd.build(3)
-						cmd('+attack')
-						wait(115)
-						cmd('-attack')
-						if not is_pressed['f6'] then goto out end
-					end
-					::out::
-					_G.spam_f6 = nil
-				end)
+bind('f5',			'')
+bind('f6',			'')
 bind('f7',			'')
 cmd.bind('f8',			'exec cfgfs/buffer')
 cmd.bind('f9',			'exec cfgfs/buffer')
@@ -485,13 +465,19 @@ bind('pgup',			'')
 bind('tab',			'+showscores;cl_showfps 2;cl_showpos 1',
            			'-showscores;cl_showfps 0;cl_showpos 0')
 
-bind('q',			cmd.fixme)
+bind('q',			function ()
+							if is_pressed['alt'] then
+								cmd.bots()
+							else
+								cmd.kob()
+							end
+						end)
 bind('w',			nullcancel_pair('w', 's', 'forward', 'back'))
 bind('e',			'voicemenu 0 0')
-cmd.bind('r',			'+reload') -- can't change disguise team otherwise
-bind('t',			'')
-cmd.bind('y',			'say') -- can't open chat otherwise
-cmd.bind('u',			'say_team') -- can't open chat otherwise
+cmd.bind('r',			'+reload')
+bind('t',			'+use_action_slot_item_server')
+cmd.bind('y',			'say')
+cmd.bind('u',			'say_team')
 bind('i',			'callvote')
 bind('o',			'kill')
 bind('p',			'explode')
@@ -508,11 +494,39 @@ bind('a',			nullcancel_pair('a', 'd', 'moveleft', 'moveright'))
 bind('s',			nullcancel_pair('s', 'w', 'back', 'forward'))
 bind('d',			nullcancel_pair('d', 'a', 'moveright', 'moveleft'))
 bind('f',			'+inspect')
-cmd.bind('g',			'+taunt') -- can't use normal taunt from menu otherwise
-cmd.bind('h',			'lastinv') -- can't cancel taunt menu otherwise
+--cmd.bind('g',			'+taunt')
+bind('g',			function ()
+					if rawget(_G, 'spam_g') then return end
+					_G.spam_g = true
+					while true do
+						cmd.cmd('taunt')
+						wait(100/3)
+						if not is_pressed['g'] then break end
+					end
+					::out::
+					_G.spam_g = nil
+				end,
+				function ()
+					_G.spam_g = nil
+				end)
+cmd.bind('h',			'lastinv')
 bind('j',			'cl_trigger_first_notification')
 bind('k',			'cl_decline_first_notification')
-bind('l',			'dropitem')
+--bind('l',			'dropitem')
+bind('l',			function ()
+					if rawget(_G, 'spam_l') then return end
+					_G.spam_l = true
+					while true do
+						cmd.cmd('dropitem')
+						wait(100/3)
+						if not is_pressed['l'] then break end
+					end
+					::out::
+					_G.spam_l = nil
+				end,
+				function ()
+					_G.spam_l = nil
+				end)
 bind('semicolon',		'')
 bind("'",			'')
 bind('/',			'')
@@ -567,9 +581,16 @@ bind('kp_enter',		'')
 bind('kp_ins',			'')
 bind('kp_del',			'')
 
-bind('f9', function ()
-	return cmd('toggleconsole')
-end) -- tf2sim
+--------------------------------------------------------------------------------
+
+add_listener('attention', function (active)
+	local exes = 'chrome'
+	if active then
+		os.execute('kill -STOP $(pidof '..exes..')')
+	else
+		os.execute('kill -CONT $(pidof '..exes..')')
+	end
+end)
 
 --------------------------------------------------------------------------------
 
@@ -577,6 +598,7 @@ end) -- tf2sim
 -- it just checks if their steam name is different and if they're on some lists
 
 local json = require 'json'
+local rex  = require 'rex_pcre2'
 
 table.includes = function (t, v)
 	for i = 1, #t do
@@ -590,19 +612,19 @@ local bad_steamids_pazer = {}
 local bad_names_pazer = {}
 add_listener('startup', function ()
 	-- https://github.com/PazerOP/tf2_bot_detector
-	local f = io.open(os.getenv('HOME')..'/git/tf2_bot_detector/staging/cfg/playerlist.official.json')
+	local f <close> = io.open(os.getenv('HOME')..'/git/tf2_bot_detector/staging/cfg/playerlist.official.json')
 	if f then
 		for _, t in ipairs(json.decode(f:read('a')).players) do
 			if table.includes(t.attributes, 'cheater') then
 				bad_steamids_pazer[t.steamid] = true
 				if t.last_seen and t.last_seen.player_name then
-					bad_names_pazer[t.last_seen.player_name] = true
+					bad_names_pazer[t.last_seen.player_name:gsub('^%([0-9]+%)', '')] = true
 				end
 			end
 		end
 	end
 	-- https://github.com/incontestableness/milenko
-	local f = io.open(os.getenv('HOME')..'/git/milenko/playerlist.milenko-list.json')
+	local f <close> = io.open(os.getenv('HOME')..'/git/milenko/playerlist.milenko-list.json')
 	if f then
 		for _, t in ipairs(json.decode(f:read('a')).players) do
 			bad_steamids_milenko[t.steamid] = true
@@ -610,25 +632,54 @@ add_listener('startup', function ()
 	end
 end)
 
--- parse the player list from status
--- can't use run_capturing_output() because status requests it from the server which takes a bit
--- todo: this should have a timeout
+local rex_match_and_remove = function (s, pat, ...)
+	local t = {rex.find(s, pat, ...)}
+	if t[1] ~= nil then
+		local startpos, endpos = t[1], t[2]
+		local s2 = ''
+		if startpos > 1 then s2 = s2 .. s:sub(1, startpos) end
+		if endpos < #s then s2 = s2 .. s:sub(endpos, #s) end
+		return s2, select(3, table.unpack(t))
+	end
+	return s, nil
+end
+
+local cached_playerlist = nil
+local cached_playerlist_time = 0
+
 local get_playerlist = function ()
-	local players = {}
-	local count = -1
-	cfg('status')
-	for line in wait_for_events('game_console_output') do
-		local cnt = line:match('^players : ([0-9]+) humans, [0-9]+ bots %([0-9]+ max%)$')
-		if cnt then
-			count = tonumber(cnt)
+	if cached_playerlist and _ms() <= cached_playerlist_time+5000 then
+		return cached_playerlist
+	end
+
+	cmd.status()
+
+	local done = false
+	spinoff(function ()
+		wait(1000)
+		if not done then
+			fire_event('status_timeout')
 		end
-		-- userid, name, uniqueid, connected, ping, loss, state
-		local name, steamid = line:match(
-		    '# +[0-9]+ +"(.*)" +(%[U:[0-9]+:[0-9]+%]) +[0-9:]+ +[0-9]+ +[0-9]+ +[^ ]+')
-		if name then
-			local id32 = tonumber(steamid:match('^%[U:1:([0-9]+)%]$'))
-			local id64 = id32+76561197960265728
+	end)
+
+	local players = {}
+	local count = nil
+
+	-- 注意点：
+	-- ※ the lines can come out of order (but their contents are always intact)
+	-- ※ cheaters can put newlines in their names (so doing this line-by-line won't work)
+	local data = ''
+	for line in wait_for_events({'game_console_output', 'status_timeout'}) do
+		data = (data .. line .. '\n')
+
+		local id, name, steamid
+		data, id, name, steamid = rex_match_and_remove(data,
+		    '# +([0-9]+) "((?:.|\n){0,32})" +(\\[U:1:[0-9]+\\]) +[0-9]+:[0-9]+(?::[0-9]+)? +[0-9]+ +[0-9]+ [a-z]+\n')
+		if id then
+			local accountid = steamid:match('^%[U:1:([0-9]+)%]$')
+			local id64 = tonumber(accountid)+76561197960265728
 			local t = {
+				id = tonumber(id),
 				name = name,
 				steamid = steamid,
 				steamid64 = id64,
@@ -636,17 +687,29 @@ local get_playerlist = function ()
 			table.insert(players, t)
 			players[tostring(id64)] = t
 		end
-		if count ~= -1 and #players == count then
+
+		local cnt
+		data, cnt = rex_match_and_remove(data,
+		    'players : ([0-9]+) humans, [0-9]+ bots \\([0-9]+ max\\)\n')
+		if cnt then
+			count = tonumber(cnt)
+		end
+
+		if count and #players == count then
 			break
 		end
 	end
-	if count == -1 then
-		cmd.echo('warning: failed to read player count from status!')
-	elseif count == 0 then
-		cmd.echo('warning: failed to parse any players from status!')
+	done = true
+
+	if not count then
+		cmd.echo('warning: failed to find the player count')
 	elseif #players ~= count then
-		cmd.echo('warning: failed to parse all players from status!')
+		cmd.echo('warning: failed to parse all the players')
 	end
+
+	cached_playerlist = players
+	cached_playerlist_time = _ms()
+
 	return players
 end
 
@@ -654,19 +717,22 @@ local shellquote = function (s)
 	return '\'' .. s:gsub('\'', '\'\\\'\'') .. '\''
 end
 local get_json = function (url)
-	local p <close> = assert(io.popen('timeout 3 curl -s ' .. shellquote(url), 'r'))
+	local p <close> = assert(io.popen('timeout 2 curl -s ' .. shellquote(url), 'r'))
 	local s = p:read('a')
 	return json.decode(s)
 end
 
+local summaries_url_fmt =
+    'http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/' ..
+    '?key=%s&steamids=%s'
 local get_summaries = function (players)
 	local id64s = {}
 	for _, t in ipairs(players) do
 		table.insert(id64s, t.steamid64)
 	end
-	local url = string.format('http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?steamids=%s&key=%s',
-	    table.concat(id64s, ','),
-	    os.getenv('STEAM_APIKEY'))
+	local url = string.format(summaries_url_fmt,
+	    os.getenv('STEAM_APIKEY'),
+	    table.concat(id64s, ','))
 	return get_json(url)
 end
 
@@ -675,11 +741,8 @@ cmd.echof = function (fmt, ...)
 end
 
 local printableish = function (name)
-	name = name:gsub('[^A-Za-z0-9_-]+', '')
-	if #name > 12 then
-		name = name:sub(1, 12) .. '...'
-	end
-	if #name == 0 then
+	name = name:gsub('[^ -~]+', '?')
+	if name:find('^[ ?]*$') then
 		name = '(unprintable)'
 	end
 	return name
@@ -687,6 +750,7 @@ end
 cmd.bots = function ()
 	panic = function (err)
 		cmd.echo('an error occurred: ' .. err)
+		cmd.voicemenu(2, 5)
 	end
 	if not os.getenv('STEAM_APIKEY') then
 		cmd.echo('STEAM_APIKEY not set')
@@ -700,12 +764,6 @@ cmd.bots = function ()
 	end
 
 	local summaries = get_summaries(players)
-	if not (type(summaries) == 'table' and
-	        type(summaries.response) == 'table' and
-	        type(summaries.response.players) == 'table') then
-		cmd.echo('steam returned no data!')
-		return
-	end
 
 	cmd.echo('')
 	local found_any = false
@@ -717,7 +775,10 @@ cmd.bots = function ()
 			    players[t.steamid].steamid,
 			    ...)
 		end
-		if t.personaname ~= players[t.steamid].name then
+		-- sub(): clip to 31 characters to match the in-game limit
+		-- gsub(): remove leading # to match the way it gets removed from in-game names
+		-- todo: may be truncating utf-8 characters differently
+		if t.personaname:sub(1, 31):gsub('^#', '') ~= players[t.steamid].name then
 			complain('steam name differs: %s', printableish(t.personaname))
 		end
 		if bad_steamids_pazer[players[t.steamid].steamid] then
@@ -726,7 +787,7 @@ cmd.bots = function ()
 		if bad_steamids_milenko[players[t.steamid].steamid] then
 			complain('steamid is included in the milenko list')
 		end
-		if bad_names_pazer[players[t.steamid].name] then
+		if bad_names_pazer[players[t.steamid].name:gsub('^%([0-9]+%)', '')] then
 			complain('in-game name is included in the pazer list')
 		end
 		if bad_names_pazer[t.personaname] then
@@ -735,6 +796,47 @@ cmd.bots = function ()
 	end
 	if not found_any then
 		cmd.echo('no bots found?')
+		cmd.voicemenu(2, 4) -- well dont that beat off
+	else
+		cmd.voicemenu(2, 5)
+	end
+	cmd.echo('')
+end
+
+-- idea:
+local choose = function (choices)
+	local id = math.floor(math.random()*0xffff)
+	for _, k in ipairs(choices) do
+		cmd[k] = function ()
+			fire_event('choice_'..id, k)
+		end
+	end
+	local rv = wait_for_event('choice_'..id)
+	for _, k in ipairs(choices) do
+		cmd[k] = nil
+	end
+	return rv
+end
+
+-- kick obvious bots
+-- steam names physically cannot contain some words so they shouldn't appear in in-game ones either
+cmd.kob = function ()
+	for _, t in ipairs(get_playerlist()) do
+		local name = t.name:lower()
+		if name:find('nigger')
+		or name:find('steam')
+		or name:find('valve') then
+			cmd.callvote('kick', t.id, 'cheating')
+		end
+	end
+end
+
+cmd.kms = function ()
+	local myname = cvar.name
+	for _, t in ipairs(get_playerlist()) do
+		if t.name == myname then
+			cmd.callvote('kick', t.id)
+		end
 	end
 end
 

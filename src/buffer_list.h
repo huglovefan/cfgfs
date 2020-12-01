@@ -26,7 +26,7 @@ struct buffer_list {
 
 bool buffer_list_maybe_unshift_fake_buf(struct buffer_list *self, struct buffer *buf, char *data);
 void buffer_list_remove_fake_buf(struct buffer_list *self, struct buffer *buf);
-struct buffer *buffer_list_grab_first_nonempty(struct buffer_list *self);
+struct buffer *buffer_list_grab_first(struct buffer_list *self);
 
 void buffer_list_append_from_that_to_this(struct buffer_list *self, const struct buffer_list *that);
 

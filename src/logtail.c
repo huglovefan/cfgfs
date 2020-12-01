@@ -1,4 +1,6 @@
-#define _GNU_SOURCE // unlocked_stdio
+#ifndef _GNU_SOURCE
+ #define _GNU_SOURCE 1 // unlocked_stdio
+#endif
 #include "logtail.h"
 
 #include <errno.h>
@@ -11,7 +13,11 @@
 #include <sys/prctl.h>
 #include <unistd.h>
 
-#include <lua.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lua.h>
+#endif
 
 #include "cli_output.h"
 #include "click.h"
@@ -78,10 +84,7 @@ static struct {
 	size_t len;
 } state;
 
-static void got_line(lua_State *L);
-
 static void read_it(lua_State *L, FILE *logfile) {
-	LUA_LOCK();
 	int c;
 	for (;;) {
 		c = fgetc_unlocked(logfile);
@@ -94,26 +97,26 @@ newchar:
 	}
 	__asm__(""); // do not put the below stuff inside the loop
 	if (unlikely(c == '\n')) {
-		got_line(L);
-		state.len = 0;
 		c = fgetc_unlocked(logfile);
-		if (unlikely(c != EOF)) goto newchar;
+		bool last = (c == EOF);
+		LUA_LOCK();
+		if (unlikely(state.len == sizeof(state.linebuf))) {
+D			eprintln("logtail: ignoring unreasonably long line");
+			goto skip_line;
+		}
+		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX);
+		  lua_pushlstring(L, state.linebuf, state.len);
+		lua_call(L, 1, 0);
+skip_line:
+		state.len = 0;
+		if (likely(last)) {
+			opportunistic_click_and_unlock();
+		} else {
+			LUA_UNLOCK();
+			goto newchar;
+		}
 	}
 	clearerr_unlocked(logfile);
-	opportunistic_click();
-	LUA_UNLOCK();
-}
-// ^ should this unlock it between lines?
-
-static void got_line(lua_State *L) {
-	if (unlikely(state.len == sizeof(state.linebuf))) {
-D		eprintln("logtail: ignoring unreasonably long line");
-		return;
-	}
-	if (unlikely(state.len == 0)) return;
-	 lua_getglobal(L, "_game_console_output");
-	  lua_pushlstring(L, state.linebuf, state.len);
-	lua_call(L, 1, 0);
 }
 
 // -----------------------------------------------------------------------------
@@ -168,7 +171,7 @@ static void ugly_deinit(FILE *logfile, int fd) {
 
 static void *logtail_main(void *ud) {
 	set_thread_name("logtail");
-	lua_State *L = ud;
+	lua_State *L = (lua_State *)ud;
 
 	FILE *logfile = NULL;
 	int fd = -1;
@@ -188,7 +191,6 @@ static pthread_t thread;
 __attribute__((cold))
 void logtail_init(void *L) {
 	if (thread != 0) return;
-	if (getenv("CFGFS_NO_LOGTAIL")) return;
 
 	check_minus1(
 	    pipe(msgpipe),

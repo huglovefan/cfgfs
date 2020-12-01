@@ -1,4 +1,6 @@
-#define _GNU_SOURCE // unlocked_stdio. there's no vfprintf_unlocked though
+#ifndef _GNU_SOURCE
+ #define _GNU_SOURCE 1 // unlocked_stdio. there's no vfprintf_unlocked though
+#endif
 #include "cli_output.h"
 
 #include <errno.h>
@@ -67,7 +69,7 @@ __attribute__((cold))
 static void ensure_buffer(size_t sz) {
 	do {
 		saved.buffer_alloc = (saved.buffer_alloc) ? saved.buffer_alloc*2 : 128;
-		saved.line_buffer = realloc(saved.line_buffer, saved.buffer_alloc);
+		saved.line_buffer = (char *)realloc(saved.line_buffer, saved.buffer_alloc);
 	} while (unlikely(saved.buffer_alloc < sz));
 }
 

@@ -1,6 +1,10 @@
 #include "buffers.h"
 
-#include <lua.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lua.h>
+#endif
 
 struct buffer_list buffers;
 struct buffer_list init_cfg;
@@ -12,7 +16,8 @@ static int l_init(lua_State *L) {
 	return 0;
 }
 
-void buffers_init_lua(void *L) {
+void buffers_init_lua(void *L_) {
+	lua_State *L = (lua_State *)L_;
 	 lua_pushcfunction(L, l_init);
 	lua_setglobal(L, "_init");
 }

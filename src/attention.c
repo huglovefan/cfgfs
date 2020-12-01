@@ -11,18 +11,18 @@
 
 #include <X11/Xutil.h>
 
-#include <lua.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lua.h>
+#endif
 
 #include "cli_output.h"
+#include "click.h"
 #include "lua.h"
 #include "macros.h"
 
-// enhancement:
-// should put the window title comparison in C
-// no need to use lua except for firing the event
-
-// builtin.lua calls our C function to set this
-_Atomic(enum game_window_activeness) game_window_is_active = activeness_unknown;
+_Atomic(enum attn) game_window_is_active = attn_unknown;
 
 // -----------------------------------------------------------------------------
 
@@ -51,22 +51,22 @@ static bool wait_for_event(int conn) {
 		int rv = poll(fds, 2, -1);
 		if (unlikely(rv == -1)) {
 			if (likely(errno == EINTR)) continue;
-			eprintln("attention: poll: %s", strerror(errno));
+			perror("attention: poll");
 			break;
 		}
-		if (unlikely(fds[0].revents & POLLNOTGOOD)) break;
-		if (unlikely(fds[1].revents & POLLNOTGOOD)) break;
+		if (unlikely((fds[0].revents|fds[1].revents) & POLLNOTGOOD)) break;
 		if (unlikely(fds[1].revents & POLLIN)) {
 			switch (msg_read()) {
 			case msg_exit:
 				goto out;
 			default:
-				assert(false);
+D				assert(0);
+				__builtin_unreachable();
 			}
 		}
 		if (likely(fds[0].revents & POLLIN)) {
 			success = true;
-			goto out;
+			break;
 		}
 	}
 out:
@@ -82,40 +82,39 @@ static void do_xevents(Atom net_active_window,
                        lua_State *L) {
 	XEvent event;
 	int cnt = 0;
-	bool did_attention = false;
-again:
-	if (!XPending(display)) return;
-	XNextEvent(display, &event);
+	bool did_call_lua = false;
 
-	if (event.type == 28 &&
-	    event.xproperty.atom == net_active_window &&
-	    !did_attention++)
-	{
-		Window focus;
-		int revert;
-		XGetInputFocus(display, &focus, &revert);
+	while (++cnt <= 10 && XPending(display)) {
+		XNextEvent(display, &event);
 
-		XTextProperty prop;
-		XGetTextProperty(display, focus, &prop, net_wm_name);
+		if (event.type == 28 &&
+		    event.xproperty.atom == net_active_window &&
+		    !did_call_lua++)
+		{
+			Window focus;
+			int revert;
+			XGetInputFocus(display, &focus, &revert);
 
-		LUA_LOCK();
-		 lua_pushcfunction(L, l_update_attention);
-		  lua_getglobal(L, "_attention");
-		   lua_pushstring(L, (const char *)prop.value);
-		  lua_call(L, 1, 1);
-		lua_call(L, 1, 0);
-		LUA_UNLOCK();
+			XTextProperty prop;
+			XGetTextProperty(display, focus, &prop, net_wm_name);
 
-		if (prop.value) XFree(prop.value);
+			LUA_LOCK();
+			 lua_pushcfunction(L, l_update_attention);
+			  lua_getglobal(L, "_attention");
+				lua_pushstring(L, (const char *)prop.value);
+			  lua_call(L, 1, 1);
+			lua_call(L, 1, 0);
+			opportunistic_click_and_unlock();
+
+			if (prop.value) XFree(prop.value);
+		}
 	}
-
-	if (++cnt <= 10) goto again;
 }
 
 __attribute__((cold))
 static void *attention_main(void *ud) {
 	set_thread_name("attention");
-	lua_State *L = ud;
+	lua_State *L = (lua_State *)ud;
 
 	Atom net_active_window = XInternAtom(display, "_NET_ACTIVE_WINDOW", 0);
 	Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
@@ -139,9 +138,9 @@ static void *attention_main(void *ud) {
 static pthread_t thread;
 
 __attribute__((cold))
-void attention_init(void *L) {
+void attention_init(void *L_) {
+	lua_State *L = (lua_State *)L_;
 	if (thread != 0) return;
-	if (getenv("CFGFS_NO_ATTENTION")) return;
 
 	display = XOpenDisplay(NULL);
 	if (display == NULL) {
@@ -191,33 +190,31 @@ void attention_deinit(void) {
 // (not performance-critical)
 __attribute__((cold))
 static char *get_attention(void) {
-	Display *display;
 	char *rv = NULL;
 
-	display = XOpenDisplay(NULL);
-	if (display == NULL) goto out;
+	Display *display = XOpenDisplay(NULL);
+	if (display) {
+		Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
 
-	Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
+		Window focus;
+		int revert;
+		XGetInputFocus(display, &focus, &revert);
 
-	Window focus;
-	int revert;
-	XGetInputFocus(display, &focus, &revert);
+		XTextProperty prop;
+		XGetTextProperty(display, focus, &prop, net_wm_name);
 
-	XTextProperty prop;
-	XGetTextProperty(display, focus, &prop, net_wm_name);
+		if (prop.value) {
+			rv = strdup((const char *)prop.value);
+			XFree(prop.value);
+		}
 
-	if (prop.value) {
-		rv = strdup((const char *)prop.value);
-		XFree(prop.value);
+		XCloseDisplay(display);
 	}
-out:
-	if (display) XCloseDisplay(display);
 	return rv;
 }
 
 // -----------------------------------------------------------------------------
 
-// get the title of the active window
 static int l_get_attention(lua_State *L) {
 	char *s = get_attention();
 	lua_pushstring(L, s);
@@ -225,33 +222,24 @@ static int l_get_attention(lua_State *L) {
 	return 1;
 }
 
-// set the C global "game_window_is_active" (true, false, nil)
 static int l_update_attention(lua_State *L) {
-	int oldval = game_window_is_active;
-	int newval;
+	enum attn newval;
 	if (!lua_isnil(L, 1)) {
 		newval = (lua_toboolean(L, 1))
-		         ? activeness_active
-		         : activeness_inactive;
+		         ? attn_active
+		         : attn_inactive;
 	} else {
-		newval = activeness_unknown;
+		newval = attn_unknown;
 	}
-VV	if (newval != oldval) eprintln("attention: %d -> %d", oldval, newval);
 	game_window_is_active = newval;
 	return 0;
 }
 
 __attribute__((cold))
-void attention_init_lua(void *L) {
-	if (!getenv("CFGFS_NO_ATTENTION")) {
-		 lua_pushcfunction(L, l_get_attention);
-		lua_setglobal(L, "_get_attention");
-		 lua_pushcfunction(L, l_update_attention);
-		lua_setglobal(L, "_update_attention");
-	} else {
-		 lua_pushcfunction(L, lua_do_nothing);
-		lua_setglobal(L, "_get_attention");
-		 lua_pushcfunction(L, lua_do_nothing);
-		lua_setglobal(L, "_update_attention");
-	}
+void attention_init_lua(void *L_) {
+	lua_State *L = (lua_State *)L_;
+	 lua_pushcfunction(L, l_get_attention);
+	lua_setglobal(L, "_get_attention");
+	 lua_pushcfunction(L, l_update_attention);
+	lua_setglobal(L, "_update_attention");
 }

@@ -18,7 +18,11 @@
   #include <fuse_lowlevel.h>
 #pragma GCC diagnostic pop
 
-#include <lauxlib.h>
+#if defined(__cplusplus)
+ #include <lua.hpp>
+#else
+ #include <lauxlib.h>
+#endif
 
 #include "attention.h"
 #include "buffer_list.h"
@@ -32,6 +36,10 @@
 #include "reloader.h"
 
 _Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
+
+#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
+ _Atomic(_Bool) read_waiting_for_lock_;
+#endif
 
 // -----------------------------------------------------------------------------
 
@@ -113,28 +121,28 @@ static int l_have_file(const char *restrict path) {
 	int rv = 0xf;
 
 	if (unlikely(strcmp(path, "/.control") == 0)) {
-		goto out_unlocked;
+		return 0xf;
 	}
 
 	if (unlikely(!LUA_TRYLOCK())) {
 		if (!unlikely(LUA_TIMEDLOCK(1.0))) {
-			rv = -EBUSY;
-			goto out_unlocked;
+			return -EBUSY;
 		}
 	}
 
 	lua_State *L = get_state();
+	int64_t cnt;
+	bool blacklisted;
 
 	 lua_pushvalue(L, UNMASK_NEXT_IDX);
 	  lua_getfield(L, -1, path+1); // skip "/"
-	  int64_t cnt = lua_tointeger(L, -1);
+	  cnt = lua_tointeger(L, -1);
 	  if (unlikely(cnt != 0)) {
 		   cnt -= 1;
 		   lua_pushstring(L, path+1); // skip "/"
 		    lua_pushinteger(L, cnt);
 		  lua_rawset(L, -4);
 		lua_pop(L, 2);
-D		assert(stack_is_clean(L));
 VV		eprintln("unmask_next[%s]: %ld -> %ld", path+1, cnt+1, cnt);
 		rv = -ENOENT;
 		goto out_locked;
@@ -143,17 +151,15 @@ VV		eprintln("unmask_next[%s]: %ld -> %ld", path+1, cnt+1, cnt);
 
 	 lua_pushvalue(L, CFG_BLACKLIST_IDX);
 	  lua_getfield(L, -1, path+1); // skip "/"
-	  bool blacklisted = lua_toboolean(L, -1);
+	  blacklisted = lua_toboolean(L, -1);
 	lua_pop(L, 2);
 	if (unlikely(blacklisted)) {
 		rv = -ENOENT;
 		goto out_locked;
 	}
-
 out_locked:
 D	assert(stack_is_clean(L));
 	LUA_UNLOCK();
-out_unlocked:
 	return rv;
 }
 
@@ -213,50 +219,48 @@ static int cfgfs_read(const char *restrict path,
 V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 	int rv = 0;
 
-	assert(size >= reported_cfg_size);
-	assert(offset == 0);
-
-	if (unlikely(!LUA_TRYLOCK())) {
-		if (!unlikely(LUA_TIMEDLOCK(1.0))) {
-			return -EBUSY;
-		}
+	// not known to happen
+	if (unlikely(!(size >= reported_cfg_size && offset == 0))) {
+D		eprintln("cfgfs_read: invalid argument! size=%zu offset=%zu", size, offset);
+		return -EINVAL;
 	}
+
+#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
+	read_waiting_for_lock_ = 1;
+#endif
+
+	LUA_LOCK();
 
 	// /unmask_next/ must not return buffer contents (can mess up the order)
 	bool silent = starts_with(path, "/cfgfs/unmask_next/");
 
 	struct buffer fakebuf;
-	bool faked = false;
 	if (likely(!silent)) {
-		faked = buffer_list_maybe_unshift_fake_buf(&buffers, &fakebuf, buf);
+		buffer_list_maybe_unshift_fake_buf(&buffers, &fakebuf, buf);
 	}
+
+#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
+	read_waiting_for_lock_ = 0;
+#endif
 
 	lua_State *L = get_state();
 	 lua_pushvalue(L, GET_CONTENTS_IDX);
 	  lua_pushstring(L, path);
 	lua_call(L, 1, 0);
 
-	if (unlikely(silent)) {
-		goto end_locked;
-	}
-
-	struct buffer *ent = buffer_list_grab_first_nonempty(&buffers);
-
-	if (unlikely(ent == NULL)) {
-		if (likely(faked)) {
-			buffer_list_remove_fake_buf(&buffers, &fakebuf);
+	if (likely(!silent)) {
+D		assert(buffers.first != NULL); // nothing should've removed it
+		assume(buffers.first != NULL); // optimize away the check
+		struct buffer *ent = buffer_list_grab_first(&buffers);
+		if (likely(ent != NULL)) {
+			size_t outsize = buffer_get_size(ent);
+			rv = (int)outsize;
+			if (unlikely(ent != &fakebuf)) {
+				buffer_memcpy_to(ent, buf, outsize);
+				buffer_free(ent);
+			}
 		}
-		goto end_locked;
 	}
-
-	size_t outsize = buffer_get_size(ent);
-	rv = (int)outsize;
-
-	if (unlikely(!faked)) {
-		buffer_memcpy_to(ent, buf, outsize);
-		buffer_free(ent);
-	}
-end_locked:
 	LUA_UNLOCK();
 	VV {
 		if (rv >= 0) {
@@ -303,8 +307,7 @@ V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 		p = c+1;
 	}
 
-	opportunistic_click();
-	LUA_UNLOCK();
+	opportunistic_click_and_unlock();
 
 	return (int)size;
 }
@@ -333,9 +336,6 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	cfg->entry_timeout = DBL_MAX;
 	cfg->negative_timeout = 0;
 	cfg->attr_timeout = DBL_MAX;
-
-	// this segfaults in libfuse but i'm not sure why
-	//cfg->remember = 5;
 
 	return NULL;
 }
@@ -378,11 +378,14 @@ D	eprintln("NOTE: debug code is enabled");
 V	eprintln("NOTE: verbose messages are enabled");
 VV	eprintln("NOTE: very verbose messages are enabled");
 
+	lua_State *L;
+
 	// ~ init fuse ~
 
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct fuse *fuse;
 	struct fuse_cmdline_opts opts;
+	struct fuse_session *se;
 	int res;
 
 	if (fuse_parse_cmdline(&args, &opts) != 0) {
@@ -420,7 +423,7 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 		res = 4;
 		goto out_fuse_newed;
 	}
-	struct fuse_session *se = fuse_get_session(fuse);
+	se = fuse_get_session(fuse);
 	if (fuse_set_signal_handlers(se) != 0) {
 		res = 6;
 		goto out_fuse_newed_and_mounted;
@@ -429,7 +432,7 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 
 	// ~ boot up lua ~
 
-	lua_State *L = lua_init();
+	L = lua_init();
 	g_L = L;
 
 	lua_pushstring(L, AGPL_SOURCE_URL); lua_setglobal(L, "agpl_source_url");
@@ -449,16 +452,20 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 	// see lua.h
 
 	 lua_getglobal(L, "_get_contents");
-	assert(lua_gettop(L) == GET_CONTENTS_IDX);
-
+	 assert(lua_gettop(L) == GET_CONTENTS_IDX);
+	 assert(lua_type(L, GET_CONTENTS_IDX) == LUA_TFUNCTION);
 	  lua_getglobal(L, "unmask_next");
-	assert(lua_gettop(L) == UNMASK_NEXT_IDX);
-
-	   lua_getglobal(L, "cfgfs");
-	    lua_getfield(L, -1, "intercept_blacklist");
-	    lua_rotate(L, -2, 1);
-	   lua_pop(L, 1);
-	assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
+	  assert(lua_gettop(L) == UNMASK_NEXT_IDX);
+	  assert(lua_type(L, UNMASK_NEXT_IDX) == LUA_TTABLE);
+	   lua_getglobal(L, "_game_console_output");
+	   assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
+	   assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
+	    lua_getglobal(L, "cfgfs");
+	     lua_getfield(L, -1, "intercept_blacklist");
+	     lua_rotate(L, -2, 1);
+	    lua_pop(L, 1);
+	    assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
+	    assert(lua_type(L, CFG_BLACKLIST_IDX) == LUA_TTABLE);
 
 	buffer_list_swap(&buffers, &init_cfg);
 
@@ -506,7 +513,7 @@ out_no_fuse:
 	fuse_opt_free_args(&args);
 	if (unlink(".cfgfs_reexec") == 0) {
 		execvp(argv[0], argv);
-		eprintln("cfgfs: exec: %s", strerror(errno));
+		perror("cfgfs: exec");
 		return 8;
 	}
 	return res;

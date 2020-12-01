@@ -125,7 +125,7 @@ struct key_list_entry keys[] = {
 	{ "mwheelup", 0 },
 	{ "mwheeldown", 0 },
 
-#if defined(__linux)
+#if defined(__linux__)
 	{ "a_button", 0 },
 	{ "b_button", 0 },
 	{ "x_button", 0 },
@@ -152,12 +152,10 @@ struct key_list_entry keys[] = {
 };
 
 KeySym keys_name2keysym(const char *name) {
-	struct key_list_entry *p = keys;
-	while (p->name != NULL) {
+	for (struct key_list_entry *p = keys; p->name != NULL; p++) {
 		if (strcmp(p->name, name) == 0) {
 			return p->xkey;
 		}
-		p++;
 	}
 	return 0;
 }
