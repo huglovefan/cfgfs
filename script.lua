@@ -238,30 +238,24 @@ local jump_dn = '+jump;slot6;spec_mode'
 local jump_up = '-jump'
 
 if 1 + 1 == 2 then
-	local dn = 350
-	local jump = 700
-	local jumping = nil
+	local jump_ms = 700
+	local hold_ms = 350
 
 	local cmd_dn = jump_dn
 	local cmd_up = jump_up
 
-	jump_dn = function ()
-		if jumping then return end
-		local t = {} jumping = t
-		while true do
+	jump_dn = function (_, key)
+		local up_event_name = ('-'..key)
+		local got_up_event = false
+		repeat
 			cfg(cmd_dn)
-			wait(dn)
-			if jumping ~= t then break end
-
+			got_up_event = wait_for_event(up_event_name, hold_ms)
 			cfg(cmd_up)
-			wait(jump-dn)
-			if jumping ~= t then break end
-		end
+			if got_up_event then break end
+			got_up_event = wait_for_event(up_event_name, jump_ms-hold_ms)
+		until got_up_event
 	end
-	jump_up = function ()
-		jumping = nil
-		return cfg(cmd_up)
-	end
+	jump_up = ''
 end
 
 --------------------------------------------------------------------------------
@@ -303,20 +297,48 @@ add_listener('+mouse2', function ()
 	end
 end)
 
+-- tell cfgfs you're a specific class (for testing)
+local key2cls = {
+	kp_end = 'scout',
+	kp_downarrow = 'soldier',
+	kp_pgdn = 'pyro',
+	kp_leftarrow = 'demoman',
+	kp_5 = 'heavyweapons',
+	kp_rightarrow = 'engineer',
+	kp_home = 'medic',
+	kp_uparrow = 'sniper',
+	kp_pgup = 'spy',
+}
+for k, v in pairs(key2cls) do
+	add_listener('+'..k, function ()
+		if is_pressed['alt'] then
+			class = v
+			fire_event('classchange', v)
+		end
+	end)
+end
+
 --------------------------------------------------------------------------------
 
 -- huntsman charge bell
--- this should probably bell when it becomes wobbly too
+-- start + 1000ms = charged
+-- start + 5000ms = wobbly
+-- i think
 
-local t = nil
 local on_mouse1_dn = function ()
 	if slot ~= 1 then return end
-	t = set_timeout(function ()
-		cmd.slot6() -- makes the "selection failed" sound
-		fire_event('huntsman_charged')
-	end, 1000)
-	wait_for_event({'-mouse1', '+mouse2', 'slotchange', 'huntsman_charged'})
-	if t then t:cancel() t = nil end
+
+	if wait_for_event({'-mouse1', '+mouse2', 'slotchange'}, 1000) then
+		return
+	end
+	cmd.slot6()
+
+	if wait_for_event({'-mouse1', '+mouse2', 'slotchange'}, 4000) then
+		return
+	end
+	cmd.slot6()
+	wait(250)
+	cmd.slot6()
 end
 
 add_listener('classchange', function (class)
@@ -388,8 +410,7 @@ local checkwm = function ()
 	end
 	cvar.cl_first_person_uses_world_model = use_world_model
 end
-add_listener('classchange', checkwm)
-add_listener('slotchange', checkwm)
+add_listener({'classchange', 'slotchange'}, checkwm)
 
 -- sto = 20
 -- lux = 47
@@ -413,173 +434,151 @@ cvar.tf_mm_custom_ping = 35
 
 cmd.unbindall()
 
-bind('mouse1',			attack1_dn, attack1_up)
-bind('mouse2',			attack2_dn, attack2_up)
-bind('mouse3',			attack3_dn, attack3_up)
-bind('mouse4',			'voicemenu 0 7') -- y*s
-bind('mouse5',			'voicemenu 0 6') -- n*
-bind('mwheeldown',		invnext)
-bind('mwheelup',		invprev)
+bind('mouse1',                          attack1_dn, attack1_up)
+bind('mouse2',                          attack2_dn, attack2_up)
+bind('mouse3',                          attack3_dn, attack3_up)
+bind('mouse4',                          'voicemenu 0 7') -- y*s
+bind('mouse5',                          'voicemenu 0 6') -- n*
+bind('mwheeldown',                      invnext)
+bind('mwheelup',                        invprev)
 
-bind('escape',			'cancelselect')
-bind('f1',			'incrementvar net_graph 0 6 6')
-bind('f2',			'screenshot')
-bind('f3',			'')
-bind('f4',			'player_ready_toggle')
-bind('f5',			'')
-bind('f6',			'')
-bind('f7',			'')
-cmd.bind('f8',			'exec cfgfs/buffer')
-cmd.bind('f9',			'exec cfgfs/buffer')
-bind('f10',			function ()
-				    local old = cvar.con_enable
-				    cvar.con_enable = 1
-				    cmd.toggleconsole()
-				    cvar.con_enable = old
-				end)
-cmd.bind('f11',			'exec cfgfs/buffer')
-bind('f12',			'')
+bind('escape',                          'cancelselect')
+bind('f1',                              'incrementvar net_graph 0 6 6')
+bind('f2',                              'screenshot')
+bind('f3',                              '')
+bind('f4',                              'player_ready_toggle')
+bind('f5',                              '')
+bind('f6',                              '')
+bind('f7',                              '')
+cmd.bind('f8',                          'exec cfgfs/buffer')
+cmd.bind('f9',                          'exec cfgfs/buffer')
+bind('f10', function ()
+	local old = cvar.con_enable
+	cvar.con_enable = 1
+	cmd.toggleconsole()
+	cvar.con_enable = old
+end)
+cmd.bind('f11',                         'exec cfgfs/buffer')
+bind('f12',                             '')
 
-bind('scrolllock',		'')
-bind('pause',			'')
+bind('scrolllock',                      '')
+bind('pause',                           '')
 
-bind('\\',			'') -- valve homos broke this key and now it can't be bound
-bind('1',			slotcmd(1))
-bind('2',			slotcmd(2))
-bind('3',			slotcmd(3))
-bind('4',			slotcmd(4))
-bind('5',			slotcmd(5))
-bind('6',			slotcmd(6))
-bind('7',			slotcmd(7))
-bind('8',			slotcmd(8))
-bind('9',			slotcmd(9))
-bind('0',			slotcmd(10))
-bind('=',			'')
-bind('[',			'')
-bind('backspace',		'')
+bind('\\',                              '') -- valve homos broke this key and now it can't be bound
+bind('1',                               slotcmd(1))
+bind('2',                               slotcmd(2))
+bind('3',                               slotcmd(3))
+bind('4',                               slotcmd(4))
+bind('5',                               slotcmd(5))
+bind('6',                               slotcmd(6))
+bind('7',                               slotcmd(7))
+bind('8',                               slotcmd(8))
+bind('9',                               slotcmd(9))
+bind('0',                               slotcmd(10))
+bind('=',                               '')
+bind('[',                               '')
+bind('backspace',                       '')
 
-bind('ins',			'')
-bind('home',			'')
-bind('pgup',			'')
+bind('ins',                             '')
+bind('home',                            '')
+bind('pgup',                            '')
 
-bind('tab',			'+showscores;cl_showfps 2;cl_showpos 1',
-           			'-showscores;cl_showfps 0;cl_showpos 0')
+bind('tab',                             '+showscores;cl_showfps 2;cl_showpos 1',
+                                        '-showscores;cl_showfps 0;cl_showpos 0')
+bind('q', function ()
+	if is_pressed['alt'] then
+		cmd.bots()
+	else
+		cmd.kob()
+	end
+end)
+bind('w',                               nullcancel_pair('w', 's', 'forward', 'back'))
+bind('e',                               'voicemenu 0 0')
+cmd.bind('r',                           '+reload')
+bind('t',                               '+use_action_slot_item')
+cmd.bind('y',                           'say')
+cmd.bind('u',                           'say_team')
+bind('i',                               'callvote')
+bind('o',                               'kill')
+bind('p',                               'explode')
+bind(']',                               '')
+bind('semicolon',                       '')
+bind('enter',                           '')
 
-bind('q',			function ()
-							if is_pressed['alt'] then
-								cmd.bots()
-							else
-								cmd.kob()
-							end
-						end)
-bind('w',			nullcancel_pair('w', 's', 'forward', 'back'))
-bind('e',			'voicemenu 0 0')
-cmd.bind('r',			'+reload')
-bind('t',			'+use_action_slot_item_server')
-cmd.bind('y',			'say')
-cmd.bind('u',			'say_team')
-bind('i',			'callvote')
-bind('o',			'kill')
-bind('p',			'explode')
-bind(']',			'')
-bind('semicolon',		'')
-bind('enter',			'')
+bind('del',                             '')
+bind('end',                             '')
+bind('pgdn',                            '')
 
-bind('del',			'')
-bind('end',			'')
-bind('pgdn',			'')
+bind('capslock',                        '')
+bind('a',                               nullcancel_pair('a', 'd', 'moveleft', 'moveright'))
+bind('s',                               nullcancel_pair('s', 'w', 'back', 'forward'))
+bind('d',                               nullcancel_pair('d', 'a', 'moveright', 'moveleft'))
+bind('f',                               '+inspect')
+bind('g', function (_, key)
+	repeat
+		cmd.cmd('taunt')
+	until wait_for_event('-'..key, 100/3)
+end)
+cmd.bind('h',                           'lastinv')
+bind('j',                               'cl_trigger_first_notification')
+bind('k',                               'cl_decline_first_notification')
+bind('l', function (_, key)
+	repeat
+		cmd.cmd('dropitem')
+	until wait_for_event('-'..key, 100/3)
+end)
+bind('semicolon',                       '')
+bind("'",                               '')
+bind('/',                               '')
 
-bind('capslock',		'')
-bind('a',			nullcancel_pair('a', 'd', 'moveleft', 'moveright'))
-bind('s',			nullcancel_pair('s', 'w', 'back', 'forward'))
-bind('d',			nullcancel_pair('d', 'a', 'moveright', 'moveleft'))
-bind('f',			'+inspect')
---cmd.bind('g',			'+taunt')
-bind('g',			function ()
-					if rawget(_G, 'spam_g') then return end
-					_G.spam_g = true
-					while true do
-						cmd.cmd('taunt')
-						wait(100/3)
-						if not is_pressed['g'] then break end
-					end
-					::out::
-					_G.spam_g = nil
-				end,
-				function ()
-					_G.spam_g = nil
-				end)
-cmd.bind('h',			'lastinv')
-bind('j',			'cl_trigger_first_notification')
-bind('k',			'cl_decline_first_notification')
---bind('l',			'dropitem')
-bind('l',			function ()
-					if rawget(_G, 'spam_l') then return end
-					_G.spam_l = true
-					while true do
-						cmd.cmd('dropitem')
-						wait(100/3)
-						if not is_pressed['l'] then break end
-					end
-					::out::
-					_G.spam_l = nil
-				end,
-				function ()
-					_G.spam_l = nil
-				end)
-bind('semicolon',		'')
-bind("'",			'')
-bind('/',			'')
+bind('shift',                           mod_dn, mod_up)
+bind('z',                               'voice_menu_1')
+bind('x',                               'voice_menu_2')
+bind('c',                               'voice_menu_3')
+bind('v',                               'noclip')
+bind('b',                               'lastdisguise')
+bind('n',                               'open_charinfo_backpack')
+bind('m',                               'open_charinfo_direct')
+bind(',',                               'changeclass')
+bind('.',                               'changeteam')
+bind('-',                               '')
+bind('rshift',                          '')
 
-bind('shift',			mod_dn, mod_up)
-bind('z',			'voice_menu_1')
-bind('x',			'voice_menu_2')
-bind('c',			'voice_menu_3')
-bind('v',			'noclip')
-bind('b',			'lastdisguise')
-bind('n',			'open_charinfo_backpack')
-bind('m',			'open_charinfo_direct')
-bind(',',			'changeclass')
-bind('.',			'changeteam')
-bind('-',			'')
-bind('rshift',			'')
+bind('ctrl',                            '+duck')
+bind('lwin',                            '')
+bind('alt',                             '+strafe')
+bind('space',                           jump_dn, jump_up)
+bind('ralt',                            '')
+bind('rwin',                            '')
+bind('app',                             '')
+bind('rctrl',                           '')
 
-bind('ctrl',			'+duck')
-bind('lwin',			'')
-bind('alt',			'+strafe')
-bind('space',			jump_dn,
-             			jump_up)
-bind('ralt',			'')
-bind('rwin',			'')
-bind('app',			'')
-bind('rctrl',			'')
+bind('uparrow',                         '')
+bind('downarrow',                       '')
+bind('leftarrow',                       '')
+bind('rightarrow',                      '')
 
-bind('uparrow',			'')
-bind('downarrow',		'')
-bind('leftarrow',		'')
-bind('rightarrow',		'')
+bind('numlock',                         '')
+bind('kp_slash',                        '')
+bind('kp_multiply',                     '')
+bind('kp_minus',                        '')
 
-bind('numlock',			'')
-bind('kp_slash',		'')
-bind('kp_multiply',		'')
-bind('kp_minus',		'')
+bind('kp_home',                         '') -- 7
+bind('kp_uparrow',                      '') -- 8
+bind('kp_pgup',                         '') -- 9
+bind('kp_plus',                         '')
 
-bind('kp_home',			'') -- 7
-bind('kp_uparrow',		'') -- 8
-bind('kp_pgup',			'') -- 9
-bind('kp_plus',			'')
+bind('kp_leftarrow',                    '') -- 4
+bind('kp_5',                            '') -- 5
+bind('kp_rightarrow',                   '') -- 6
 
-bind('kp_leftarrow',		'') -- 4
-bind('kp_5',			'') -- 5
-bind('kp_rightarrow',		'') -- 6
+bind('kp_end',                          '') -- 1
+bind('kp_downarrow',                    '') -- 2
+bind('kp_pgdn',                         '') -- 3
+bind('kp_enter',                        '')
 
-bind('kp_end',			'') -- 1
-bind('kp_downarrow',		'') -- 2
-bind('kp_pgdn',			'') -- 3
-bind('kp_enter',		'')
-
-bind('kp_ins',			'')
-bind('kp_del',			'')
+bind('kp_ins',                          '') -- 0
+bind('kp_del',                          '') -- ,
 
 --------------------------------------------------------------------------------
 
@@ -654,22 +653,15 @@ local get_playerlist = function ()
 
 	cmd.status()
 
-	local done = false
-	spinoff(function ()
-		wait(1000)
-		if not done then
-			fire_event('status_timeout')
-		end
-	end)
-
 	local players = {}
 	local count = nil
 
-	-- 注意点：
-	-- ※ the lines can come out of order (but their contents are always intact)
-	-- ※ cheaters can put newlines in their names (so doing this line-by-line won't work)
+	-- ※ 注意点：
+	-- the lines can come out of order and interspersed with other output
+	-- because of that, the starting '#' might not be the first thing on a line
+	-- this also needs to support names that contain newlines
 	local data = ''
-	for line in wait_for_events({'game_console_output', 'status_timeout'}) do
+	for _, line in wait_for_events('game_console_output', 2000) do
 		data = (data .. line .. '\n')
 
 		local id, name, steamid
@@ -699,7 +691,6 @@ local get_playerlist = function ()
 			break
 		end
 	end
-	done = true
 
 	if not count then
 		cmd.echo('warning: failed to find the player count')
@@ -811,7 +802,7 @@ local choose = function (choices)
 			fire_event('choice_'..id, k)
 		end
 	end
-	local rv = wait_for_event('choice_'..id)
+	local _, rv = wait_for_event('choice_'..id)
 	for _, k in ipairs(choices) do
 		cmd[k] = nil
 	end
@@ -835,7 +826,7 @@ cmd.kms = function ()
 	local myname = cvar.name
 	for _, t in ipairs(get_playerlist()) do
 		if t.name == myname then
-			cmd.callvote('kick', t.id)
+			cmdv.callvote('kick', t.id)
 		end
 	end
 end

@@ -265,36 +265,6 @@ spinoff = function (fn)
 	end)
 end
 
--- i think these worked
-set_timeout = function (fn, ms)
-	local cancelled = false
-	spinoff(function ()
-		wait(ms)
-		if cancelled then return end
-		return fn()
-	end)
-	return {
-		cancel = function ()
-			cancelled = true
-		end,
-	}
-end
-set_interval = function (fn, ms)
-	local cancelled = false
-	spinoff(function ()
-		while true do
-			wait(ms)
-			if cancelled then break end
-			fn()
-		end
-	end)
-	return {
-		cancel = function ()
-			cancelled = true
-		end,
-	}
-end
-
 --------------------------------------------------------------------------------
 
 local aliases = make_resetable_table()
@@ -319,33 +289,40 @@ cfg = assert(_cfg)
 
 cfgf = function (fmt, ...) return cfg(string.format(fmt, ...)) end
 
--- note: this has to be resetable so that it correctly defines the aliases on reload
-cmd = setmetatable(make_resetable_table(), {
+-- note: this is a separate table so that reassigning a value always calls __newindex()
+local cmd_fns = make_resetable_table()
+cmd = setmetatable({}, {
 	__index = function (self, k)
-		local fn = function (...) return cmd(k, ...) end
-		rawset(self, k, fn)
+		local fn = cmd_fns[k]
+		if fn then
+			return fn
+		end
+		fn = function (...) return cmd(k, ...) end
+		cmd_fns[k] = fn
 		return fn
 	end,
 	__newindex = function (self, k, v)
-		if cfgfs.compat_noalias then
-			if type(v) ~= 'function' then
-				local s = v
-				v = function () return cfg(s) end
+		if not cfgfs.compat_noalias then
+			if type(v) == 'function' then
+				cmd_fns[k] = v
+				cmd.alias(k, 'exec', 'cfgfs/alias/'..k)
+			elseif v ~= nil then
+				cmd_fns[k] = tostring(v)
+				cmd.alias(k, 'exec', 'cfgfs/alias/'..k)
+			else
+				cmd_fns[k] = nil
+				cmd.alias(k, '')
+				-- ^ there's no "unalias" command so just set it to empty
 			end
-			return rawset(self, k, v)
+		else
+			if type(v) == 'function' then
+				cmd_fns[k] = v
+			elseif v ~= nil then
+				cmd_fns[k] = tostring(v)
+			else
+				cmd_fns[k] = nil
+			end
 		end
-		if v == nil then
-			rawset(self, k, nil)
-			return cmd.alias(k, '')
-			-- ^ there's no "unalias" command so just set it to empty
-		end
-		if type(v) == 'function' then
-			rawset(self, k, v)
-			return cmd.alias(k, 'exec', 'cfgfs/alias/'..k)
-		end
-		v = tostring(v)
-		rawset(self, k, function () return cfg(v) end)
-		return cmd.alias(k, v)
 	end,
 	__call = assert(_cmd),
 })
@@ -367,10 +344,10 @@ cmdv = setmetatable({--[[ empty ]]}, {
 run_capturing_output = function (cmd)
 	local f <close> = assert(io.open((gamedir or '.') .. '/console.log', 'r'))
 	f:seek('end')
-	if type(cmd) ~= 'function' then
-		cfg(cmd)
-	else
+	if type(cmd) == 'function' then
 		cmd()
+	else
+		cfg(cmd)
 	end
 	wait(0)
 	local t = {}
@@ -554,11 +531,14 @@ remove_listener = function (name, cb)
 	end
 end
 
+local last_event = nil
+
 fire_event = function (name, ...)
 	local t = events[name]
 	if not t then return end
 	for _, cb in ipairs(t) do
 		if t[cb] then
+			last_event = name
 			if type(cb) == 'function' then
 				ev_call(cb, ...)
 			elseif type(cb) == 'thread' then
@@ -569,26 +549,62 @@ fire_event = function (name, ...)
 	-- it is unclear what happens if the list is modified during this loop
 end
 
--- this should probably return the event name too, in case multiple were specified
--- need a way to get it from fire_event
-wait_for_event = function (name)
+wait_for_event = function (name, timeout)
 	local this_co = coroutine.running()
+	local done = false
+	if timeout then
+		spinoff(function ()
+			wait(timeout)
+			if not done then
+				last_event = nil
+				return ev_resume(this_co)
+			end
+		end)
+	end
 	add_listener(name, this_co)
 	local rv = coroutine.yield()
+	done = true
 	remove_listener(name, this_co)
-	return rv
+	return last_event, rv
 end
-wait_for_events = function (name)
-	return function ()
-		return wait_for_event(name)
+
+-- like wait_for_event() but usable in a for-in loop
+-- the timeout is for the whole thing rather than one event
+wait_for_events = function (name, timeout)
+	if timeout then
+		local this_co = coroutine.running()
+		local timeout_done = false
+		local want_resume = false
+		spinoff(function ()
+			wait(timeout)
+			timeout_done = true
+			if want_resume then
+				last_event = nil
+				return ev_resume(this_co)
+			end
+		end)
+		return function ()
+			if not timeout_done then
+				add_listener(name, this_co)
+				want_resume = true
+				local rv = coroutine.yield()
+				want_resume = false
+				remove_listener(name, this_co)
+				return last_event, rv
+			else
+				return nil
+			end
+		end
+	else
+		return function ()
+			return wait_for_event(name)
+		end
 	end
 end
 
 --------------------------------------------------------------------------------
 
 _get_contents = function (path)
-	ev_do_timeouts()
-
 	-- keybind?
 	local t = bindfilenames[path]
 	if t then
@@ -598,10 +614,10 @@ _get_contents = function (path)
 			is_pressed[name] = true
 			local v = binds_down[name]
 			if v then
-				if type(v) ~= 'function' then
-					cfg(v)
+				if type(v) == 'function' then
+					ev_call(v, true, name)
 				else
-					ev_call(v)
+					cfg(v)
 				end
 			end
 			return fire_event('+'..name)
@@ -611,10 +627,10 @@ _get_contents = function (path)
 			is_pressed[name] = false
 			local v = binds_up[name]
 			if v then
-				if type(v) ~= 'function' then
-					cfg(v)
+				if type(v) == 'function' then
+					ev_call(v, false, name)
 				else
-					ev_call(v)
+					cfg(v)
 				end
 			end
 			return fire_event('-'..name)
@@ -625,10 +641,10 @@ _get_contents = function (path)
 				is_pressed[name] = false
 				local v = binds_up[name]
 				if v then
-					if type(v) ~= 'function' then
-						cfg(v)
+					if type(v) == 'function' then
+						ev_call(v, false, name)
 					else
-						ev_call(v)
+						cfg(v)
 					end
 				end
 				return fire_event('-'..name)
@@ -638,10 +654,10 @@ _get_contents = function (path)
 				is_pressed[name] = true
 				local v = binds_down[name]
 				if v then
-					if type(v) ~= 'function' then
-						cfg(v)
+					if type(v) == 'function' then
+						ev_call(v, true, name)
 					else
-						ev_call(v)
+						cfg(v)
 					end
 				end
 				return fire_event('+'..name)
@@ -652,10 +668,10 @@ _get_contents = function (path)
 			is_pressed[name] = true
 			local v = binds_down[name]
 			if v then
-				if type(v) ~= 'function' then
-					cfg(v)
+				if type(v) == 'function' then
+					ev_call(v, true, name)
 				else
-					ev_call(v)
+					cfg(v)
 				end
 			end
 			fire_event('+'..name)
@@ -663,10 +679,10 @@ _get_contents = function (path)
 			is_pressed[name] = false
 			local v = binds_up[name]
 			if v then
-				if type(v) ~= 'function' then
-					cfg(v)
+				if type(v) == 'function' then
+					ev_call(v, false, name)
 				else
-					ev_call(v)
+					cfg(v)
 				end
 			end
 			return fire_event('-'..name)
@@ -679,7 +695,9 @@ _get_contents = function (path)
 		return
 	end
 	if path == '/cfgfs/buffer.cfg' then
-		return
+		-- new: only do timeouts specifically on click
+		-- this way timeouts and key events can't happen in the wrong order
+		return ev_do_timeouts()
 	end
 
 	path = assert(path:after('/'))
@@ -693,12 +711,12 @@ _get_contents = function (path)
 			for arg in m:gmatch('[^/]+') do
 				table.insert(t, arg)
 			end
-			local f = rawget(cmd, t[1])
+			local f = cmd_fns[t[1]]
 			if f then
-				if type(f) ~= 'function' then
-					return cfg(v)
-				else
+				if type(f) == 'function' then
 					return ev_call(f, select(2, table.unpack(t)))
+				else
+					return cfg(f)
 				end
 			else
 				return eprintln('warning: tried to exec nonexistent alias %s', m)
@@ -765,10 +783,10 @@ release_all_keys = function ()
 			is_pressed[key] = false
 			local vu = binds_up[key]
 			if vu ~= nil then
-				if type(vu) ~= 'function' then
-					cfg(vu)
-				else
+				if type(vu) == 'function' then
 					ev_call(vu)
+				else
+					cfg(vu)
 				end
 			end
 			fire_event('-'..key)
@@ -879,6 +897,8 @@ _cli_input = function (line)
 
 end
 
+--log = {}
+
 _game_console_output = function (line)
 	if line ~= '' then
 		-- remove color codes
@@ -890,6 +910,10 @@ _game_console_output = function (line)
 		end
 		_println(line)
 	end
+--	table.insert(log, {
+--		time = _ms(),
+--		text = line,
+--	})
 	fire_event('game_console_output', line)
 	-- agpl backdoor (https://www.gnu.org/licenses/gpl-howto.en.html)
 	-- it doesn't work if you say it yourself
