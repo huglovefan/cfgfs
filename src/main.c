@@ -37,10 +37,6 @@
 
 _Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
 
-#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
- _Atomic(_Bool) read_waiting_for_lock_;
-#endif
-
 // -----------------------------------------------------------------------------
 
 static lua_State *g_L;
@@ -173,7 +169,7 @@ static int cfgfs_getattr(const char *restrict path,
 V	eprintln("cfgfs_getattr: %s", path);
 
 	int rv = have_file(path);
-	if (unlikely(rv < 0)) return rv;
+	if (unlikely(rv < 0)) return rv; // <-- shouldn't this be after the next statement?
 
 	stbuf->st_size = reported_cfg_size;
 
@@ -220,14 +216,13 @@ V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 	int rv = 0;
 
 	// not known to happen
+	// with !direct_io, cfgfs_read() is always called with size=4096
+	// i think offset will always be 0 unless we return >= 4096 bytes
 	if (unlikely(!(size >= reported_cfg_size && offset == 0))) {
 D		eprintln("cfgfs_read: invalid argument! size=%zu offset=%zu", size, offset);
-		return -EINVAL;
+D		assert(0);
+		__builtin_unreachable();
 	}
-
-#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
-	read_waiting_for_lock_ = 1;
-#endif
 
 	LUA_LOCK();
 
@@ -238,10 +233,6 @@ D		eprintln("cfgfs_read: invalid argument! size=%zu offset=%zu", size, offset);
 	if (likely(!silent)) {
 		buffer_list_maybe_unshift_fake_buf(&buffers, &fakebuf, buf);
 	}
-
-#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
-	read_waiting_for_lock_ = 0;
-#endif
 
 	lua_State *L = get_state();
 	 lua_pushvalue(L, GET_CONTENTS_IDX);
@@ -374,7 +365,7 @@ int main(int argc, char **argv) {
 	eprintln("NOTE: this is a PGO profiling build, rebuild with PGO=2 when finished");
 #endif
 
-D	eprintln("NOTE: debug code is enabled");
+D	eprintln("NOTE: debug checks are enabled");
 V	eprintln("NOTE: verbose messages are enabled");
 VV	eprintln("NOTE: very verbose messages are enabled");
 

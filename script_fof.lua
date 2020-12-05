@@ -48,25 +48,25 @@ end
 
 --------------------------------------------------------------------------------
 
-bind('w',			nullcancel_pair('w', 's', 'forward', 'back'))
-bind('a',			nullcancel_pair('a', 'd', 'moveleft', 'moveright'))
-bind('s',			nullcancel_pair('s', 'w', 'back', 'forward'))
-bind('d',			nullcancel_pair('d', 'a', 'moveright', 'moveleft'))
+bind('w',                               nullcancel_pair('w', 's', 'forward', 'back'))
+bind('a',                               nullcancel_pair('a', 'd', 'moveleft', 'moveright'))
+bind('s',                               nullcancel_pair('s', 'w', 'back', 'forward'))
+bind('d',                               nullcancel_pair('d', 'a', 'moveright', 'moveleft'))
 
-bind('tab',			'+showscores;cl_showfps 2;cl_showpos 1',
-           			'-showscores;cl_showfps 0;cl_showpos 0')
+bind('tab',                             '+showscores;cl_showfps 2;cl_showpos 1',
+                                        '-showscores;cl_showfps 0;cl_showpos 0')
 
-cmd.bind('f8',			'exec cfgfs/buffer')
-bind('f9',			release_all_keys)
+cmd.bind('f8',                          'exec cfgfs/click')
+bind('f9',                              release_all_keys)
 
-bind('f10',			function ()
-				    local old = cvar.con_enable
-				    cvar.con_enable = 1
-				    cmd.toggleconsole()
-				    cvar.con_enable = old
-				end)
+bind('f10', function ()
+	local old = cvar.con_enable
+	cvar.con_enable = 1
+	cmd.toggleconsole()
+	cvar.con_enable = old
+end)
 
-cmd.bind('f11',			'exec cfgfs/buffer')
+cmd.bind('f11',                         'exec cfgfs/click')
 
 --------------------------------------------------------------------------------
 

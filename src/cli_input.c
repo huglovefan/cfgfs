@@ -1,6 +1,3 @@
-#ifndef _GNU_SOURCE
- #define _GNU_SOURCE 1 // unlocked_stdio
-#endif
 #include "cli_input.h"
 
 #include <errno.h>
@@ -35,8 +32,8 @@ _Atomic(bool) cli_reading_line;
 
 #define DEFAULT_PROMPT "] "
 
-// protected by cli_(un)lock_output()
-static char *prompt;
+//static char *history_file;
+static char *prompt; // protected by cli_(un)lock_output()
 
 // -----------------------------------------------------------------------------
 
@@ -58,26 +55,36 @@ static lua_State *g_L;
 __attribute__((cold))
 static void linehandler(char *line) {
 	cli_reading_line = false;
-	lua_State *L;
 
-	if (unlikely(line == NULL)) {
+	if (line != NULL) {
+		if (*line != '\0') {
+			LUA_LOCK();
+			lua_State *L = g_L;
+			 lua_getglobal(L, "_cli_input");
+			  lua_pushstring(L, line);
+			lua_call(L, 1, 0);
+			opportunistic_click_and_unlock();
+			add_history(line);
+			// ...
+			/*
+			HIST_ENTRY *ent = current_history();
+			if (!ent || 0 == strcmp(line, ent->line)) {
+				add_history(line);
+				if (history_file) {
+					append_history(1, history_file);
+				}
+			}
+			*/
+		}
+	} else {
 		cli_exiting = true;
 		msg_write(msg_exit);
-		goto end;
 	}
-	if (unlikely(*line == '\0')) goto end;
 
-	LUA_LOCK();
-	L = g_L;
-	 lua_getglobal(L, "_cli_input");
-	  lua_pushstring(L, line);
-	lua_call(L, 1, 0);
-	opportunistic_click_and_unlock();
-
-	add_history(line);
-end:
-	if (unlikely(cli_exiting)) rl_callback_handler_remove();
-	// ^ has to be called from here so it doesn't print another prompt
+	if (unlikely(cli_exiting)) {
+		// has to be called from here so it doesn't print another prompt
+		rl_callback_handler_remove();
+	}
 
 	free(line);
 }
@@ -107,6 +114,7 @@ static void *cli_main(void *ud) {
 	 cli_reading_line = true;
 	 rl_callback_handler_install(prompt, linehandler);
 	 rl_bind_key('\t', rl_insert); // disable filename completion
+	 using_history();
 	cli_unlock_output_norestore();
 
 	struct pollfd fds[2] = {
@@ -152,7 +160,7 @@ out:
 	 free(exchange(prompt, NULL));
 	 // put the next thing on its own line again
 	 // for some reason, stdout here doesn't print it if you did ^C
-	 fputc_unlocked('\n', stderr);
+	 fputc('\n', stderr);
 	 // clean up readline and reset terminal state (important)
 	 rl_callback_handler_remove();
 	cli_unlock_output_norestore();
@@ -207,13 +215,12 @@ void cli_input_deinit(void) {
 
 // -----------------------------------------------------------------------------
 
-// this was easier than expected
 static int l_set_prompt(lua_State *L) {
 	const char *newone = lua_tostring(L, 1) ?: DEFAULT_PROMPT;
 	cli_lock_output();
-	free(prompt);
-	prompt = strdup(newone);
-	rl_set_prompt(prompt);
+	 free(prompt);
+	 prompt = strdup(newone);
+	 rl_set_prompt(prompt);
 	cli_unlock_output();
 	return 0;
 }

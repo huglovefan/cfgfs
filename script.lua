@@ -14,7 +14,7 @@ class = global('class', 'scout')
 slot = global('slot', 1)
 
 -- mod = switch to that slot when holding shift
--- skip = pretend this slot doesn't exist and prevent switching to it
+-- skip = pretend this slot doesn't exist and prevent scrolling to it
 --        (slots >=4 can always be selected using number keys)
 -- ctrl+alt+[slot] = toggle skip on the slot
 -- ctrl+tab = switch between alternative crosshairs
@@ -274,7 +274,7 @@ cmd.qqq = 'quit'
 local wrap = function (sh)
 	return function ()
 		for line in io.popen(sh):lines() do
-			cmd.echo((line:gsub('"', '\'')))
+			cmd.echo(line)
 		end
 	end
 end
@@ -317,6 +317,10 @@ for k, v in pairs(key2cls) do
 		end
 	end)
 end
+
+add_listener({'+1', '+2', '+3'}, function (_, key)
+	cmd.next_map_vote(tonumber(key)-1)
+end)
 
 --------------------------------------------------------------------------------
 
@@ -400,7 +404,7 @@ cvar.mat_disable_lightwarp = 0
 cvar.r_lightaverage = 0
 cvar.r_rimlight = 1
 
-local checkwm = function ()
+add_listener({'classchange', 'slotchange'}, function ()
 	local use_world_model = 1
 	if class == 'sniper' and slot == 1 then
 		use_world_model = 0 -- huntsman
@@ -409,8 +413,7 @@ local checkwm = function ()
 		use_world_model = 0 -- cloak
 	end
 	cvar.cl_first_person_uses_world_model = use_world_model
-end
-add_listener({'classchange', 'slotchange'}, checkwm)
+end)
 
 -- sto = 20
 -- lux = 47
@@ -428,9 +431,6 @@ cvar.tf_mm_custom_ping = 35
 -- * say, say_team for using the chat
 -- * +taunt to use the normal taunt from the menu
 -- * lastinv to cancel the taunt menu
-
--- command to pick up dropped weapons is +use_action_slot_item
--- did the _server one work?
 
 cmd.unbindall()
 
@@ -450,15 +450,15 @@ bind('f4',                              'player_ready_toggle')
 bind('f5',                              '')
 bind('f6',                              '')
 bind('f7',                              '')
-cmd.bind('f8',                          'exec cfgfs/buffer')
-cmd.bind('f9',                          'exec cfgfs/buffer')
+cmd.bind('f8',                          'exec cfgfs/click')
+cmd.bind('f9',                          'exec cfgfs/click')
 bind('f10', function ()
 	local old = cvar.con_enable
 	cvar.con_enable = 1
 	cmd.toggleconsole()
 	cvar.con_enable = old
 end)
-cmd.bind('f11',                         'exec cfgfs/buffer')
+cmd.bind('f11',                         'exec cfgfs/click')
 bind('f12',                             '')
 
 bind('scrolllock',                      '')
@@ -489,7 +489,7 @@ bind('q', function ()
 	if is_pressed['alt'] then
 		cmd.bots()
 	else
-		cmd.kob()
+		cmd.kptadpb()
 	end
 end)
 bind('w',                               nullcancel_pair('w', 's', 'forward', 'back'))
@@ -540,7 +540,13 @@ bind('b',                               'lastdisguise')
 bind('n',                               'open_charinfo_backpack')
 bind('m',                               'open_charinfo_direct')
 bind(',',                               'changeclass')
-bind('.',                               'changeteam')
+bind('.', function ()
+	if is_pressed['alt'] then
+		cmd.autoteam()
+	else
+		cmd.changeteam()
+	end
+end)
 bind('-',                               '')
 bind('rshift',                          '')
 
@@ -606,10 +612,30 @@ table.includes = function (t, v)
 	return false
 end
 
+local bad_steamids_old = {}
+-- update ^ with a newly read name and steaid from status
+local bad_steamids_check_status_entry = function (name, steamid)
+	if name:find('nigger')
+	or name:find('steam')
+	or name:find('valve')
+	or name:find('\n') then
+		bad_steamids_old[steamid] = true
+	end
+end
+
 local bad_steamids_milenko = {}
 local bad_steamids_pazer = {}
 local bad_names_pazer = {}
 add_listener('startup', function ()
+	-- read old statuses from the console log
+	-- (it is small enough to read to a string)
+	local f <close> = open_log()
+	assert(f:seek('set', 0))
+	local s = assert(f:read('a'))
+	for id, name, steamid in rex.gmatch(s,
+	    '# +([0-9]+) "((?:.|\n){0,32})"(?=.{32}) +(\\[U:1:[0-9]+\\]) +[0-9]+:[0-9]+(?::[0-9]+)? +[0-9]+ +[0-9]+ [a-z]+\n') do
+		bad_steamids_check_status_entry(name, steamid)
+	end
 	-- https://github.com/PazerOP/tf2_bot_detector
 	local f <close> = io.open(os.getenv('HOME')..'/git/tf2_bot_detector/staging/cfg/playerlist.official.json')
 	if f then
@@ -629,6 +655,11 @@ add_listener('startup', function ()
 			bad_steamids_milenko[t.steamid] = true
 		end
 	end
+
+	local count = function (t) local n = 0 for k in pairs(t) do n = n + 1 end return n end
+	println('bad_steamids_old = %d', count(bad_steamids_old))
+	println('bad_steamids_milenko = %d', count(bad_steamids_milenko))
+	println('bad_steamids_pazer = %d', count(bad_steamids_pazer))
 end)
 
 local rex_match_and_remove = function (s, pat, ...)
@@ -666,7 +697,7 @@ local get_playerlist = function ()
 
 		local id, name, steamid
 		data, id, name, steamid = rex_match_and_remove(data,
-		    '# +([0-9]+) "((?:.|\n){0,32})" +(\\[U:1:[0-9]+\\]) +[0-9]+:[0-9]+(?::[0-9]+)? +[0-9]+ +[0-9]+ [a-z]+\n')
+		    '# +([0-9]+) "((?:.|\n){0,32})"(?=.{32}) +(\\[U:1:[0-9]+\\]) +[0-9]+:[0-9]+(?::[0-9]+)? +[0-9]+ +[0-9]+ [a-z]+\n')
 		if id then
 			local accountid = steamid:match('^%[U:1:([0-9]+)%]$')
 			local id64 = tonumber(accountid)+76561197960265728
@@ -772,6 +803,9 @@ cmd.bots = function ()
 		if t.personaname:sub(1, 31):gsub('^#', '') ~= players[t.steamid].name then
 			complain('steam name differs: %s', printableish(t.personaname))
 		end
+		if bad_steamids_old[players[t.steamid].steamid] then
+			complain('steamid had an impossible name in the past')
+		end
 		if bad_steamids_pazer[players[t.steamid].steamid] then
 			complain('steamid is included in the pazer list')
 		end
@@ -784,6 +818,7 @@ cmd.bots = function ()
 		if bad_names_pazer[t.personaname] then
 			complain('steam name is included in the pazer list')
 		end
+		bad_steamids_check_status_entry(players[t.steamid].name, players[t.steamid].steamid)
 	end
 	if not found_any then
 		cmd.echo('no bots found?')
@@ -796,38 +831,56 @@ end
 
 -- idea:
 local choose = function (choices)
-	local id = math.floor(math.random()*0xffff)
+	local this_co = coroutine.running()
 	for _, k in ipairs(choices) do
 		cmd[k] = function ()
-			fire_event('choice_'..id, k)
+			coroutine.resume(this_co, k)
 		end
 	end
-	local _, rv = wait_for_event('choice_'..id)
+	local choice = coroutine.yield()
 	for _, k in ipairs(choices) do
 		cmd[k] = nil
 	end
-	return rv
+	return choice
 end
 
--- kick obvious bots
--- steam names physically cannot contain some words so they shouldn't appear in in-game ones either
-cmd.kob = function ()
+-- kick players that are definitely probably bots
+cmd.kptadpb = function ()
 	for _, t in ipairs(get_playerlist()) do
 		local name = t.name:lower()
+		local bad = false
+		-- steam rejects names with these words
 		if name:find('nigger')
 		or name:find('steam')
-		or name:find('valve') then
-			cmd.callvote('kick', t.id, 'cheating')
+		or name:find('valve')
+		or name:find('\n') then
+			bad = true
 		end
+		if bad_steamids_old[t.steamid] then
+			bad = true
+		end
+		if bad_steamids_pazer[t.steamid] then
+			bad = true
+		end
+		if bad_steamids_milenko[t.steamid] then
+			bad = true
+		end
+		if bad then
+			cmdv.callvote('kick', string.format('%d cheating', t.id))
+		end
+		bad_steamids_check_status_entry(t.name, t.steamid)
 	end
 end
+cmd.kob = cmd.kptadpb -- legacy alias
 
+-- kick myeslf
 cmd.kms = function ()
 	local myname = cvar.name
 	for _, t in ipairs(get_playerlist()) do
 		if t.name == myname then
 			cmdv.callvote('kick', t.id)
 		end
+		bad_steamids_check_status_entry(t.name, t.steamid)
 	end
 end
 

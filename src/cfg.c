@@ -16,165 +16,175 @@
 
 // ~
 
-static char badchars[256];
+enum wordflags {
+	wf_none = 0,
+	wf_needs_quotes = 1,
+	// https://s2.desu-usergeneratedcontent.xyz/int/image/1461/31/1461314883561.jpg
+	wf_contains_evil_char = 2,
+};
 
-#define ok_range(from, to) for (int i = from; i <= to; i++) badchars[i] = 0
+static unsigned char charflags[256];
+
+static enum wordflags check_word(const char *s, size_t len) {
+	if (len > 0) {
+		enum wordflags flags = wf_none;
+		for (size_t i = 0; i < len; i++) {
+			flags |= charflags[(unsigned char)s[i]];
+		}
+		return flags;
+	} else {
+		return wf_needs_quotes;
+	}
+}
+
+#define set(c, flag) charflags[c] |= flag
+#define set_range(f, t, flag) for (int c = f; c <= t; c++) set(c, flag)
 
 __attribute__((constructor))
 static void _init_badchars(void) {
-	memset(badchars, 1, sizeof(badchars));
-	badchars[33] = 0;
-	ok_range(35, 38);
-	ok_range(42, 46);
-	ok_range(48, 57);
-	ok_range(60, 122);
-	badchars[124] = 0;
-	badchars[126] = 0;
-	badchars[127] = 0;
-	// ^ numbers gotten using a script
-	// for each character c in 1-255:
-	// - cfgf('help %s', c..c)
-	// - check if the output is exactly 'help:  no cvar or command named '..c..c
-	// this should get all whitespace/separator/invalid characters
+	//set_range(0, 31, wf_needs_quotes); // replaced with ? which doesn't need quotes
+	set(9, wf_needs_quotes);
+	set(32, wf_needs_quotes);
+	set_range(39, 41, wf_needs_quotes);
+	set(47, wf_needs_quotes);
+	set_range(58, 59, wf_needs_quotes);
+	set(123, wf_needs_quotes);
+	set_range(125, 255, wf_needs_quotes);
+
+	// all characters below 32 (except for 9) work like a newline
+	// 34 is double quote which can't be quoted itself (is replaced with single quote)
+	set_range(0, 8, wf_contains_evil_char);
+	set_range(10, 31, wf_contains_evil_char);
+	set(34, wf_contains_evil_char);
+
+	// i noticed the del character is properly invisible and zero-width in-game
+	// could use it as a replacement instead?
+	// also newline should probably be replaced with a space instead
+
+	// https://start.duckduckgo.com/lite/?q=quote+unicode&kp=-2
+	// ^ find the one closest to " and test it on windows tf2 first
 }
 
-#undef ok_range
-
-static bool str_is_ok(const char *s, size_t sz) {
-	if (unlikely(sz == 0)) return 0;
-	char bad = 0;
-	do bad |= badchars[(int)*s]; while (*++s);
-	return !bad;
-}
+#undef set
+#undef set_range
 
 // -----------------------------------------------------------------------------
 
-// would it be better to do this without writing it to the stack buffer first?
-// would need to know the length in advance
-// loop over args first and get their length + need to quote
-
-// todo: fix command injection
-//   cmd.echo(' "; say cfgfs sucks // ')
-// need to convert " to '
-
-static int l_cmd_say(lua_State *L);
-static int cmd_toolong(lua_State *L, char *buf, size_t len);
+// it looks less bad if you reduce your tab width and font size
 
 static int l_cmd(lua_State *L) {
-	char buf[max_line_length+8];
-	size_t len = 0;
 	int top = lua_gettop(L);
-	size_t sz;
-	const char *s;
-	int i;
-
-	// note: first arg is the "cfg" table
-
-	if (unlikely(top <= 1)) return 0;
-	if (unlikely(top-1 > (ssize_t)max_argc)) goto toolong;
-
-	i = 2;
-	s = lua_tolstring(L, i, &sz);
-
-	if (unlikely((sz == 3 && memcmp(s, "say", 3) == 0) ||
-	             (sz == 8 && memcmp(s, "say_team", 8) == 0))) {
-		return l_cmd_say(L);
+	int cnt = top-1;
+	struct {
+		const char *s;
+		size_t len;
+		enum wordflags flags;
+	} words[cnt];
+	size_t total_len = 0;
+	enum quoting_rules {
+		qr_default = 0,
+		// special quoting mode for the say command's manual command line parsing
+		qr_say = 1,
+	} rules = qr_default;
+	if (unlikely(cnt == 0)) {
+		return 0;
 	}
-
-	for (;;) {
-		if (unlikely(s == NULL)) goto typeerr;
-
-		// rough safety check
-		if (unlikely(len+sz > max_line_length)) goto toolong;
-
-		if (likely(str_is_ok(s, sz))) {
-D			assert(sz != 0);
-			if (i != 2) buf[len++] = ' ';
-			memcpy(buf+len, s, sz);
-			len += sz;
+	for (int i = 0; i < cnt; i++) {
+		words[i].s = lua_tolstring(L, i+2, &words[i].len);
+		if (unlikely(words[i].s == NULL)) {
+			return luaL_error(L, "non-string argument passed to cmd");
+		}
+		if (i == 0 && cnt > 1) {
+			// only use special rules if there's at least one argument
+			if (words[0].len == 3 && strncmp(words[0].s, "say", 3) == 0) rules = qr_say;
+			if (words[0].len == 8 && strncmp(words[0].s, "say_team", 8) == 0) rules = qr_say;
+		}
+		words[i].flags = check_word(words[i].s, words[i].len);
+		total_len += words[i].len;
+		switch (rules) {
+		case qr_default:
+			if (words[i].flags&wf_needs_quotes) {
+				if (i == cnt-1) {
+					// last one can skip the closing quote
+					total_len += 1;
+				} else {
+					total_len += 2;
+				}
+			}
+			if (i > 0 &&
+				 !(words[i].flags&wf_needs_quotes) &&
+				 !(words[i-1].flags&wf_needs_quotes)) {
+				// spaces are only needed between two non-quoted words
+				total_len += 1;
+			}
+			break;
+		case qr_say:
+			// [SAY"ARG1"] -> [SAY"][ARG1"]
+			// [SAY"ARG1 ARG2"] -> [SAY"][ARG1 ][ARG2"]
+			// what i mean to say it's always the word length + 1
+			total_len += words[i].len+1;
+			break;
+		}
+	}
+	if (total_len > 0) {
+		if (total_len <= max_line_length) {
+			char *buf = buffer_list_get_write_buffer(&buffers, total_len);
+			char *bufstart = buf;
+			switch (rules) {
+			case qr_default:
+				for (int i = 0; i < cnt; i++) {
+					if (i > 0 && !(*(buf-1) == '"' || words[i].flags&wf_needs_quotes)) {
+						*buf++ = ' ';
+					}
+					if (!(words[i].flags&wf_needs_quotes)) {
+						memcpy(buf, words[i].s, words[i].len);
+						buf += words[i].len;
+					} else {
+						*buf++ = '"';
+						memcpy(buf, words[i].s, words[i].len);
+						buf += words[i].len;
+						if (i != top-2) {
+							*buf++ = '"';
+						}
+					}
+					if (unlikely(words[i].flags&wf_contains_evil_char)) {
+						char *buf_ = buf-(words[i].len+((i!=top-2&&words[i].flags&wf_needs_quotes)?1:0));
+						for (size_t j = 0; j < words[i].len; j++) {
+							if (buf_[j] < 32 && buf_[j] != 9) buf_[j] = '?';
+							if (buf_[j] == '"') buf_[j] = '\'';
+						}
+					}
+				}
+				break;
+			case qr_say:
+				memcpy(buf, words[0].s, words[0].len);
+				buf += words[0].len;
+				*buf++ = '"';
+				for (int i = 1; i < cnt; i++) {
+					if (i >= 2) {
+						*buf++ = ' ';
+					}
+					memcpy(buf, words[i].s, words[i].len);
+					buf += words[i].len;
+					if (unlikely(words[i].flags&wf_contains_evil_char)) {
+						char *buf_ = buf-words[i].len;
+						for (size_t j = 0; j < words[i].len; j++) {
+							if (buf_[j] < 32 && buf_[j] != 9) buf_[j] = '?';
+						}
+					}
+				}
+				*buf++ = '"';
+				break;
+			}
+			*buf++ = '\n';
+			buffer_list_commit_write(&buffers, (size_t)(buf-bufstart));
 		} else {
-			buf[len++] = '"';
-			memcpy(buf+len, s, sz);
-			len += sz;
-			buf[len++] = '"';
+			return luaL_error(L, "command too long");
 		}
-
-		// this is now accurate
-		if (unlikely(len > max_line_length)) goto toolong;
-
-		if (unlikely(++i > top)) break;
-		s = lua_tolstring(L, i, &sz);
+	} else {
+		return luaL_error(L, "empty command");
 	}
-
-	buffer_list_write_line(&buffers, buf, len);
-
 	return 0;
-typeerr:
-	return luaL_error(L, "non-string argument passed to cmd");
-toolong:
-	return cmd_toolong(L, buf, len);
-}
-
-/*
-
-bind('4', function () cmd.say('test                             test') end)
-bind('5', function () cmd.say('test say ; // ::::::: {{{{{ test asd') end)
-bind('6', function () cmd.say('test say with "embedded" quotes') end)
-bind('7', function () cmd.say('test say without quotes') end)
-bind('8', function () cmd.say('"test say with left quote') end)
-bind('9', function () cmd.say('test say with right quote"') end)
-bind('0', function () cmd.say('"test say with both quotes"') end)
-
-*/
-
-__attribute__((cold))
-static int l_cmd_say(lua_State *L) {
-	char buf[max_line_length+8];
-	size_t len = 0;
-	int top = lua_gettop(L);
-
-	// note: first arg is the "cfg" table
-	// note2: this is only called from l_cmd(). critical security checks are done there
-
-	for (int i = 2; i <= top; i++) {
-		size_t sz;
-		const char *s = lua_tolstring(L, i, &sz);
-		if (unlikely(s == NULL)) goto typeerr;
-
-		// rough safety check
-		if (unlikely(len+sz > max_line_length)) goto toolong;
-
-		if (i == 3) {
-			buf[len++] = '"';
-		} else if (i > 3) {
-			buf[len++] = ' ';
-		}
-
-		memcpy(buf+len, s, sz);
-		len += sz;
-
-		// this is now accurate
-		if (unlikely(len > max_line_length)) goto toolong;
-	}
-
-	buf[len++] = '"';
-	if (unlikely(len > max_line_length)) goto toolong;
-
-	buffer_list_write_line(&buffers, buf, len);
-
-	return 0;
-typeerr:
-	return luaL_error(L, "non-string argument passed to cmd");
-toolong:
-	return cmd_toolong(L, buf, len);
-}
-
-__attribute__((cold))
-static int cmd_toolong(lua_State *L, char *buf, size_t len) {
-	if (len > 40) len = 40;
-	buf[len] = '\0';
-	eprintln("warning: discarding too-long line: %s ...", buf);
-	return lua_print_backtrace(L);
 }
 
 // -----------------------------------------------------------------------------
@@ -190,7 +200,8 @@ static int l_cfg(lua_State *L) {
 typeerr:
 	return luaL_error(L, "non-string argument passed to cfg()");
 toolong:
-	assert(max_line_length >= 40);
+	;
+	_Static_assert(max_line_length >= 40);
 	eprintln("warning: discarding too-long line: %.40s ...", s);
 	return lua_print_backtrace(L);
 }

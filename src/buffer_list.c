@@ -232,3 +232,22 @@ D		assert(self->last == buf); // nonfull so must've been the last one
 	}
 	buffer_add_line(buf, s, sz);
 }
+
+char *buffer_list_get_write_buffer(struct buffer_list *self, size_t sz) {
+D	assert(sz != 0);
+	bool did_allocate = (self->nonfull == NULL); // optimization hint
+	struct buffer *buf = buffer_list_get_nonfull(self);
+	if (unlikely(!did_allocate && !buffer_may_add_line(buf, sz))) {
+D		assert(buf->next == NULL); // wasn't full so couldn't have had a next one
+D		assert(self->last == buf); // nonfull so must've been the last one
+
+		self->nonfull = buf->next;
+		buffer_make_full(buf);
+		buf = buffer_list_get_next_for(self, buf);
+	}
+	return (char *)buf->data+buf->size;
+}
+
+void buffer_list_commit_write(struct buffer_list *self, size_t sz) {
+	self->nonfull->size += sz;
+}

@@ -7,10 +7,6 @@ CFLAGS ?= -Ofast -g
 
 STATIC_LIBFUSE := 1
 
-# i wonder if this would be at all profitable
-# edit: no
-#CPPFLAGS += -DTEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK
-
 # ------------------------------------------------------------------------------
 
 EXE := $(shell echo $${PWD\#\#*/})
@@ -73,13 +69,27 @@ endif
 ## options
 
 # verbosity/debug enablings
-ifneq ($(V),)
- CPPFLAGS += -DV="if(1)"
-endif
-ifneq ($(VV),)
+
+ifeq ($(VV),1)
  CPPFLAGS += -DVV="if(1)"
+ # enable D and V if they're unset
+ ifeq ($(D),)
+  D := 1
+ endif
+ ifeq ($(V),)
+  V := 1
+ endif
 endif
-ifneq ($(D),)
+
+ifeq ($(V),1)
+ CPPFLAGS += -DV="if(1)"
+ # enable D if it's unset
+ ifeq ($(D),)
+  D := 1
+ endif
+endif
+
+ifeq ($(D),1)
  CPPFLAGS += -DD="if(1)"
 endif
 
@@ -125,6 +135,7 @@ LDLIBS += -lreadline
 LDLIBS += -lX11 -lXtst
 
 # lua
+# -export-dynamic: required to export symbols so that external C modules work
 LDLIBS += -Wl,-export-dynamic -llua -ldl -lm
 
 # fuse

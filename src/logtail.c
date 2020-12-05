@@ -84,8 +84,13 @@ static struct {
 	size_t len;
 } state;
 
+// this is pretty stupid and should just
+// read it to a big buffer
+// use strchr('\n')
+
 static void read_it(lua_State *L, FILE *logfile) {
 	int c;
+	bool locked = false; // todo: redesign to eliminate this. don't want to unlock it between lines after all
 	for (;;) {
 		c = fgetc_unlocked(logfile);
 newchar:
@@ -99,7 +104,7 @@ newchar:
 	if (unlikely(c == '\n')) {
 		c = fgetc_unlocked(logfile);
 		bool last = (c == EOF);
-		LUA_LOCK();
+		if (!locked++) LUA_LOCK();
 		if (unlikely(state.len == sizeof(state.linebuf))) {
 D			eprintln("logtail: ignoring unreasonably long line");
 			goto skip_line;
@@ -110,13 +115,13 @@ D			eprintln("logtail: ignoring unreasonably long line");
 skip_line:
 		state.len = 0;
 		if (likely(last)) {
-			opportunistic_click_and_unlock();
+			if (locked--) opportunistic_click_and_unlock();
 		} else {
-			LUA_UNLOCK();
 			goto newchar;
 		}
 	}
 	clearerr_unlocked(logfile);
+	if (locked--) opportunistic_click_and_unlock();
 }
 
 // -----------------------------------------------------------------------------

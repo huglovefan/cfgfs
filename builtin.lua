@@ -6,10 +6,13 @@ _eprintln = assert(_eprint)
 eprintln = function (fmt, ...) return _eprint(string.format(fmt, ...)) end
 print = function (...)
 	local t = {...}
-	for i = 1, select('#', ...) do
-		t[i] = tostring(t[i])
+	local l = select('#', ...)
+	if l > 0 then
+		for i = 1, l do
+			t[i] = tostring(t[i])
+		end
+		return println('%s', table.concat(t, '\t'))
 	end
-	return println('%s', table.concat(t, '\t'))
 end
 
 setmetatable(_G, {
@@ -150,6 +153,8 @@ end
 --  creating a new coroutine each time for that
 -- if the function yields, ev_loop_co gets replaced with a new coroutine
 
+local ev_timeouts = make_resetable_table()
+
 local sym_ready = {}
 local sym_wait = {}
 
@@ -169,7 +174,7 @@ ev_error_handlers = setmetatable({}, {__mode = 'k'}) -- local
 ev_loop_fn = function (...)
 	local args = {...}
 	local this_co = coroutine.running()
-	local ok, rv = xpcall(function ()
+	return xpcall(function ()
 		local args = args
 		local this_co = this_co
 		while true do
@@ -177,6 +182,7 @@ ev_loop_fn = function (...)
 			if ev_loop_co ~= this_co then
 				break
 			end
+			ev_error_handlers[this_co] = nil
 			args = {coroutine.yield(sym_ready)}
 		end
 	end, function (err)
@@ -185,7 +191,7 @@ ev_loop_fn = function (...)
 		if handler then
 			return ev_call(handler, err)
 		else
-			eprintln('error: %s', debug.traceback(err, 2))
+			eprintln('\aerror: %s', debug.traceback(err, 2))
 		end
 	end)
 end
@@ -206,11 +212,8 @@ ev_call = function (fn, ...) -- local
 	return ev_handle_return(ev_loop_co, coroutine.resume(ev_loop_co, fn, ...))
 end
 local ev_resume = function (co, ...)
-	-- assert(co ~= coroutine.running())
 	return ev_handle_return(co, coroutine.resume(co, ...))
 end
-
-local ev_timeouts = make_resetable_table()
 
 wait = function (ms)
 	local target = 0
@@ -233,6 +236,15 @@ local ev_do_timeouts = function ()
 
 	local newts = {}
 	ev_timeouts = {}
+	-- if this thing ever gets the ability to cancel timeouts, then grabbing
+	--  and replacing the global list like this won't do because there needs
+	--  to be a way to remove a timeout from it from outside
+	-- possibly better alternative: put timeouts in a sorted list and in
+	--  the loop here, check the item at the head and only remove it if we're
+	--  going to run it
+	-- ^ may need something to avoid resuming wait(0) ones too early (like a
+	--  "generation" counter, don't resume ones added during this same cfgfs
+	--  call)
 
 	local now = nil
 	for i = 1, #ts do
@@ -255,15 +267,7 @@ local ev_do_timeouts = function ()
 	end
 end
 
-spinoff = function (fn)
-	return ev_call(function ()
-		local ok, rv = xpcall(fn, debug.traceback)
-		if not ok then
-			eprintln('error: %s', rv)
-		end
-		-- todo: this should support the panic function
-	end)
-end
+spinoff = ev_call
 
 --------------------------------------------------------------------------------
 
@@ -342,6 +346,18 @@ cmdv = setmetatable({--[[ empty ]]}, {
 })
 
 run_capturing_output = function (cmd)
+
+	-- this is now 200% reliable for long output with this weird synchronization dance
+	-- 0. wait for the game window to become active (so we don't do step 3 too early)
+	-- 1. spit out the commands
+	-- 2. wait for logtail to read the first new line of output
+	-- 3. use wait(0) to wait until logtail releases the lock after it finishes reading all the lines
+	-- 4. finally read the output now that we're fairly sure it's actually there
+
+	while false == is_game_window_active() do
+		wait_for_event('attention')
+	end
+
 	local f <close> = assert(io.open((gamedir or '.') .. '/console.log', 'r'))
 	f:seek('end')
 	if type(cmd) == 'function' then
@@ -349,12 +365,16 @@ run_capturing_output = function (cmd)
 	else
 		cfg(cmd)
 	end
+
+	wait_for_event('game_console_output')
 	wait(0)
+
 	local t = {}
 	for l in f:lines() do
 		table.insert(t, l)
 	end
 	return t
+
 end
 
 local get_cvars = function (t)
@@ -392,14 +412,15 @@ end
 -- i wonder what causes it
 -- luckily the `"name" = "value"` part is always intact
 
-cvar = setmetatable({}, {
+cvar = setmetatable({--[[ empty ]]}, {
 	__index = function (_, k)
 		return get_cvars({k})[k]
 	end,
 	__newindex = function (_, k, v)
 		-- ignore nil i guess
-		if v == nil then return end
-		return cmd(k, v)
+		if v ~= nil then
+			return cmd(k, v)
+		end
 	end,
 	-- cvars list -> name/value map (gets the values)
 	-- name/value map -> nothing (sets the values)
@@ -501,14 +522,12 @@ add_listener = function (name, cb)
 		return
 	end
 	local t = events[name]
-	if not t then
-		t = {}
-		events[name] = t
+	if t then
+		table.insert(t, cb)
+		t[cb] = true
 	else
-		if t[cb] then return end
+		events[name] = {[1] = cb, [cb] = true}
 	end
-	table.insert(t, cb)
-	t[cb] = true
 end
 
 remove_listener = function (name, cb)
@@ -519,14 +538,19 @@ remove_listener = function (name, cb)
 		return
 	end
 	local t = events[name]
-	if not (t and t[cb]) then return end
-	if #t == 1 then
-		events[name] = nil
-		return
-	end
-	for i = 1, #t do
-		if t[i] == cb then
-			table.remove(t, i)
+	if t and t[cb] then
+		if #t > 1 then
+			for i = 1, #t do
+				if t[i] == cb then
+					table.remove(t, i)
+					t[cb] = nil
+					break
+				end
+			end
+		else
+			assert(#t == 1)
+			t[cb] = nil
+			events[name] = nil
 		end
 	end
 end
@@ -535,14 +559,15 @@ local last_event = nil
 
 fire_event = function (name, ...)
 	local t = events[name]
-	if not t then return end
-	for _, cb in ipairs(t) do
-		if t[cb] then
-			last_event = name
-			if type(cb) == 'function' then
-				ev_call(cb, ...)
-			elseif type(cb) == 'thread' then
-				ev_resume(cb, ...)
+	if t then
+		for _, cb in ipairs(t) do
+			if t[cb] then
+				last_event = name
+				if type(cb) == 'function' then
+					ev_call(cb, ...)
+				elseif type(cb) == 'thread' then
+					ev_resume(cb, ...)
+				end
 			end
 		end
 	end
@@ -562,37 +587,44 @@ wait_for_event = function (name, timeout)
 		end)
 	end
 	add_listener(name, this_co)
-	local rv = coroutine.yield()
+	local t = {coroutine.yield()}
 	done = true
 	remove_listener(name, this_co)
-	return last_event, rv
+	return last_event, table.unpack(t)
 end
 
 -- like wait_for_event() but usable in a for-in loop
 -- the timeout is for the whole thing rather than one event
-wait_for_events = function (name, timeout)
+-- ^ unless timeout_per_event is true
+wait_for_events = function (name, timeout, timeout_per_event)
 	if timeout then
-		local this_co = coroutine.running()
-		local timeout_done = false
-		local want_resume = false
-		spinoff(function ()
-			wait(timeout)
-			timeout_done = true
-			if want_resume then
-				last_event = nil
-				return ev_resume(this_co)
+		if not timeout_per_event then
+			local this_co = coroutine.running()
+			local timeout_done = false
+			local want_resume = false
+			spinoff(function ()
+				wait(timeout)
+				timeout_done = true
+				if want_resume then
+					last_event = nil
+					return ev_resume(this_co)
+				end
+			end)
+			return function ()
+				if not timeout_done then
+					add_listener(name, this_co)
+					want_resume = true
+					local rv = coroutine.yield()
+					want_resume = false
+					remove_listener(name, this_co)
+					return last_event, rv
+				else
+					return nil
+				end
 			end
-		end)
-		return function ()
-			if not timeout_done then
-				add_listener(name, this_co)
-				want_resume = true
-				local rv = coroutine.yield()
-				want_resume = false
-				remove_listener(name, this_co)
-				return last_event, rv
-			else
-				return nil
+		else
+			return function ()
+				return wait_for_event(name, timeout)
 			end
 		end
 	else
@@ -620,7 +652,7 @@ _get_contents = function (path)
 					cfg(v)
 				end
 			end
-			return fire_event('+'..name)
+			return fire_event('+'..name, true, name)
 
 		elseif t.type == 'up' then
 
@@ -633,7 +665,7 @@ _get_contents = function (path)
 					cfg(v)
 				end
 			end
-			return fire_event('-'..name)
+			return fire_event('-'..name, false, name)
 
 		elseif t.type == 'toggle' then
 			if is_pressed[name] then
@@ -647,7 +679,7 @@ _get_contents = function (path)
 						cfg(v)
 					end
 				end
-				return fire_event('-'..name)
+				return fire_event('-'..name, false, name)
 
 			else
 
@@ -660,7 +692,7 @@ _get_contents = function (path)
 						cfg(v)
 					end
 				end
-				return fire_event('+'..name)
+				return fire_event('+'..name, true, name)
 
 			end
 		elseif t.type == 'once' then
@@ -674,7 +706,7 @@ _get_contents = function (path)
 					cfg(v)
 				end
 			end
-			fire_event('+'..name)
+			fire_event('+'..name, true, name)
 
 			is_pressed[name] = false
 			local v = binds_up[name]
@@ -685,7 +717,7 @@ _get_contents = function (path)
 					cfg(v)
 				end
 			end
-			return fire_event('-'..name)
+			return fire_event('-'..name, false, name)
 
 		else
 			-- fatal
@@ -694,13 +726,16 @@ _get_contents = function (path)
 		-- ^ this is duplicated because function calls are SLOW ^
 		return
 	end
-	if path == '/cfgfs/buffer.cfg' then
+	if path == '/cfgfs/click.cfg' then
 		-- new: only do timeouts specifically on click
 		-- this way timeouts and key events can't happen in the wrong order
 		return ev_do_timeouts()
 	end
+	if path == '/cfgfs/buffer.cfg' then
+		return
+	end
 
-	path = assert(path:after('/'))
+	path = path:after('/')
 	local m = path:after('cfgfs/')
 	if m then
 		path = m
@@ -789,7 +824,7 @@ release_all_keys = function ()
 					cfg(vu)
 				end
 			end
-			fire_event('-'..key)
+			fire_event('-'..key, false, key)
 		end
 	end
 end
@@ -820,12 +855,7 @@ local game_window_title_is = function (title)
 	return _update_attention(_attention(_get_attention()))
 end
 
--- this shouldn't be a function but it is
--- until there's a way to watch for property changes on the cfgfs table
--- why can't i accept that there's no reason to ever change this after startup?
--- why does it need to be changeable?
--- because the value in the table can be changed at any time so it's natural that one would expect changing it to work
--- this sucks
+-- ...
 cfgfs.game_window_title_is = game_window_title_is
 
 add_reset_callback(function ()
@@ -850,7 +880,7 @@ local repl_fn = function (code)
 	return nil, err1
 end
 
-local lua_mode = false
+local lua_mode = true
 if lua_mode then _set_prompt('> ') end
 
 _cli_input = function (line)
@@ -878,7 +908,7 @@ _cli_input = function (line)
 	end
 
 	local do_lua = false
-	if not lua_mode and fine:find('^!') then
+	if not lua_mode and line:find('^!') then
 		line = line:sub(2)
 		do_lua = true
 	end
@@ -894,6 +924,18 @@ _cli_input = function (line)
 	else
 		return cfg(line)
 	end
+
+	-- if buffer_was_empty and not buffer_is_currently_empty and not game_window_is_active then
+	--     eprintln('note: commands won\'t be executed until the game window is activated')
+	--     this_message_shown = true
+	-- end
+
+	-- if do_lua and the_coroutine_yielded then
+	--     eprintln('-> %d', unique_id)
+	--     after the_coroutine_returns_and_possibly_prints_a_value do
+	--         eprintln('<- %d', unique_id)
+	--     end
+	-- end
 
 end
 
@@ -935,14 +977,37 @@ end
 
 --------------------------------------------------------------------------------
 
-local bell = function () return io.stderr:write('\a') end
+local logpos = 0
+if gamedir then
+	local f <close> = assert(io.open(gamedir .. '/console.log', 'r'))
+	logpos = assert(f:seek('end'))
+	open_log = function ()
+		local f = assert(io.open(gamedir .. '/console.log', 'r'))
+		assert(f:seek('set', logpos))
+		return f
+	end
+else
+	open_log = function ()
+		return error('log not available')
+	end
+end
+
+grep = function (pat)
+	local f <close> = assert(open_log())
+	for line in f:lines() do
+		if line:find(pat) then
+			println('%s', line)
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
 
 -- reload and re-run script.lua
 _reload_1 = function ()
 	local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or './script.lua')
 	if not ok then
-		bell()
-		eprintln('error: %s', err)
+		eprintln('\aerror: %s', err)
 		eprintln('failed to reload script.lua!')
 		return false
 	end
@@ -952,8 +1017,7 @@ _reload_1 = function ()
 
 	local ok, err = xpcall(script, debug.traceback)
 	if not ok then
-		bell()
-		eprintln('error: %s', err)
+		eprintln('\aerror: %s', err)
 		eprintln('script.lua was reloaded with an error!')
 		return true
 	end
@@ -990,8 +1054,7 @@ end
 
 local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or './script.lua')
 if not ok then
-	bell()
-	eprintln('error: %s', err)
+	eprintln('\aerror: %s', err)
 	eprintln('failed to load script.lua!')
 	return false
 end
@@ -999,8 +1062,7 @@ local script = ok
 
 local ok, err = xpcall(script, debug.traceback)
 if not ok then
-	bell()
-	eprintln('error: %s', err)
+	eprintln('\aerror: %s', err)
 	eprintln('failed to load script.lua!')
 	return false
 end

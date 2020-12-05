@@ -25,19 +25,12 @@
 #include "lua.h"
 #include "macros.h"
 
-#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
- #include "main.h"
-#endif
-
 static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 static Display *display;
 static KeyCode keycode;
 
 static void do_click(void) {
 	if (game_window_is_active != attn_inactive &&
-#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
-	    !read_waiting_for_lock &&
-#endif
 	    (0 == pthread_mutex_trylock(&click_lock))) {
 		if (display != NULL && keycode != 0) {
 			XTestFakeKeyEvent(display, keycode, True, CurrentTime);
@@ -135,11 +128,7 @@ static void click_after(double ms) {
 // -----------------------------------------------------------------------------
 
 void opportunistic_click_and_unlock(void) {
-#if defined(TEST_SKIP_CLICK_IF_READ_WAITING_FOR_LOCK)
-	bool should = (!read_waiting_for_lock && !buffer_list_is_empty(&buffers));
-#else
 	bool should = (!buffer_list_is_empty(&buffers));
-#endif
 	LUA_UNLOCK();
 	if (should) do_click();
 }
