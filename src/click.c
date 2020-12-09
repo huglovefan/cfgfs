@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,11 +26,17 @@
 #include "lua.h"
 #include "macros.h"
 
+// used to combine clicks for "wait(0)" calls
+// set when lua clicks without a delay
+// if set, further clicks without a delay do nothing
+// cleared when we get a click
+static bool pending_click;
+
 static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 static Display *display;
 static KeyCode keycode;
 
-static void do_click(void) {
+void do_click(void) {
 	if (game_window_is_active != attn_inactive &&
 	    (0 == pthread_mutex_trylock(&click_lock))) {
 		if (display != NULL && keycode != 0) {
@@ -145,7 +152,12 @@ static int l_click_at(lua_State *L) {
 }
 static int l_click(lua_State *L) {
 	(void)L;
-	do_click();
+	if (!pending_click++) do_click();
+	return 0;
+}
+static int l_click_received(lua_State *L) {
+	(void)L;
+	pending_click = false;
 	return 0;
 }
 
@@ -172,4 +184,6 @@ void click_init_lua(void *L_) {
 	lua_setglobal(L, "_click_at");
 	 lua_pushcfunction(L, l_click_set_key);
 	lua_setglobal(L, "_click_set_key");
+	 lua_pushcfunction(L, l_click_received);
+	lua_setglobal(L, "_click_received");
 }

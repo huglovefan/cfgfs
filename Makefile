@@ -11,20 +11,20 @@ STATIC_LIBFUSE := 1
 
 EXE := $(shell echo $${PWD\#\#*/})
 
-OBJS = $(SRCS:.c=.o)
-DEPS = $(SRCS:.c=.d)
-SRCS = src/main.c \
-       src/buffer_list.c \
-       src/buffers.c \
-       src/lua.c \
-       src/cfg.c \
-       src/reloader.c \
-       src/cli_input.c \
-       src/cli_output.c \
-       src/logtail.c \
-       src/keys.c \
-       src/click.c \
-       src/attention.c
+OBJS = src/main.o \
+       src/buffer_list.o \
+       src/buffers.o \
+       src/lua.o \
+       src/cfg.o \
+       src/reloader.o \
+       src/cli_input.o \
+       src/cli_output.o \
+       src/logtail.o \
+       src/keys.o \
+       src/click.o \
+       src/attention.o
+DEPS = $(OBJS:.o=.d)
+SRCS := $(shell for f in $(OBJS); do ls $${f%.o}.c || ls $${f%.o}.cpp; done 2>/dev/null)
 
 # make it make dependency files for make
 CPPFLAGS += -MMD -MP
@@ -51,8 +51,8 @@ CFLAGS += -Weverything \
           -Wno-vla
 
 # idiot compiling in c++ mode
+CXXFLAGS += -fno-exceptions
 ifneq (,$(findstring ++,$(CC)))
- CXXFLAGS += -fno-exceptions
  CFLAGS += $(CXXFLAGS)
  CFLAGS += -Wno-address-of-temporary \
            -Wno-c++98-compat-pedantic \
@@ -61,7 +61,7 @@ ifneq (,$(findstring ++,$(CC)))
            -Wno-deprecated \
            -Wno-old-style-cast \
            -Wno-zero-as-null-pointer-constant
- CPPFLAGS+=-Drestrict=
+ CPPFLAGS += -Drestrict=
 endif
 
 # ------------------------------------------------------------------------------
@@ -156,6 +156,8 @@ $(EXE): $(OBJS)
 -include $(DEPS)
 .c.o:
 	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
+.cpp.o:
+	$(CXX) -c $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 # ~
 

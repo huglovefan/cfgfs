@@ -52,17 +52,10 @@ static void _init_badchars(void) {
 	set_range(125, 255, wf_needs_quotes);
 
 	// all characters below 32 (except for 9) work like a newline
-	// 34 is double quote which can't be quoted itself (is replaced with single quote)
+	// 34 is double quote which can't be quoted itself (replaced with single quote)
 	set_range(0, 8, wf_contains_evil_char);
 	set_range(10, 31, wf_contains_evil_char);
 	set(34, wf_contains_evil_char);
-
-	// i noticed the del character is properly invisible and zero-width in-game
-	// could use it as a replacement instead?
-	// also newline should probably be replaced with a space instead
-
-	// https://start.duckduckgo.com/lite/?q=quote+unicode&kp=-2
-	// ^ find the one closest to " and test it on windows tf2 first
 }
 
 #undef set

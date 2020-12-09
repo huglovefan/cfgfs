@@ -104,7 +104,9 @@ static void do_xevents(Atom net_active_window,
 				lua_pushstring(L, (const char *)prop.value);
 			  lua_call(L, 1, 1);
 			lua_call(L, 1, 0);
-			opportunistic_click_and_unlock();
+			LUA_UNLOCK();
+			// always click, in case the buffer is empty but there are timeouts to do
+			do_click();
 
 			if (prop.value) XFree(prop.value);
 		}

@@ -15,14 +15,20 @@ print = function (...)
 	end
 end
 
+fatal = assert(_fatal)
+
 setmetatable(_G, {
 	__index = function (self, k)
+		if k == 'panic' then
+			assert(coroutine.running(), 'tried to get panic function outside a coroutine')
+			return ev_error_handlers[coroutine.running()]
+		end
 		return error('tried to access nonexistent variable ' .. tostring(k), 2)
 	end,
 	__newindex = function (self, k, v)
 		if k == 'panic' then
 			assert(coroutine.running(), 'tried to set panic function outside a coroutine')
-			assert(type(v) == 'function', 'panic function must be a function')
+			assert(v == nil or type(v) == 'function', 'panic function must be a function')
 			ev_error_handlers[coroutine.running()] = v
 			return
 		end
@@ -155,6 +161,11 @@ end
 
 local ev_timeouts = make_resetable_table()
 
+ev_error_handlers = setmetatable({}, {__mode = 'k'}) -- local
+
+-- callback to call next time the coroutine yields or returns
+local ev_return_handlers = setmetatable({}, {__mode = 'k'})
+
 local sym_ready = {}
 local sym_wait = {}
 
@@ -169,39 +180,57 @@ local ev_outoftheway = function () -- i had a descriptive name for this before b
 	end
 end
 
-ev_error_handlers = setmetatable({}, {__mode = 'k'}) -- local
-
-ev_loop_fn = function (...)
-	local args = {...}
-	local this_co = coroutine.running()
-	return xpcall(function ()
-		local args = args
-		local this_co = this_co
+do
+	local ev_loop_fn_main = function (...)
+		local args = {...}
+		local this_co = coroutine.running()
 		while true do
 			args[1](select(2, table.unpack(args)))
 			if ev_loop_co ~= this_co then
 				break
 			end
 			ev_error_handlers[this_co] = nil
+			ev_return_handlers[this_co] = nil
 			args = {coroutine.yield(sym_ready)}
 		end
-	end, function (err)
-		local handler = ev_error_handlers[this_co]
-		ev_error_handlers[this_co] = nil
-		if handler then
-			return ev_call(handler, err)
-		else
-			eprintln('\aerror: %s', debug.traceback(err, 2))
-		end
-	end)
+	end
+	local ev_loop_fn_catch = function (err)
+		return err, debug.traceback(err, 2)
+	end
+	ev_loop_fn = function (...)
+		return xpcall(ev_loop_fn_main, ev_loop_fn_catch, ...)
+	end
 end
 ev_loop_co = coroutine.create(ev_loop_fn)
 
-local ev_handle_return = function (co, ok, rv1)
-	if co == ev_loop_co and rv1 ~= sym_ready then
-		ev_loop_co = coroutine.create(ev_loop_fn)
-	end
-	if not ok then
+local ev_handle_return = function (co, ok, rv1, rv2)
+	if ok then
+		if co == ev_loop_co and rv1 ~= sym_ready then
+			ev_loop_co = coroutine.create(ev_loop_fn)
+			if rv1 == false and coroutine.status(co) == 'dead' then
+				local handler = ev_error_handlers[co]
+				if handler then
+					ev_error_handlers[co] = nil
+					ev_call(handler, rv1)
+				else
+					eprintln('\aerror: %s', rv2)
+				end
+				local ok, err = coroutine.close(co) -- hope this doesn't yield
+				if not ok then
+					eprintln('\aerror: %s', err)
+				end
+			end
+		end
+		local cb = ev_return_handlers[co]
+		if cb then
+			ev_return_handlers[co] = nil
+			return ev_call(cb, co, cb)
+		end
+	else
+		local ok, err = coroutine.close(co)
+		if not ok then
+			eprintln('\aerror: %s', err)
+		end
 		-- idiot forgot to use pcall
 		return error(rv1)
 	end
@@ -284,18 +313,22 @@ is_pressed = {}
 for key in pairs(key2num) do
 	is_pressed[key] = false
 end
+setmetatable(is_pressed, {
+	__index = function (_, key)
+		return error(string.format('unknown key "%s"', key), 2)
+	end,
+})
 
 --------------------------------------------------------------------------------
 
 -- cfg/cmd magic tables
 
 cfg = assert(_cfg)
-
 cfgf = function (fmt, ...) return cfg(string.format(fmt, ...)) end
 
 -- note: this is a separate table so that reassigning a value always calls __newindex()
 local cmd_fns = make_resetable_table()
-cmd = setmetatable({}, {
+cmd = setmetatable({--[[ empty ]]}, {
 	__index = function (self, k)
 		local fn = cmd_fns[k]
 		if fn then
@@ -311,7 +344,8 @@ cmd = setmetatable({}, {
 				cmd_fns[k] = v
 				cmd.alias(k, 'exec', 'cfgfs/alias/'..k)
 			elseif v ~= nil then
-				cmd_fns[k] = tostring(v)
+				v = tostring(v)
+				cmd_fns[k] = function () return cfg(v) end
 				cmd.alias(k, 'exec', 'cfgfs/alias/'..k)
 			else
 				cmd_fns[k] = nil
@@ -322,7 +356,8 @@ cmd = setmetatable({}, {
 			if type(v) == 'function' then
 				cmd_fns[k] = v
 			elseif v ~= nil then
-				cmd_fns[k] = tostring(v)
+				v = tostring(v)
+				cmd_fns[k] = function () return cfg(v) end
 			else
 				cmd_fns[k] = nil
 			end
@@ -330,25 +365,49 @@ cmd = setmetatable({}, {
 	end,
 	__call = assert(_cmd),
 })
+local cmdv_fns = make_resetable_table()
 cmdv = setmetatable({--[[ empty ]]}, {
-	__index = function (self, k)
-		local fn = function (...) return cmdv(k, ...) end
-		rawset(self, k, fn)
+	__index = function (_, k)
+		local fn = cmdv_fns[k]
+		if fn then
+			return fn
+		end
+		fn = function (...) return cmdv(k, ...) end
+		cmdv_fns[k] = fn
 		return fn
 	end,
-	__newindex = function (self, k, v)
+	__newindex = function (_, k, v)
 		cmd[k] = v
 	end,
-	__call = function (self, ...)
+	__call = function (_, ...)
 		cmd('echo', '+', ...)
 		return cmd(...)
+	end,
+})
+local cmdp_fns = make_resetable_table()
+cmdp = setmetatable({--[[ empty ]]}, {
+	__index = function (_, k)
+		local fn = cmdp_fns[k]
+		if fn then
+			return fn
+		end
+		fn = function (...) return cmdp(k, ...) end
+		cmdp_fns[k] = fn
+		return fn
+	end,
+	__newindex = function (_, k, v)
+		cmd[k] = v
+	end,
+	__call = function (_, ...)
+		return cmd('echo', '+', ...)
 	end,
 })
 
 run_capturing_output = function (cmd)
 
-	-- this is now 200% reliable for long output with this weird synchronization dance
-	-- 0. wait for the game window to become active (so we don't do step 3 too early)
+	-- this is now 400% reliable for long output with this weird synchronization dance
+	-- 0. wait for the game window to become active (so we don't do step 2 too early)
+	-- 0.5. make sure this isn't being called from the logtail thread for step 2 to work
 	-- 1. spit out the commands
 	-- 2. wait for logtail to read the first new line of output
 	-- 3. use wait(0) to wait until logtail releases the lock after it finishes reading all the lines
@@ -357,6 +416,9 @@ run_capturing_output = function (cmd)
 	while false == is_game_window_active() do
 		wait_for_event('attention')
 	end
+	while _get_thread_name() == 'logtail' do
+		wait(0)
+	end
 
 	local f <close> = assert(io.open((gamedir or '.') .. '/console.log', 'r'))
 	f:seek('end')
@@ -364,6 +426,11 @@ run_capturing_output = function (cmd)
 		cmd()
 	else
 		cfg(cmd)
+	end
+
+	-- maybe cmd yielded, might need to check this again
+	while _get_thread_name() == 'logtail' do
+		wait(0)
 	end
 
 	wait_for_event('game_console_output')
@@ -460,9 +527,7 @@ cvar = setmetatable({--[[ empty ]]}, {
 bind = function (key, cmd, cmd2)
 	local n = key2num[key]
 	if not n then
-		eprintln('warning: tried to bind unknown key "%s"', key)
-		eprintln('%s', debug.traceback(nil, 2))
-		return
+		return error(string.format('tried to bind unknown key "%s"', key), 2)
 	end
 	if not cfgfs.compat_noalias then
 		if not binds_down[key] then
@@ -560,7 +625,8 @@ local last_event = nil
 fire_event = function (name, ...)
 	local t = events[name]
 	if t then
-		for _, cb in ipairs(t) do
+		local copy = {table.unpack(t)}
+		for _, cb in ipairs(copy) do
 			if t[cb] then
 				last_event = name
 				if type(cb) == 'function' then
@@ -571,7 +637,6 @@ fire_event = function (name, ...)
 			end
 		end
 	end
-	-- it is unclear what happens if the list is modified during this loop
 end
 
 wait_for_event = function (name, timeout)
@@ -729,6 +794,7 @@ _get_contents = function (path)
 	if path == '/cfgfs/click.cfg' then
 		-- new: only do timeouts specifically on click
 		-- this way timeouts and key events can't happen in the wrong order
+		_click_received()
 		return ev_do_timeouts()
 	end
 	if path == '/cfgfs/buffer.cfg' then
@@ -748,11 +814,7 @@ _get_contents = function (path)
 			end
 			local f = cmd_fns[t[1]]
 			if f then
-				if type(f) == 'function' then
-					return ev_call(f, select(2, table.unpack(t)))
-				else
-					return cfg(f)
-				end
+				return ev_call(f, select(2, table.unpack(t)))
 			else
 				return eprintln('warning: tried to exec nonexistent alias %s', m)
 			end
@@ -883,6 +945,9 @@ end
 local lua_mode = true
 if lua_mode then _set_prompt('> ') end
 
+local attention_message_shown = false
+local yield_id = 1
+
 _cli_input = function (line)
 
 	if line == '>>' then
@@ -914,32 +979,54 @@ _cli_input = function (line)
 	end
 	do_lua = (do_lua or lua_mode)
 
+	local buffer_was_empty = _buffer_is_empty()
+
 	if do_lua then
+		local id = yield_id
+		local cb_initial
+		local cb_yielded
+		cb_initial = function (co, cb)
+			if co ~= ev_loop_co and coroutine.status(co) == 'suspended' then
+				eprintln('\27[1;34m->\27[0m %d', id)
+				yield_id = (yield_id + 1)
+				ev_return_handlers[co] = cb_yielded
+
+				if  not is_game_window_active()
+				and not attention_message_shown
+				then
+					println('note: execution won\'t be resumed until the game window is activated')
+					attention_message_shown = true
+				end
+			end
+		end
+		cb_yielded = function (co, cb)
+			if coroutine.status(co) == 'dead' then
+				eprintln('\27[1;34m<-\27[0m %d', id)
+			else
+				ev_return_handlers[co] = cb_yielded
+			end
+		end
+		ev_return_handlers[ev_loop_co] = cb_initial
 		local fn, err = repl_fn(line)
 		if not fn then
 			eprintln('%s', err)
 			return
 		end
-		return ev_call(fn)
+		ev_call(fn)
 	else
-		return cfg(line)
+		cfg(line)
 	end
 
-	-- if buffer_was_empty and not buffer_is_currently_empty and not game_window_is_active then
-	--     eprintln('note: commands won\'t be executed until the game window is activated')
-	--     this_message_shown = true
-	-- end
-
-	-- if do_lua and the_coroutine_yielded then
-	--     eprintln('-> %d', unique_id)
-	--     after the_coroutine_returns_and_possibly_prints_a_value do
-	--         eprintln('<- %d', unique_id)
-	--     end
-	-- end
+	if  buffer_was_empty
+	and not _buffer_is_empty()
+	and not is_game_window_active()
+	and not attention_message_shown
+	then
+		println('note: commands won\'t be executed until the game window is activated')
+		attention_message_shown = true
+	end
 
 end
-
---log = {}
 
 _game_console_output = function (line)
 	if line ~= '' then
@@ -952,10 +1039,6 @@ _game_console_output = function (line)
 		end
 		_println(line)
 	end
---	table.insert(log, {
---		time = _ms(),
---		text = line,
---	})
 	fire_event('game_console_output', line)
 	-- agpl backdoor (https://www.gnu.org/licenses/gpl-howto.en.html)
 	-- it doesn't work if you say it yourself
@@ -993,7 +1076,7 @@ else
 end
 
 grep = function (pat)
-	local f <close> = assert(open_log())
+	local f <close> = open_log()
 	for line in f:lines() do
 		if line:find(pat) then
 			println('%s', line)
@@ -1013,8 +1096,8 @@ _reload_1 = function ()
 	end
 	local script = ok
 
+	_fire_unload(false)
 	do_reset()
-
 	local ok, err = xpcall(script, debug.traceback)
 	if not ok then
 		eprintln('\aerror: %s', err)
@@ -1048,6 +1131,16 @@ end
 
 _fire_startup = function ()
 	return fire_event('startup')
+end
+
+-- https://wikidiff.com/exit/quit
+-- As nouns the difference between exit and quit is that exit is a way out
+--  while quit is any of numerous species of small passerine birds native
+--  to tropical america.
+-- As verbs the difference between exit and quit is that exit is to go out
+--  while quit is to pay (a debt, fine etc).
+_fire_unload = function (exiting)
+	return fire_event('unload', exiting)
 end
 
 --------------------------------------------------------------------------------

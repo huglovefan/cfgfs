@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 
 #if defined(__cplusplus)
  #include <lua.hpp>
@@ -29,39 +30,18 @@
 
 // -----------------------------------------------------------------------------
 
-#define TIME_LOCKING 0
-
 static pthread_mutex_t lua_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-#if TIME_LOCKING
-static double lock_taken;
-static double worst_lock;
-#endif
 
 void LUA_LOCK(void) {
 	pthread_mutex_lock(&lua_mutex);
-#if TIME_LOCKING
-	lock_taken = mono_ms();
-#endif
 }
 
 void LUA_UNLOCK(void) {
-#if TIME_LOCKING
-	double locked_time = mono_ms()-lock_taken;
-	if (locked_time > worst_lock) {
-		eprintln("LUA_UNLOCK: was locked for %lf ms", locked_time);
-		worst_lock = locked_time;
-	}
-#endif
 	pthread_mutex_unlock(&lua_mutex);
 }
 
 bool LUA_TRYLOCK(void) {
-	bool rv = (0 == pthread_mutex_trylock(&lua_mutex));
-#if TIME_LOCKING
-	if (rv) lock_taken = mono_ms();
-#endif
-	return rv;
+	return (0 == pthread_mutex_trylock(&lua_mutex));
 }
 
 __attribute__((noinline))
@@ -73,11 +53,7 @@ D	if (unlikely(err == -1)) {
 		return false;
 	}
 	ms2ts(ts, ts2ms(ts)+sec*1000);
-	bool rv = (0 == pthread_mutex_timedlock(&lua_mutex, &ts));
-#if TIME_LOCKING
-	if (rv) lock_taken = mono_ms();
-#endif
-	return rv;
+	return (0 == pthread_mutex_timedlock(&lua_mutex, &ts));
 }
 
 // -----------------------------------------------------------------------------
@@ -85,9 +61,9 @@ D	if (unlikely(err == -1)) {
 __attribute__((cold))
 int lua_print_backtrace(lua_State *L) {
 	if (!lua_checkstack(L, 1)) return 0;
-	 luaL_traceback(L, L, NULL, 0);
-	 const char *s = lua_tostring(L, -1);
-	 if (s) eprintln("%s", s);
+	luaL_traceback(L, L, NULL, 0);
+	const char *s = lua_tostring(L, -1);
+	if (s && strchr(s, '\n')) eprintln("%s", s);
 	lua_pop(L, 1);
 	return 0;
 }
@@ -103,6 +79,14 @@ static int l_panic(lua_State *L) {
 	 lua_print_backtrace(L);
 	 __sanitizer_print_stack_trace();
 	 return 0;
+}
+__attribute__((cold))
+static int l_fatal(lua_State *L) {
+	const char *s = lua_tostring(L, 1);
+	if (s) eprintln("fatal error: %s", s);
+	lua_print_backtrace(L);
+	__sanitizer_print_stack_trace();
+	abort();
 }
 
 // -----------------------------------------------------------------------------
@@ -210,6 +194,21 @@ static int l_ms(lua_State *L) {
 	return 1;
 }
 
+static void mono_ms_wait_until(double target) {
+	struct timespec ts;
+	ms2ts(ts, target);
+	int err;
+again:
+	err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
+	if (likely(err == 0)) return;
+	if (likely(err == EINTR)) goto again;
+	perror("mono_ms_wait_until: clock_nanosleep");
+}
+static int l_blocking_wait_ms(lua_State *L) {
+	mono_ms_wait_until(mono_ms()+lua_tonumber(L, 1));
+	return 0;
+}
+
 // -----------------------------------------------------------------------------
 
 // printing
@@ -235,6 +234,19 @@ static int l_eprint(lua_State *L) {
 
 // -----------------------------------------------------------------------------
 
+static int l_get_thread_name(lua_State *L) {
+	char s[17] = {0};
+	char *p = s;
+	if (unlikely(-1 == prctl(PR_GET_NAME, s, 0, 0, 0))) {
+		perror("get_thread_name");
+		p = NULL;
+	}
+	lua_pushstring(L, s);
+	return 1;
+}
+
+// -----------------------------------------------------------------------------
+
 __attribute__((cold))
 lua_State *lua_init(void) {
 
@@ -243,6 +255,9 @@ lua_State *lua_init(void) {
 
 	lua_atpanic(L, l_panic);
 
+	 lua_pushcfunction(L, l_fatal);
+	lua_setglobal(L, "_fatal");
+
 	 lua_pushcfunction(L, l_print);
 	lua_setglobal(L, "_print");
 	 lua_pushcfunction(L, l_eprint);
@@ -250,6 +265,8 @@ lua_State *lua_init(void) {
 
 	 lua_pushcfunction(L, l_ms);
 	lua_setglobal(L, "_ms");
+	 lua_pushcfunction(L, l_blocking_wait_ms);
+	lua_setglobal(L, "_blocking_wait_ms");
 
 	 lua_getglobal(L, "string");
 	  lua_pushcfunction(L, l_string_starts_with);
@@ -265,6 +282,9 @@ lua_State *lua_init(void) {
 	  lua_pushcfunction(L, l_string_trim);
 	 lua_setfield(L, -2, "trim");
 	lua_pop(L, 1);
+
+	 lua_pushcfunction(L, l_get_thread_name);
+	lua_setglobal(L, "_get_thread_name");
 
 	lua_newtable(L); lua_setglobal(L, "num2key");
 	lua_newtable(L); lua_setglobal(L, "key2num");

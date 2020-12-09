@@ -494,6 +494,11 @@ out_fuse_newed_and_mounted:
 out_fuse_newed:
 	fuse_destroy(fuse);
 out_no_fuse:
+	if (g_L != NULL) {
+		 lua_getglobal(g_L, "_fire_unload");
+		  lua_pushboolean(g_L, 1);
+		lua_call(g_L, 1, 0);
+	}
 	attention_deinit();
 	cli_input_deinit();
 	click_deinit();

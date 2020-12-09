@@ -9,6 +9,8 @@
 // autohotkey doesn't have a reputation for getting you banned so i think this
 //  should be okay
 
+void do_click(void);
+
 // unlock the lua lock and click if there is stuff in the buffer
 void opportunistic_click_and_unlock(void);
 
