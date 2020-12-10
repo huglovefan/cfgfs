@@ -207,21 +207,21 @@ local ev_handle_return = function (co, ok, rv1, rv2)
 	if ok then
 		if co == ev_loop_co and rv1 ~= sym_ready then
 			ev_loop_co = coroutine.create(ev_loop_fn)
-			if rv1 == false and coroutine.status(co) == 'dead' then
-				local handler = ev_error_handlers[co]
-				if handler then
-					ev_error_handlers[co] = nil
-					ev_call(handler, rv1)
-				else
-					eprintln('\aerror: %s', rv2)
-				end
-				local ok, err = coroutine.close(co) -- hope this doesn't yield
-				if not ok then
-					eprintln('\aerror: %s', err)
-				end
+		end
+		if rv1 == false and coroutine.status(co) == 'dead' then
+			local handler = ev_error_handlers[co]
+			if handler then
+				ev_error_handlers[co] = nil
+				ev_call(handler, rv2)
+			else
+				eprintln('\aerror: %s', rv2)
+			end
+			local ok, err = coroutine.close(co) -- hope this doesn't yield?
+			if not ok then
+				eprintln('\aerror: %s', err)
 			end
 		end
-		local cb = ev_return_handlers[co]
+		local cb = ev_return_handlers[co] -- badly named
 		if cb then
 			ev_return_handlers[co] = nil
 			return ev_call(cb, co, cb)

@@ -493,11 +493,11 @@ bind('pgup',                            '')
 
 bind('tab',                             '+showscores;cl_showfps 2;cl_showpos 1',
                                         '-showscores;cl_showfps 0;cl_showpos 0')
-bind('q', function ()
+bind('q', function (...)
 	if is_pressed['alt'] then
-		cmd.bots()
+		cmd.bots(...)
 	else
-		cmd.kptadpb()
+		cmd.kptadpb(...)
 	end
 end)
 bind('w',                               nullcancel_pair('w', 's', 'forward', 'back'))
@@ -515,7 +515,7 @@ bind('t', function (_, key)
 	end
 	repeat
 		cmd.extendfreeze()
-	until wait_for_event('-'..key, 1900)
+	until wait_for_event('-'..key, 1950)
 end)
 cmd.bind('y',                           'say')
 cmd.bind('u',                           'say_team')
@@ -966,14 +966,6 @@ cmd.kptadpb = function (_, key)
 		end
 		return false
 	end
-	local kick = function (t)
-		cmdv.callvote('kick', string.format('%d cheating', t.id))
-	end
-	local kickall = function (bots)
-		for _, t in ipairs(bots) do
-			kick(t)
-		end
-	end
 	local playerlist = get_playerlist()
 	local mysteamid = assert(find_own_steamid(playerlist), 'failed to get own steamid')
 	local myteam = get_team(mysteamid)
@@ -985,13 +977,24 @@ cmd.kptadpb = function (_, key)
 		bad_steamids_check_status_entry(t.name, t.steamid)
 	end
 	if #bots > 0 then
-		kickall()
+		for _, t in ipairs(bots) do
+			cmdv.callvote('kick', string.format('%d cheating', t.id))
+		end
 		if key and rawget(is_pressed, key) and not kptadpb_looping then
 			kptadpb_looping = true
-			while wait_for_event('-'..key, 25*#bots) do
-				kickall()
+			local i = 1
+			while not wait_for_event('-'..key, 30) do
+				if i == #bots+1 then i = 1 end
+				cmdv.callvote('kick', string.format('%d cheating', bots[i].id))
+				i = i + 1
 			end
 			kptadpb_looping = false
+		end
+	else
+		if key and rawget(is_pressed, key) then
+			if not wait_for_event('-'..key, 100) then
+				return cmd.kptadpb(_, key)
+			end
 		end
 	end
 end
