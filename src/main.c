@@ -30,7 +30,6 @@
 #include "cli_input.h"
 #include "cli_output.h"
 #include "click.h"
-#include "logtail.h"
 #include "lua.h"
 #include "macros.h"
 #include "reloader.h"
@@ -99,6 +98,9 @@ static int have_file(const char *restrict path) {
 //		return -ENOENT;
 //	}
 	if (unlikely(!ends_with(path, ".cfg"))) {
+		if (unlikely(strcmp(path, "/console.log") == 0)) {
+			return 0xf;
+		}
 		return -ENOENT;
 	}
 
@@ -284,7 +286,71 @@ static int cfgfs_write(const char *path,
                        struct fuse_file_info *fi) {
 	(void)fi;
 V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
+{
+	static pthread_mutex_t logcatcher_lock = PTHREAD_MUTEX_INITIALIZER;
+	static char logbuffer[0xffff];
+	static char *p = logbuffer;
+	bool lua_locked = false;
+	lua_State *L = get_state();
 
+#define log_catcher_got_line(p, sz) \
+	({ \
+		if (!lua_locked++) LUA_LOCK(); \
+		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX); \
+		  lua_pushlstring(L, (p), (sz)); \
+		lua_call(L, 1, 0); \
+	})
+
+	if (likely(strcmp(path, "/console.log") == 0)) {
+		pthread_mutex_lock(&logcatcher_lock);
+		size_t insize = size;
+		if (likely(size >= 2 && data[size-1] == '\n')) {
+			// writing a full line in one go
+			// may contain embedded newlines, don't bother splitting it up
+			log_catcher_got_line(data, size-1);
+		} else while (size != 0) {
+			// idiot writing it in multiple parts
+			if (p == logbuffer) {
+				// nothing in the buffer yet
+				char *nl = memchr(data, '\n', size);
+				if (nl != NULL) {
+					// data contains at least one complete line
+					size_t partlen = (size_t)(nl-data);
+					log_catcher_got_line(data, partlen);
+					data += partlen+1;
+					size -= partlen+1;
+				} else {
+					// incoming data is not a complete line, save it to the buffer and get out
+					memcpy(p, data, size);
+					p += size;
+					goto over;
+				}
+			} else {
+				// already have a part of a line in the buffer
+				char *nl = memchr(data, '\n', size);
+				if (nl != NULL) {
+					// the new data completes the line
+					size_t partlen = (size_t)(nl-data);
+					memcpy(p, data, partlen);
+					p += partlen;
+					log_catcher_got_line(logbuffer, (size_t)(p-logbuffer));
+					data += partlen+1;
+					size -= partlen+1;
+					p = logbuffer;
+				} else {
+					// incoming data is a continuation of the incomplete line
+					memcpy(p, data, size);
+					p += size;
+					goto over;
+				}
+			}
+		}
+over:
+		if (lua_locked--) opportunistic_click_and_unlock();
+		pthread_mutex_unlock(&logcatcher_lock);
+		return (int)insize;
+	}
+}
 	if (strcmp(path, "/.control") != 0) return -ENOTSUP;
 	if (size == 8192) return -EMSGSIZE; // might be truncated
 	if (offset != 0) return -EINVAL;
@@ -470,7 +536,6 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 	attention_init(L);
 	cli_input_init(L);
 	click_init();
-	logtail_init(L);
 	reloader_init(L);
 
 	// ~ boot up fuse ~
@@ -502,7 +567,6 @@ out_no_fuse:
 	attention_deinit();
 	cli_input_deinit();
 	click_deinit();
-	logtail_deinit();
 	reloader_deinit();
 	if (g_L != NULL) lua_close(exchange(g_L, NULL));
 	free(opts.mountpoint);

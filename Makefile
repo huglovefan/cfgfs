@@ -19,7 +19,6 @@ OBJS = src/main.o \
        src/reloader.o \
        src/cli_input.o \
        src/cli_output.o \
-       src/logtail.o \
        src/keys.o \
        src/click.o \
        src/attention.o

@@ -357,7 +357,7 @@ end)
 
 -- cvars
 
-cvar.con_logfile = 'console.log'
+cfg('con_logfile ""; con_logfile "custom/!cfgfs/cfg/console.log"')
 
 cvar.sensitivity = 2.6
 
@@ -722,22 +722,18 @@ get_playerlist = function () -- local
 	playerlist_currently_updating = true
 	local oldpanic = panic; panic = fatal
 
+	-- from run_capturing_output() in builtin.lua
+	if not _in_get_contents then
+		reexec()
+		assert(_in_get_contents, 'timeouts done from wrong thread?')
+	end
 	cmd.status()
 
 	local players = {}
 	local count = nil
 
-	-- ※ 注意点：
-	-- the lines can come out of order and interspersed with other output
-	-- because of that, the starting '#' might not be the first thing on a line
-	-- this also needs to support names that contain newlines
-	local data = ''
 	for _, line in wait_for_events('game_console_output', 2000) do
-		data = (data .. line .. '\n')
-
-		local id, name, steamid
-		data, id, name, steamid = rex_match_and_remove(data,
-		    '# +([0-9]+) "((?:.|\n){0,32})"(?=.{32}) +(\\[U:1:[0-9]+\\]) +[0-9]+:[0-9]+(?::[0-9]+)? +[0-9]+ +[0-9]+ [a-z]+\n')
+		local id, name, steamid = line:match('^# +([0-9]+) +"(.*)" +(%[U:1:[0-9]+%]) +[0-9:]+ +[0-9]+ +[0-9]+ [^ ]+$')
 		if id then
 			local accountid = steamid:match('^%[U:1:([0-9]+)%]$')
 			local id64 = tonumber(accountid)+76561197960265728
@@ -752,9 +748,7 @@ get_playerlist = function () -- local
 			players[tostring(id64)] = t
 		end
 
-		local cnt
-		data, cnt = rex_match_and_remove(data,
-		    'players : ([0-9]+) humans, [0-9]+ bots \\([0-9]+ max\\)\n')
+		local cnt = line:match('^players : ([0-9]+) humans, [0-9]+ bots %([0-9]+ max%)$')
 		if cnt then
 			count = tonumber(cnt)
 		end
@@ -927,7 +921,7 @@ cmd.bots = function ()
 end
 
 local find_own_steamid = function (playerlist)
-	local myname = cvar.name
+	local myname = cvar.name or cvar.name or cvar.name -- retry lol
 	for _, t in ipairs(playerlist) do
 		if t.name == myname then
 			return t.steamid
@@ -941,7 +935,6 @@ cmd.kptadpb = function (_, key)
 	panic = function (err)
 		cmd.echof('kptadpb: %s', err)
 		cmd.voicemenu(2, 5)
-		cvar.fov_desired = 75
 	end
 	local bind_press_time = (type(key) == 'string' and rawget(is_pressed, key))
 	local check = function (t)

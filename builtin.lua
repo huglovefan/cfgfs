@@ -298,6 +298,17 @@ end
 
 spinoff = ev_call
 
+local resume_cos = {}
+local resume_id = 0
+
+reexec = function ()
+	local id = tostring(resume_id)
+	resume_id = resume_id+1
+	resume_cos[id] = assert(coroutine.running())
+	cfgf('exec"cfgfs/resume/%d', id)
+	return coroutine.yield()
+end
+
 --------------------------------------------------------------------------------
 
 local aliases = make_resetable_table()
@@ -403,45 +414,27 @@ cmdp = setmetatable({--[[ empty ]]}, {
 	end,
 })
 
+-- works like 99% of the time
 run_capturing_output = function (cmd)
+	reexec()
 
-	-- this is now 400% reliable for long output with this weird synchronization dance
-	-- 0. wait for the game window to become active (so we don't do step 2 too early)
-	-- 0.5. make sure this isn't being called from the logtail thread for step 2 to work
-	-- 1. spit out the commands
-	-- 2. wait for logtail to read the first new line of output
-	-- 3. use wait(0) to wait until logtail releases the lock after it finishes reading all the lines
-	-- 4. finally read the output now that we're fairly sure it's actually there
-
-	while false == is_game_window_active() do
-		wait_for_event('attention')
+	local lines = {}
+	local fn = function (line)
+		return table.insert(lines, line)
 	end
-	while _get_thread_name() == 'logtail' do
-		wait(0)
-	end
+	add_listener('game_console_output', fn)
 
-	local f <close> = assert(io.open((gamedir or '.') .. '/console.log', 'r'))
-	f:seek('end')
 	if type(cmd) == 'function' then
-		cmd()
+		ev_call(cmd)
 	else
 		cfg(cmd)
 	end
 
-	-- maybe cmd yielded, might need to check this again
-	while _get_thread_name() == 'logtail' do
-		wait(0)
-	end
+	reexec()
 
-	wait_for_event('game_console_output')
-	wait(0)
+	remove_listener('game_console_output', fn)
 
-	local t = {}
-	for l in f:lines() do
-		table.insert(t, l)
-	end
-	return t
-
+	return lines
 end
 
 local get_cvars = function (t)
@@ -702,6 +695,13 @@ end
 --------------------------------------------------------------------------------
 
 _get_contents = function (path)
+	_in_get_contents = true
+	_get_contents_(path)
+	_in_get_contents = false
+end
+_in_get_contents = false
+
+_get_contents_ = function (path)
 	-- keybind?
 	local t = bindfilenames[path]
 	if t then
@@ -817,6 +817,17 @@ _get_contents = function (path)
 				return ev_call(f, select(2, table.unpack(t)))
 			else
 				return eprintln('warning: tried to exec nonexistent alias %s', m)
+			end
+		end
+
+		local m = path:between('resume/', '.cfg')
+		if m then
+			local f = resume_cos[m]
+			if f then
+				resume_cos[m] = nil
+				return ev_resume(f)
+			else
+				return eprintln('warning: tried to resume nonexistent coroutine %s', m)
 			end
 		end
 
@@ -1028,7 +1039,11 @@ _cli_input = function (line)
 
 end
 
+local our_logfile = assert(io.open('console.log', 'a'))
+our_logfile:setvbuf('line')
+
 _game_console_output = function (line)
+	our_logfile:write(line, '\n')
 	if line ~= '' then
 		-- remove color codes
 		-- mostly just want to remove the bell character so it doesn't blink my terminal
@@ -1036,6 +1051,9 @@ _game_console_output = function (line)
 		if line:byte(1) < 0x20 then
 			line = line:gsub('\0[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
 			line = line:gsub('\7[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
+		end
+		if line:find('\n', 1, true) then
+			line = line:gsub('\n[\n ]*', '\n'):gsub('^\n+', '', 1):gsub('\n+$', '', 1)
 		end
 		_println(line)
 	end
