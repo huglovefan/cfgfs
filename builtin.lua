@@ -203,7 +203,7 @@ do
 end
 ev_loop_co = coroutine.create(ev_loop_fn)
 
-local ev_handle_return = function (co, ok, rv1, rv2)
+local ev_handle_return = function (co, ok, rv1, rv2, rv3)
 	if ok then
 		if co == ev_loop_co and rv1 ~= sym_ready then
 			ev_loop_co = coroutine.create(ev_loop_fn)
@@ -214,7 +214,7 @@ local ev_handle_return = function (co, ok, rv1, rv2)
 				ev_error_handlers[co] = nil
 				ev_call(handler, rv2)
 			else
-				eprintln('\aerror: %s', rv2)
+				eprintln('\aerror: %s', rv3)
 			end
 			local ok, err = coroutine.close(co) -- hope this doesn't yield?
 			if not ok then
@@ -708,7 +708,7 @@ _get_contents = function (path)
 		local name = t.name
 		if t.type == 'down' then
 
-			is_pressed[name] = true
+			is_pressed[name] = _ms()
 			local v = binds_down[name]
 			if v then
 				if type(v) == 'function' then
@@ -748,7 +748,7 @@ _get_contents = function (path)
 
 			else
 
-				is_pressed[name] = true
+				is_pressed[name] = _ms()
 				local v = binds_down[name]
 				if v then
 					if type(v) == 'function' then
@@ -762,7 +762,7 @@ _get_contents = function (path)
 			end
 		elseif t.type == 'once' then
 
-			is_pressed[name] = true
+			is_pressed[name] = _ms()
 			local v = binds_down[name]
 			if v then
 				if type(v) == 'function' then

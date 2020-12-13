@@ -52,7 +52,7 @@ static void _init_badchars(void) {
 	set_range(125, 255, wf_needs_quotes);
 
 	// all characters below 32 (except for 9) work like a newline
-	// 34 is double quote which can't be quoted itself (replaced with single quote)
+	// 34 is double quote which can't be quoted itself (replaced with a single quote)
 	set_range(0, 8, wf_contains_evil_char);
 	set_range(10, 31, wf_contains_evil_char);
 	set(34, wf_contains_evil_char);
@@ -64,6 +64,11 @@ static void _init_badchars(void) {
 // -----------------------------------------------------------------------------
 
 // it looks less bad if you reduce your tab width and font size
+
+// todo: split into
+//   cmd_get_outsize()
+//   cmd_do_stringify()
+// and make a cmd_stringify() for lua
 
 static int l_cmd(lua_State *L) {
 	int top = lua_gettop(L);
@@ -105,8 +110,8 @@ static int l_cmd(lua_State *L) {
 				}
 			}
 			if (i > 0 &&
-				 !(words[i].flags&wf_needs_quotes) &&
-				 !(words[i-1].flags&wf_needs_quotes)) {
+			    !(words[i].flags&wf_needs_quotes) &&
+			    !(words[i-1].flags&wf_needs_quotes)) {
 				// spaces are only needed between two non-quoted words
 				total_len += 1;
 			}
@@ -114,7 +119,7 @@ static int l_cmd(lua_State *L) {
 		case qr_say:
 			// [SAY"ARG1"] -> [SAY"][ARG1"]
 			// [SAY"ARG1 ARG2"] -> [SAY"][ARG1 ][ARG2"]
-			// what i mean to say it's always the word length + 1
+			// what i mean to say is that it's always the word length + 1
 			total_len += words[i].len+1;
 			break;
 		}

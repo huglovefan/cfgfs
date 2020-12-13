@@ -639,7 +639,8 @@ table.includes = function (t, v)
 end
 
 local bad_steamids_old = {}
--- update ^ with a newly read name and steaid from status
+local blu_printed = {}
+-- update ^ with a newly read name and steamid from status
 local bad_steamids_check_status_entry = function (name, steamid)
 	name = name:lower()
 	if name:find('nigger')
@@ -936,13 +937,13 @@ local find_own_steamid = function (playerlist)
 end
 
 -- kick players that are definitely probably bots
-local kptadpb_looping = false
 cmd.kptadpb = function (_, key)
 	panic = function (err)
 		cmd.echof('kptadpb: %s', err)
 		cmd.voicemenu(2, 5)
 		cvar.fov_desired = 75
 	end
+	local bind_press_time = (type(key) == 'string' and rawget(is_pressed, key))
 	local check = function (t)
 		local name = t.name:lower()
 		-- steam rejects names with these words
@@ -980,18 +981,16 @@ cmd.kptadpb = function (_, key)
 		for _, t in ipairs(bots) do
 			cmdv.callvote('kick', string.format('%d cheating', t.id))
 		end
-		if key and rawget(is_pressed, key) and not kptadpb_looping then
-			kptadpb_looping = true
+		if bind_press_time and bind_press_time == is_pressed[key] then
 			local i = 1
 			while not wait_for_event('-'..key, 30) do
 				if i == #bots+1 then i = 1 end
 				cmdv.callvote('kick', string.format('%d cheating', bots[i].id))
 				i = i + 1
 			end
-			kptadpb_looping = false
 		end
 	else
-		if key and rawget(is_pressed, key) then
+		if bind_press_time and bind_press_time == is_pressed[key] then
 			if not wait_for_event('-'..key, 100) then
 				return cmd.kptadpb(_, key)
 			end
@@ -1009,6 +1008,25 @@ cmd.kms = function ()
 		end
 		bad_steamids_check_status_entry(t.name, t.steamid)
 	end
+end
+
+cmd.mute = function () cvar.voice_scale = 0.1 end
+cmd.unmute = function () cvar.voice_scale = 0.5 end
+
+do
+local myname = nil
+local pat = nil
+add_listener('classchange', function ()
+	myname = cvar.name
+	if myname then
+		pat = '^'..myname..' killed '
+	end
+end)
+add_listener('game_console_output', function (line)
+	if pat and line:find(pat) then
+		cmd('+use_action_slot_item')
+	end
+end)
 end
 
 --------------------------------------------------------------------------------
