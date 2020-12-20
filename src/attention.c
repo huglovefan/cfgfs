@@ -39,7 +39,6 @@ enum msg_action {
 
 #define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
 
-__attribute__((cold))
 static bool wait_for_event(int conn) {
 	bool success = false;
 
@@ -76,7 +75,6 @@ out:
 static int l_update_attention(lua_State *L);
 static Display *display;
 
-__attribute__((cold))
 static void do_xevents(Atom net_active_window,
                        Atom net_wm_name,
                        lua_State *L) {
@@ -114,9 +112,8 @@ static void do_xevents(Atom net_active_window,
 }
 
 __attribute__((cold))
-static void *attention_main(void *ud) {
+static void *attention_main(void *L) {
 	set_thread_name("attention");
-	lua_State *L = (lua_State *)ud;
 
 	Atom net_active_window = XInternAtom(display, "_NET_ACTIVE_WINDOW", 0);
 	Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
@@ -139,9 +136,7 @@ static void *attention_main(void *ud) {
 
 static pthread_t thread;
 
-__attribute__((cold))
-void attention_init(void *L_) {
-	lua_State *L = (lua_State *)L_;
+void attention_init(void *L) {
 	if (thread != 0) return;
 
 	display = XOpenDisplay(NULL);
@@ -168,7 +163,6 @@ err:
 	thread = 0;
 }
 
-__attribute__((cold))
 void attention_deinit(void) {
 	if (thread == 0) return;
 
@@ -190,7 +184,6 @@ void attention_deinit(void) {
 
 // get the title of the active window
 // (not performance-critical)
-__attribute__((cold))
 static char *get_attention(void) {
 	char *rv = NULL;
 
@@ -237,9 +230,7 @@ static int l_update_attention(lua_State *L) {
 	return 0;
 }
 
-__attribute__((cold))
-void attention_init_lua(void *L_) {
-	lua_State *L = (lua_State *)L_;
+void attention_init_lua(void *L) {
 	 lua_pushcfunction(L, l_get_attention);
 	lua_setglobal(L, "_get_attention");
 	 lua_pushcfunction(L, l_update_attention);

@@ -21,8 +21,7 @@ static int l_buffer_is_empty(lua_State *L) {
 	return 1;
 }
 
-void buffers_init_lua(void *L_) {
-	lua_State *L = (lua_State *)L_;
+void buffers_init_lua(void *L) {
 	 lua_pushcfunction(L, l_init);
 	lua_setglobal(L, "_init");
 	 lua_pushcfunction(L, l_buffer_is_empty);

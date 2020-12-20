@@ -60,11 +60,16 @@ D	if (unlikely(err == -1)) {
 
 __attribute__((cold))
 int lua_print_backtrace(lua_State *L) {
-	if (!lua_checkstack(L, 1)) return 0;
-	luaL_traceback(L, L, NULL, 0);
-	const char *s = lua_tostring(L, -1);
-	if (s && strchr(s, '\n')) eprintln("%s", s);
-	lua_pop(L, 1);
+	size_t sz;
+	const char *s;
+	if (lua_checkstack(L, 1)) {
+		luaL_traceback(L, L, NULL, 0);
+		s = lua_tolstring(L, -1, &sz);
+		if (s != NULL && sz != strlen("stack traceback:")) {
+			eprintln("%s", s);
+		}
+		lua_pop(L, 1);
+	}
 	return 0;
 }
 
@@ -75,10 +80,10 @@ int lua_do_nothing(lua_State *L) {
 
 __attribute__((cold))
 static int l_panic(lua_State *L) {
-	 eprintln("fatal error: %s", lua_tostring(L, -1));
-	 lua_print_backtrace(L);
-	 __sanitizer_print_stack_trace();
-	 return 0;
+	eprintln("fatal error: %s", lua_tostring(L, -1));
+	lua_print_backtrace(L);
+	__sanitizer_print_stack_trace();
+	return 0;
 }
 __attribute__((cold))
 static int l_fatal(lua_State *L) {
@@ -194,21 +199,6 @@ static int l_ms(lua_State *L) {
 	return 1;
 }
 
-static void mono_ms_wait_until(double target) {
-	struct timespec ts;
-	ms2ts(ts, target);
-	int err;
-again:
-	err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
-	if (likely(err == 0)) return;
-	if (likely(err == EINTR)) goto again;
-	perror("mono_ms_wait_until: clock_nanosleep");
-}
-static int l_blocking_wait_ms(lua_State *L) {
-	mono_ms_wait_until(mono_ms()+lua_tonumber(L, 1));
-	return 0;
-}
-
 // -----------------------------------------------------------------------------
 
 // printing
@@ -265,8 +255,6 @@ lua_State *lua_init(void) {
 
 	 lua_pushcfunction(L, l_ms);
 	lua_setglobal(L, "_ms");
-	 lua_pushcfunction(L, l_blocking_wait_ms);
-	lua_setglobal(L, "_blocking_wait_ms");
 
 	 lua_getglobal(L, "string");
 	  lua_pushcfunction(L, l_string_starts_with);

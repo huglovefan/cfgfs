@@ -36,8 +36,16 @@ setmetatable(_G, {
 	end,
 })
 
+assert((type(agpl_source_url) == 'string' and #agpl_source_url > 0), 'invalid agpl_source_url')
 println('cfgfs is free software released under the terms of the GNU AGPLv3 license.')
 println('Type `cfgfs_license\' for details.')
+
+do
+	local author, repo = agpl_source_url:match('^git@github.com:([A-Za-z0-9_]+)/([A-Za-z0-9_]+)%.git$')
+	if author then
+		agpl_source_url = string.format('https://github.com/%s/%s', author, repo)
+	end
+end
 
 --------------------------------------------------------------------------------
 
@@ -1043,32 +1051,70 @@ local our_logfile = assert(io.open('console.log', 'a'))
 our_logfile:setvbuf('line')
 
 _game_console_output = function (line)
-	our_logfile:write(line, '\n')
-	if line ~= '' then
-		-- remove color codes
-		-- mostly just want to remove the bell character so it doesn't blink my terminal
+	-- detect some useless error messages
+	local spam = false
+	if #line >= 19 then
+		local c = line:sub(1, 1)
+		if c == '-' and #line >= 27 and line:find('^%-%-%- Missing Vgui material ') then goto match end
+		if c == 'A' and #line >= 48 and line:find('^Attemped to precache unknown particle system ".*"!$') then goto match end
+		if c == 'C' and #line >= 44 and line:find('^Cannot update control point [0-9]+ for effect \'.*\'%.$') then goto match end
+		if c == 'E' and #line >= 34 and line:find('^EmitSound: pitch out of bounds = %-?[0-9]+$') then goto match end
+		if c == 'E' and #line >= 41 and line:find('^Error: Material ".*" uses unknown shader ".*"$') then goto match end
+		if c == 'F' and #line >= 102 and line:find('^Failed to find attachment point specified for .* event%. Trying to spawn effect \'.*\' on attachment named \'.*\'$') then goto match end
+		if c == 'M' and #line >= 68 and line:find('^Model \'.*\' doesn\'t have attachment \'.*\' to attach particle system \'.*\' to%.$') then goto match end
+		if c == 'N' and #line >= 35 and line:find('^No such variable ".*" for material ".*"$') then goto match end
+		if c == 'R' and #line >= 78 and line:find('^Requesting texture value from var ".*" which is not a texture value %(material: .*%)$') then goto match end
+		if c == 'S' and #line >= 36 and line:find('^Shutdown function [A-Za-z0-9_]+%(%) not in list!!!$') then goto match end
+		if c == 'S' and #line >= 49 and line:find('^SetupBones: invalid bone array size %([0-9]+ %- needs [0-9]+%)$') then goto match end
+		if c == 'U' and #line >= 19 and line:find('^Unable to remove .+!$') then goto match end
+		if c == 'm' and #line >= 42 and line:find('^m_face%->glyph%->bitmap%.width is [0-9]+ for ch:[0-9]+ ') then goto match end
+		if line == 'Unknown command "dimmer_clicked"' then goto match end
+		goto nomatch
+		::match::
+		spam = true
+		::nomatch::
+	end
+
+	-- print the line to the terminal
+	-- color codes: /usr/share/doc/xterm-*/ctlseqs.txt (ctrl+f "Character Attributes")
+	if not spam then
+		-- copy the line so we can modify it
+		local line = line
+
+		-- colorize color codes so the \7 doesn't cause the terminal to blink
 		-- line="\7FFD700[RTD]\1 Rolled \00732CD32Lucky Sandvich\1."
-		if line:byte(1) < 0x20 then
-			line = line:gsub('\0[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
-			line = line:gsub('\7[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
+		if line:byte(1) == 7 then
+			--line = line:gsub('\0[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
+			-- ^ where did this come from? i thought it couldn't print null bytes
+			line = line:gsub('\7([0-9A-F][0-9A-F])([0-9A-F][0-9A-F])([0-9A-F][0-9A-F])([^\1]*)\1', function (r, g, b, s)
+				r, g, b = tonumber('0x'..r), tonumber('0x'..g), tonumber('0x'..b)
+				return string.format('\27[38;2;%d;%d;%dm%s\27[0m', r, g, b, s)
+			end)
 		end
+
+		-- clean up newline spam
 		if line:find('\n', 1, true) then
 			line = line:gsub('\n[\n ]*', '\n'):gsub('^\n+', '', 1):gsub('\n+$', '', 1)
 		end
+
+		-- make crit kills blink
+		line = line:gsub(' %(crit%)$', ' \27[1;5;37;41m(crit)\27[0m', 1)
+
 		_println(line)
+	else
+		-- 2 = faint
+		println('\27[2m%s\27[0m', line)
 	end
+
+	our_logfile:write(line, '\n')
 	fire_event('game_console_output', line)
+
 	-- agpl backdoor (https://www.gnu.org/licenses/gpl-howto.en.html)
 	-- it doesn't work if you say it yourself
 	if line:find(':[\t ]*!cfgfs_agpl_source[\t ]*$') then
 		cmd.say(agpl_source_url)
 	end
 end
-assert((type(agpl_source_url) == 'string' and #agpl_source_url > 0), 'invalid agpl_source_url')
-
-cmd.cfgfs_license = 'exec cfgfs/license'
-cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
--- ^ are these in the right place? do they always get defined properly?
 
 --------------------------------------------------------------------------------
 
@@ -1079,18 +1125,15 @@ end
 --------------------------------------------------------------------------------
 
 local logpos = 0
-if gamedir then
-	local f <close> = assert(io.open(gamedir .. '/console.log', 'r'))
+do
+	local f <close> = assert(io.open('console.log', 'r'))
 	logpos = assert(f:seek('end'))
-	open_log = function ()
-		local f = assert(io.open(gamedir .. '/console.log', 'r'))
-		assert(f:seek('set', logpos))
-		return f
-	end
-else
-	open_log = function ()
-		return error('log not available')
-	end
+end
+
+open_log = function ()
+	local f = assert(io.open('console.log', 'r'))
+	assert(f:seek('set', logpos))
+	return f
 end
 
 grep = function (pat)
@@ -1103,6 +1146,11 @@ grep = function (pat)
 end
 
 --------------------------------------------------------------------------------
+
+local builtin_aliases = function ()
+	cmd.cfgfs_license = 'exec cfgfs/license'
+	cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
+end
 
 -- reload and re-run script.lua
 _reload_1 = function ()
@@ -1117,6 +1165,7 @@ _reload_1 = function ()
 	_fire_unload(false)
 	do_reset()
 	local ok, err = xpcall(script, debug.traceback)
+	builtin_aliases()
 	if not ok then
 		eprintln('\aerror: %s', err)
 		eprintln('script.lua was reloaded with an error!')
@@ -1172,6 +1221,7 @@ end
 local script = ok
 
 local ok, err = xpcall(script, debug.traceback)
+builtin_aliases()
 if not ok then
 	eprintln('\aerror: %s', err)
 	eprintln('failed to load script.lua!')

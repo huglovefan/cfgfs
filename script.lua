@@ -53,7 +53,8 @@ xhs = global('xhs', {
 	                 {skip=1, file=4},
 	                 {skip=1} },
 
-	medic        = { {file=5, size=24},
+	medic        = { mod=1,
+	                 {file=5, size=24},
 	                 {file=7, size=24},
 	                 {file=4} },
 
@@ -239,7 +240,7 @@ local jump_up = '-jump'
 
 if 1 + 1 == 2 then
 	local jump_ms = 700
-	local hold_ms = 350
+	local hold_ms = 650
 
 	local cmd_dn = jump_dn
 	local cmd_up = jump_up
@@ -322,6 +323,25 @@ add_listener({'+1', '+2', '+3'}, function (_, key)
 	cmd.next_map_vote(tonumber(key)-1)
 end)
 
+cmd.mute = function () cvar.voice_scale = 0.1 end
+cmd.unmute = function () cvar.voice_scale = 0.5 end
+
+do
+	local myname = nil
+	local pat = nil
+	add_listener('classchange', function ()
+		myname = (cvar.name or myname)
+		if myname then
+			pat = '^'..myname:gsub('[^A-Za-z0-9_]', '.')..' killed '
+		end
+	end)
+	add_listener('game_console_output', function (line)
+		if pat and line:find(pat) and line:find(' %(crit%)$') then
+			cmd('+use_action_slot_item')
+		end
+	end)
+end
+
 --------------------------------------------------------------------------------
 
 -- huntsman charge bell
@@ -357,7 +377,15 @@ end)
 
 -- cvars
 
-cfg('con_logfile ""; con_logfile "custom/!cfgfs/cfg/console.log"')
+-- the logfile needs to be reloaded if cfgfs was restarted while the game was running
+-- sometimes the game will freeze if this is done improperly
+-- (still wondering what the proper way is)
+cmd.cfgfs_init_log = function ()
+	reexec()
+	cvar.con_logfile = ''
+	cvar.con_logfile = 'custom/!cfgfs/cfg/console.log'
+end
+cfg('cfgfs_init_log')
 
 cvar.sensitivity = 2.6
 
@@ -451,8 +479,8 @@ bind('mwheeldown',                      invnext)
 bind('mwheelup',                        invprev)
 
 bind('escape',                          'cancelselect')
-bind('f1',                              'incrementvar net_graph 0 6 6')
-bind('f2',                              'screenshot')
+bind('f1',                              'incrementvar net_graph 0 6 6; vote option1')
+bind('f2',                              'screenshot; vote option2')
 bind('f3',                              '')
 bind('f4',                              'player_ready_toggle')
 bind('f5',                              '')
@@ -540,7 +568,6 @@ cmd['+taunt'] = function ()
 	repeat
 		cfg('cmd taunt')
 	until wait_for_event('-taunt', 100/3)
-	-- todo: test if cancelling group taunts works with this
 end
 cmd['-taunt'] = function ()
 	fire_event('-taunt')
@@ -639,7 +666,6 @@ table.includes = function (t, v)
 end
 
 local bad_steamids_old = {}
-local blu_printed = {}
 -- update ^ with a newly read name and steamid from status
 local bad_steamids_check_status_entry = function (name, steamid)
 	name = name:lower()
@@ -687,18 +713,6 @@ add_listener('startup', function ()
 	-- https://github.com/PazerOP/tf2_bot_detector/wiki/Customization#third-party-player-lists-and-rules
 	-- there are a few more lists
 end)
-
-local rex_match_and_remove = function (s, pat, ...)
-	local t = {rex.find(s, pat, ...)}
-	if t[1] ~= nil then
-		local startpos, endpos = t[1], t[2]
-		local s2 = ''
-		if startpos > 1 then s2 = s2 .. s:sub(1, startpos) end
-		if endpos < #s then s2 = s2 .. s:sub(endpos, #s) end
-		return s2, select(3, table.unpack(t))
-	end
-	return s, nil
-end
 
 --[[ get_playerlist ]] do
 
@@ -783,7 +797,7 @@ local teamdata = {}
 local teamdata_updated = 0
 local teamdata_currently_updating = false
 
-local teamdata_cache_time <const> = 10*1000
+local teamdata_cache_time <const> = 1000
 
 local teamnames = {
 	['TF_GC_TEAM_INVADERS'] = 'red',
@@ -853,8 +867,7 @@ cmd.echof = function (fmt, ...)
 end
 
 local printableish = function (name)
-	name = name:gsub('[^ -~]+', '?')
-	if name:find('^[ ?]*$') then
+	if not name:find('[ -~]') then
 		name = '(unprintable)'
 	end
 	return name
@@ -887,11 +900,18 @@ cmd.bots = function ()
 			    players[t.steamid].steamid,
 			    ...)
 		end
-		-- sub(): clip to 31 characters to match the in-game limit
-		-- ^ todo: may be truncating utf-8 characters differently
-		-- gsub(): remove leading # to match the way it gets removed from in-game names
-		-- gsub(): tildes get removed too
-		if t.personaname:sub(1, 31):gsub('^#', ''):gsub('~', '') ~= players[t.steamid].name then
+		local mangle_name_for_comparing = function (name)
+			name = name:gsub('%%', '')
+			name = name:gsub('~', '')
+			name = name:gsub('^#', '', 1)
+			-- maximum length on steam is 32, in-game it's 31
+			-- ignore the last 4 bytes in case it's a utf-8 character that got truncated
+			-- (not sure if this happens, haven't tested it)
+			name = name:sub(1, 32-4)
+			return name
+		end
+		if mangle_name_for_comparing(t.personaname)
+		   ~= mangle_name_for_comparing(players[t.steamid].name) then
 			complain('steam name differs: %s', printableish(t.personaname))
 		end
 		if bad_steamids_old[players[t.steamid].steamid] then
@@ -946,9 +966,6 @@ cmd.kptadpb = function (_, key)
 		or name:find('\n') then
 			return true
 		end
-		if t.name == 'CREATORS.TF BOT' then
-			return true
-		end
 		if bad_steamids_old[t.steamid] then
 			return true
 		end
@@ -962,15 +979,43 @@ cmd.kptadpb = function (_, key)
 	end
 	local playerlist = get_playerlist()
 	local mysteamid = assert(find_own_steamid(playerlist), 'failed to get own steamid')
-	local myteam = get_team(mysteamid)
+	local myteam = assert(get_team(mysteamid), 'failed to get own team')
 	local bots = {}
+	local myteam_humans = 0
+	local myteam_robots = 0
 	for _, t in ipairs(playerlist) do
-		if check(t) and ((not myteam) or get_team(t.steamid) == myteam) then
-			table.insert(bots, t)
+		local team = get_team(t.steamid) --, 'failed to get team for '..t.steamid)
+		if (not team) or team == myteam then
+			local is_bot = check(t)
+			if is_bot then
+				table.insert(bots, t)
+				myteam_robots = (myteam_robots + 1)
+			else
+				myteam_humans = (myteam_humans + 1)
+			end
 		end
 		bad_steamids_check_status_entry(t.name, t.steamid)
 	end
+	-- is the vote doomed to fail?
+	-- this is to avoid wasting votes since there's a cooldown
+	local doomed = false
 	if #bots > 0 then
+		if myteam_humans < 5 then
+			-- votes need at least 6 participants to work
+			-- target automatically votes no for itself, so need to have at least 5 competent humans to vote yes
+			doomed = true
+			cmd.echof('kptadpb: vote won\'t pass (not enough participants)')
+			cmd.voicemenu(2, 5)
+		end
+		if not (myteam_humans > myteam_robots) then
+			-- need to have at least one more yes vote than no votes for the vote to pass
+			-- this vote will fail assuming all the bots vote no
+			doomed = true
+			cmd.echof('kptadpb: vote won\'t pass (bots outnumber humans)')
+			cmd.voicemenu(2, 5)
+		end
+	end
+	if #bots > 0 and not doomed then
 		for _, t in ipairs(bots) do
 			cmdv.callvote('kick', string.format('%d cheating', t.id))
 		end
@@ -983,6 +1028,9 @@ cmd.kptadpb = function (_, key)
 			end
 		end
 	else
+		if #bots == 0 then
+			cmd.voicemenu(2, 4)
+		end
 		if bind_press_time and bind_press_time == is_pressed[key] then
 			if not wait_for_event('-'..key, 100) then
 				return cmd.kptadpb(_, key)
@@ -1001,25 +1049,6 @@ cmd.kms = function ()
 		end
 		bad_steamids_check_status_entry(t.name, t.steamid)
 	end
-end
-
-cmd.mute = function () cvar.voice_scale = 0.1 end
-cmd.unmute = function () cvar.voice_scale = 0.5 end
-
-do
-local myname = nil
-local pat = nil
-add_listener('classchange', function ()
-	myname = cvar.name
-	if myname then
-		pat = '^'..myname..' killed '
-	end
-end)
-add_listener('game_console_output', function (line)
-	if pat and line:find(pat) then
-		cmd('+use_action_slot_item')
-	end
-end)
 end
 
 --------------------------------------------------------------------------------

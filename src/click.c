@@ -50,20 +50,21 @@ void do_click(void) {
 
 static bool click_set_key(const char *name);
 
-__attribute__((cold))
 void click_init(void) {
 	pthread_mutex_lock(&click_lock);
+
 	display = XOpenDisplay(NULL);
 	if (display == NULL) {
 		eprintln("click: failed to open display!");
-		goto out_locked;
+		goto out;
 	}
+
 	click_set_key("f11");
-out_locked:
+
+out:
 	pthread_mutex_unlock(&click_lock);
 }
 
-__attribute__((cold))
 void click_deinit(void) {
 	pthread_mutex_lock(&click_lock);
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
@@ -116,15 +117,16 @@ static void *click_thread(void *msp) {
 
 static void click_at(double ms) {
 	void *msp;
-	pthread_t thread;
-
 	_Static_assert(sizeof(msp) >= sizeof(ms));
 	memcpy(&msp, &ms, sizeof(double));
+
+	pthread_t thread;
 	int err = pthread_create(&thread, NULL, click_thread, msp);
 	if (unlikely(err != 0)) {
 V		eprintln("click_at: pthread_create: %s", strerror(err));
 		return;
 	}
+
 	pthread_detach(thread);
 }
 
@@ -174,8 +176,7 @@ static int l_click_set_key(lua_State *L) {
 }
 
 __attribute__((cold))
-void click_init_lua(void *L_) {
-	lua_State *L = (lua_State *)L_;
+void click_init_lua(void *L) {
 	 lua_pushcfunction(L, l_click);
 	lua_setglobal(L, "_click");
 	 lua_pushcfunction(L, l_click_after);

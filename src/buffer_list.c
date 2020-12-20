@@ -33,7 +33,7 @@ static bool buffer_may_add_line(const struct buffer *self, size_t sz) {
 static void buffer_add_line(struct buffer *restrict self,
                             const char *buf,
                             size_t sz) {
-	char *p = (char *)self->data+self->size;
+	char *p = ((char *)self->data)+self->size;
 	self->size += sz+1;
 	p[sz] = '\n';
 	memcpy(p, buf, sz);
@@ -45,7 +45,7 @@ static void buffer_make_full(struct buffer *self) {
 D	assert(!self->full);
 	self->full = true;
 
-	char *p = (char *)self->data+self->size;
+	char *p = ((char *)self->data)+self->size;
 	self->size += strlen(cfg_exec_next_cmd "\n");
 	memcpy(p, cfg_exec_next_cmd "\n", strlen(cfg_exec_next_cmd "\n"));
 	// i think this should just use buffer_add_line() after all
@@ -103,9 +103,9 @@ D			assert(self->nonfull != ent);
 
 #define buffer_new() \
 	({ \
-	struct buffer *_new_ent = (struct buffer *)calloc(1, sizeof(struct buffer) + reported_cfg_size); \
-	_new_ent->data = (char *)_new_ent + sizeof(struct buffer); \
-	_new_ent; \
+		struct buffer *_new_ent = calloc(1, (sizeof(struct buffer) + reported_cfg_size)); \
+		_new_ent->data = ((char *)_new_ent + sizeof(struct buffer)); \
+		_new_ent; \
 	})
 
 static struct buffer *buffer_list_get_nonfull(struct buffer_list *self) {

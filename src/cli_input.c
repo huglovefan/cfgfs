@@ -102,9 +102,8 @@ static void winch_handler(int signal) {
 #define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
 
 __attribute__((cold))
-static void *cli_main(void *ud) {
+static void *cli_main(void *L) {
 	set_thread_name("cli");
-	lua_State *L = (lua_State *)ud;
 	g_L = L;
 
 	signal(SIGWINCH, winch_handler);
@@ -177,7 +176,6 @@ out:
 
 static pthread_t thread;
 
-__attribute__((cold))
 void cli_input_init(void *L) {
 	if (thread != 0) return;
 	if (!isatty(STDIN_FILENO)) return;
@@ -199,7 +197,6 @@ err:
 	thread = 0;
 }
 
-__attribute__((cold))
 void cli_input_deinit(void) {
 	if (thread == 0) return;
 
@@ -225,9 +222,7 @@ static int l_set_prompt(lua_State *L) {
 	return 0;
 }
 
-__attribute__((cold))
-void cli_input_init_lua(void *L_) {
-	lua_State *L = (lua_State *)L_;
+void cli_input_init_lua(void *L) {
 	 lua_pushcfunction(L, l_set_prompt);
 	lua_setglobal(L, "_set_prompt");
 }

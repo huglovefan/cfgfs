@@ -42,7 +42,7 @@ static enum wordflags check_word(const char *s, size_t len) {
 
 __attribute__((constructor))
 static void _init_badchars(void) {
-	//set_range(0, 31, wf_needs_quotes); // replaced with ? which doesn't need quotes
+	set_range(0, 31, wf_needs_quotes);
 	set(9, wf_needs_quotes);
 	set(32, wf_needs_quotes);
 	set_range(39, 41, wf_needs_quotes);
@@ -83,6 +83,8 @@ static int l_cmd(lua_State *L) {
 		qr_default = 0,
 		// special quoting mode for the say command's manual command line parsing
 		qr_say = 1,
+		// for echo, pastes multiple arguments into one to reduce jumbling
+		qr_echo = 2,
 	} rules = qr_default;
 	if (unlikely(cnt == 0)) {
 		return 0;
@@ -95,6 +97,7 @@ static int l_cmd(lua_State *L) {
 		if (i == 0 && cnt > 1) {
 			// only use special rules if there's at least one argument
 			if (words[0].len == 3 && strncmp(words[0].s, "say", 3) == 0) rules = qr_say;
+			if (words[0].len == 4 && strncmp(words[0].s, "echo", 4) == 0) rules = qr_echo;
 			if (words[0].len == 8 && strncmp(words[0].s, "say_team", 8) == 0) rules = qr_say;
 		}
 		words[i].flags = check_word(words[i].s, words[i].len);
@@ -122,6 +125,11 @@ static int l_cmd(lua_State *L) {
 			// what i mean to say is that it's always the word length + 1
 			total_len += words[i].len+1;
 			break;
+		case qr_echo:
+			// [ECHO"ARG1] -> [ECHO]["ARG1]
+			// [ECHO"ARG1 ARG2] -> [ECHO]["ARG1][ ARG2]
+			total_len += words[i].len+(i>=1);
+			break;
 		}
 	}
 	if (total_len > 0) {
@@ -148,7 +156,7 @@ static int l_cmd(lua_State *L) {
 					if (unlikely(words[i].flags&wf_contains_evil_char)) {
 						char *buf_ = buf-(words[i].len+((i!=top-2&&words[i].flags&wf_needs_quotes)?1:0));
 						for (size_t j = 0; j < words[i].len; j++) {
-							if (buf_[j] < 32 && buf_[j] != 9) buf_[j] = '?';
+							if (buf_[j] < 32 && buf_[j] != 9) buf_[j] = /*DEL*/ 0x7f;
 							if (buf_[j] == '"') buf_[j] = '\'';
 						}
 					}
@@ -167,11 +175,30 @@ static int l_cmd(lua_State *L) {
 					if (unlikely(words[i].flags&wf_contains_evil_char)) {
 						char *buf_ = buf-words[i].len;
 						for (size_t j = 0; j < words[i].len; j++) {
-							if (buf_[j] < 32 && buf_[j] != 9) buf_[j] = '?';
+							if (buf_[j] < 32 && buf_[j] != 9) buf_[j] = /*DEL*/ 0x7f;
 						}
 					}
 				}
 				*buf++ = '"';
+				break;
+			case qr_echo:
+				memcpy(buf, words[0].s, words[0].len);
+				buf += words[0].len;
+				*buf++ = '"';
+				for (int i = 1; i < cnt; i++) {
+					if (i >= 2) {
+						*buf++ = ' ';
+					}
+					memcpy(buf, words[i].s, words[i].len);
+					buf += words[i].len;
+					if (unlikely(words[i].flags&wf_contains_evil_char)) {
+						char *buf_ = buf-words[i].len;
+						for (size_t j = 0; j < words[i].len; j++) {
+							if (buf_[j] < 32 && buf_[j] != 9) buf_[j] = /*DEL*/ 0x7f;
+							if (buf_[j] == '"') buf_[j] = '\'';
+						}
+					}
+				}
 				break;
 			}
 			*buf++ = '\n';
@@ -206,8 +233,7 @@ toolong:
 
 // -----------------------------------------------------------------------------
 
-void cfg_init_lua(void *L_) {
-	lua_State *L = (lua_State *)L_;
+void cfg_init_lua(void *L) {
 	 lua_pushcfunction(L, l_cfg);
 	lua_setglobal(L, "_cfg");
 	 lua_pushcfunction(L, l_cmd);

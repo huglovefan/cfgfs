@@ -1,7 +1,6 @@
 #SANITIZER := -fsanitize=address,undefined
 #SANITIZER := -fsanitize=thread,undefined
-CC        := $(shell if [ -n "$$CC" ]; then echo $$CC; elif command -v clang >/dev/null 2>&1; then echo clang; else echo cc; fi)
-CCACHE    := $(shell if command -v ccache >/dev/null 2>&1; then echo ccache; fi)
+CC        := $(shell echo $${CC:-clang})
 
 CFLAGS ?= -Ofast -g
 
@@ -23,7 +22,7 @@ OBJS = src/main.o \
        src/click.o \
        src/attention.o
 DEPS = $(OBJS:.o=.d)
-SRCS := $(shell for f in $(OBJS); do ls $${f%.o}.c || ls $${f%.o}.cpp; done 2>/dev/null)
+SRCS = $(OBJS:.o=.c)
 
 # make it make dependency files for make
 CPPFLAGS += -MMD -MP
@@ -49,18 +48,13 @@ CFLAGS += -Weverything \
           -Wno-reserved-id-macro \
           -Wno-vla
 
-# idiot compiling in c++ mode
-CXXFLAGS += -fno-exceptions
-ifneq (,$(findstring ++,$(CC)))
- CFLAGS += $(CXXFLAGS)
- CFLAGS += -Wno-address-of-temporary \
-           -Wno-c++98-compat-pedantic \
-           -Wno-c11-extensions \
-           -Wno-c99-extensions \
-           -Wno-deprecated \
-           -Wno-old-style-cast \
-           -Wno-zero-as-null-pointer-constant
- CPPFLAGS += -Drestrict=
+ifneq (,$(findstring clang,$(CC)))
+ ifneq (,$(findstring -flto=thin,$(CFLAGS)))
+  ifneq (,$(findstring lld,$(LD)))
+   LDFLAGS += -Wl,--thinlto-cache-dir=.thinlto-cache
+   LDFLAGS += -Wl,--thinlto-cache-policy=cache_size_bytes=500m
+  endif
+ endif
 endif
 
 # ------------------------------------------------------------------------------
@@ -155,8 +149,6 @@ $(EXE): $(OBJS)
 -include $(DEPS)
 .c.o:
 	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
-.cpp.o:
-	$(CXX) -c $(CPPFLAGS) $(CXXFLAGS) $< -o $@
 
 # ~
 

@@ -40,14 +40,13 @@ enum msg_action {
 
 #define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
 
-__attribute__((cold))
 static bool wait_for_event(const char *path, int fd) {
 	bool success = false;
 
 	// just re-add the watch each time
 	// some editors replace the file instead of modifying the existing one
 	int wd = inotify_add_watch(fd, path, IN_MODIFY);
-	check_minus1(wd, "reloader: inotify_add_watch", return false);
+	check_minus1(wd, "reloader: inotify_add_watch", goto out);
 
 	struct pollfd fds[2] = {
 		{.fd = fd,         .events = POLLIN},
@@ -83,7 +82,6 @@ out:
 	return success;
 }
 
-__attribute__((cold))
 static void do_reload(lua_State *L) {
 	LUA_LOCK();
 
@@ -111,18 +109,16 @@ static void do_reload(lua_State *L) {
 // -----------------------------------------------------------------------------
 
 __attribute__((cold))
-static void *reloader_main(void *ud) {
+static void *reloader_main(void *L) {
 	set_thread_name("reloader");
-	lua_State *L = (lua_State *)ud;
 
-	const char *filename;
 	int fd = inotify_init();
 	check_minus1(
 	    fd,
 	    "reloader: inotify_init",
 	    goto out);
 
-	filename = (getenv("CFGFS_SCRIPT") ?: "./script.lua");
+	const char *filename = (getenv("CFGFS_SCRIPT") ?: "./script.lua");
 	while (wait_for_event(filename, fd)) {
 		do_reload(L);
 	}
@@ -135,7 +131,6 @@ out:
 
 static pthread_t thread;
 
-__attribute__((cold))
 void reloader_init(void *L) {
 	if (thread != 0) return;
 
@@ -156,7 +151,6 @@ err:
 	thread = 0;
 }
 
-__attribute__((cold))
 void reloader_deinit(void) {
 	if (thread == 0) return;
 

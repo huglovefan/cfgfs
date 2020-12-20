@@ -68,6 +68,12 @@ void main_quit(void) {
 // have_file: check if a file exists (and get its type)
 // returns 0xd (dir), 0xf (file) or a negative errno value
 
+enum special_file_type {
+	sft_none = 0,
+	sft_console_log = 1,
+	sft_control = 2,
+};
+
 static int l_have_file(const char *restrict path);
 
 #define starts_with(self, other) \
@@ -76,8 +82,12 @@ static int l_have_file(const char *restrict path);
 #define ends_with(self, other) \
 	(memcmp(self+length-strlen(other), other, strlen(other)) == 0)
 
+#define equals(self, other) \
+	(length == strlen(other) && \
+	 memcmp(self, other, length) == 0)
+
 __attribute__((always_inline))
-static int have_file(const char *restrict path) {
+static int have_file(const char *restrict path, enum special_file_type *type) {
 	const char *slashdot;
 	slashdot = *&slashdot; // not uninitialized
 	const char *p = path;
@@ -98,7 +108,12 @@ static int have_file(const char *restrict path) {
 //		return -ENOENT;
 //	}
 	if (unlikely(!ends_with(path, ".cfg"))) {
-		if (unlikely(strcmp(path, "/console.log") == 0)) {
+		if (unlikely(equals(path, "/console.log"))) {
+			if (type) *type = sft_console_log;
+			return 0xf;
+		}
+		if (unlikely(equals(path, "/.control"))) {
+			if (type) *type = sft_control;
 			return 0xf;
 		}
 		return -ENOENT;
@@ -113,14 +128,11 @@ static int have_file(const char *restrict path) {
 
 #undef starts_with
 #undef ends_with
+#undef equals
 
 __attribute__((noinline))
 static int l_have_file(const char *restrict path) {
 	int rv = 0xf;
-
-	if (unlikely(strcmp(path, "/.control") == 0)) {
-		return 0xf;
-	}
 
 	if (unlikely(!LUA_TRYLOCK())) {
 		if (!unlikely(LUA_TIMEDLOCK(1.0))) {
@@ -129,19 +141,17 @@ static int l_have_file(const char *restrict path) {
 	}
 
 	lua_State *L = get_state();
-	int64_t cnt;
-	bool blacklisted;
 
 	 lua_pushvalue(L, UNMASK_NEXT_IDX);
 	  lua_getfield(L, -1, path+1); // skip "/"
-	  cnt = lua_tointeger(L, -1);
+	  lua_Integer cnt = lua_tointeger(L, -1);
 	  if (unlikely(cnt != 0)) {
 		   cnt -= 1;
 		   lua_pushstring(L, path+1); // skip "/"
 		    lua_pushinteger(L, cnt);
 		  lua_rawset(L, -4);
 		lua_pop(L, 2);
-VV		eprintln("unmask_next[%s]: %ld -> %ld", path+1, cnt+1, cnt);
+VV		eprintln("unmask_next[%s]: %lld -> %lld", path+1, cnt+1, cnt);
 		rv = -ENOENT;
 		goto out_locked;
 	  }
@@ -149,7 +159,7 @@ VV		eprintln("unmask_next[%s]: %ld -> %ld", path+1, cnt+1, cnt);
 
 	 lua_pushvalue(L, CFG_BLACKLIST_IDX);
 	  lua_getfield(L, -1, path+1); // skip "/"
-	  blacklisted = lua_toboolean(L, -1);
+	  bool blacklisted = lua_toboolean(L, -1);
 	lua_pop(L, 2);
 	if (unlikely(blacklisted)) {
 		rv = -ENOENT;
@@ -170,20 +180,18 @@ static int cfgfs_getattr(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_getattr: %s", path);
 
-	int rv = have_file(path);
-	if (unlikely(rv < 0)) return rv; // <-- shouldn't this be after the next statement?
-
-	stbuf->st_size = reported_cfg_size;
+	int rv = have_file(path, NULL);
 
 	if (rv == 0xf) {
 		stbuf->st_mode = 0444|S_IFREG;
+		stbuf->st_size = reported_cfg_size;
 		return 0;
 	} else if (rv == 0xd) {
 		stbuf->st_mode = 0555|S_IFDIR;
 		return 0;
 	} else {
-D		assert(0);
-		__builtin_unreachable();
+D		assert(rv < 0);
+		return rv;
 	}
 }
 
@@ -195,12 +203,16 @@ static int cfgfs_open(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_open: %s", path);
 
-	int rv = have_file(path);
-	if (rv == 0xf) return 0;
-	if (rv < 0) return rv;
-	if (rv == 0xd) return -EISDIR;
-D	assert(0);
-	__builtin_unreachable();
+	int rv = have_file(path, (enum special_file_type *)&fi->fh);
+
+	if (rv == 0xf) {
+		return 0;
+	} else if (rv == 0xd) {
+		return -EISDIR;
+	} else {
+D		assert(rv < 0);
+		return rv;
+	}
 }
 
 // ~
@@ -242,16 +254,13 @@ D		assert(0);
 	lua_call(L, 1, 0);
 
 	if (likely(!silent)) {
-D		assert(buffers.first != NULL); // nothing should've removed it
-		assume(buffers.first != NULL); // optimize away the check
 		struct buffer *ent = buffer_list_grab_first(&buffers);
-		if (likely(ent != NULL)) {
-			size_t outsize = buffer_get_size(ent);
-			rv = (int)outsize;
-			if (unlikely(ent != &fakebuf)) {
-				buffer_memcpy_to(ent, buf, outsize);
-				buffer_free(ent);
-			}
+D		assert(ent != NULL); // nothing should've removed it
+		size_t outsize = buffer_get_size(ent);
+		rv = (int)outsize;
+		if (unlikely(ent != &fakebuf)) {
+			buffer_memcpy_to(ent, buf, outsize);
+			buffer_free(ent);
 		}
 	}
 	LUA_UNLOCK();
@@ -271,27 +280,7 @@ D		assert(buffers.first != NULL); // nothing should've removed it
 
 // ~
 
-// maximum value for size seems to be 8192
-// if the contents are bigger than that, it's written in multiple 8192-byte parts
-// don't want to paste them together so just use it as a size limit
-// should find out where the number comes from if it's system-dependent
-
-static void control_do_line(const char *, size_t);
-
-__attribute__((cold))
-static int cfgfs_write(const char *path,
-                       const char *data,
-                       size_t size,
-                       off_t offset,
-                       struct fuse_file_info *fi) {
-	(void)fi;
-V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
-{
-	static pthread_mutex_t logcatcher_lock = PTHREAD_MUTEX_INITIALIZER;
-	static char logbuffer[0xffff];
-	static char *p = logbuffer;
-	bool lua_locked = false;
-	lua_State *L = get_state();
+static int cfgfs_write_control(const char *data, size_t size, off_t offset);
 
 #define log_catcher_got_line(p, sz) \
 	({ \
@@ -301,57 +290,73 @@ V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 		lua_call(L, 1, 0); \
 	})
 
-	if (likely(strcmp(path, "/console.log") == 0)) {
-		pthread_mutex_lock(&logcatcher_lock);
+__attribute__((hot))
+static int cfgfs_write(const char *path,
+                       const char *data,
+                       size_t size,
+                       off_t offset,
+                       struct fuse_file_info *fi) {
+	(void)fi;
+V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
+
+	switch ((enum special_file_type)fi->fh) {
+	case sft_console_log: {
+		static pthread_mutex_t logcatcher_lock = PTHREAD_MUTEX_INITIALIZER;
+		static char logbuffer[8192];
+		static char *p = logbuffer;
+		bool lua_locked = false;
+		lua_State *L = get_state();
+
+		// """in theory""" this shouldn't need a lock since tf2 will only write one thing at a time
+D		assert(0 == pthread_mutex_trylock(&logcatcher_lock));
 		size_t insize = size;
 		if (likely(size >= 2 && data[size-1] == '\n')) {
 			// writing a full line in one go
-			// may contain embedded newlines, don't bother splitting it up
+			// may contain embedded newlines but that is ok
 			log_catcher_got_line(data, size-1);
-		} else while (size != 0) {
-			// idiot writing it in multiple parts
-			if (p == logbuffer) {
-				// nothing in the buffer yet
-				char *nl = memchr(data, '\n', size);
-				if (nl != NULL) {
-					// data contains at least one complete line
-					size_t partlen = (size_t)(nl-data);
-					log_catcher_got_line(data, partlen);
-					data += partlen+1;
-					size -= partlen+1;
-				} else {
-					// incoming data is not a complete line, save it to the buffer and get out
-					memcpy(p, data, size);
-					p += size;
-					goto over;
-				}
+		} else do {
+			// idiot writing a line in multiple parts
+			// the "echo" command does this
+			char *nl = memchr(data, '\n', size);
+			if (likely(nl == NULL)) {
+				// incoming data doesn't complete a line. add it to the buffer and get out
+				memcpy(p, data, size);
+				p += size;
+				break;
 			} else {
-				// already have a part of a line in the buffer
-				char *nl = memchr(data, '\n', size);
-				if (nl != NULL) {
-					// the new data completes the line
-					size_t partlen = (size_t)(nl-data);
-					memcpy(p, data, partlen);
-					p += partlen;
-					log_catcher_got_line(logbuffer, (size_t)(p-logbuffer));
-					data += partlen+1;
-					size -= partlen+1;
-					p = logbuffer;
-				} else {
-					// incoming data is a continuation of the incomplete line
-					memcpy(p, data, size);
-					p += size;
-					goto over;
-				}
+				// incoming data completes a line
+				size_t partlen = (size_t)(nl-data);
+				memcpy(p, data, partlen);
+				log_catcher_got_line(logbuffer, (size_t)(p-logbuffer)+partlen);
+				data += partlen+1;
+				size -= partlen+1;
+				p = logbuffer;
 			}
-		}
-over:
+		} while (unlikely(size != 0));
 		if (lua_locked--) opportunistic_click_and_unlock();
-		pthread_mutex_unlock(&logcatcher_lock);
+D		pthread_mutex_unlock(&logcatcher_lock);
 		return (int)insize;
 	}
+	case sft_control:
+		return cfgfs_write_control(data, size, offset);
+	case sft_none:
+		return -EINVAL;
+	}
+D	assert(0);
+	__builtin_unreachable();
 }
-	if (strcmp(path, "/.control") != 0) return -ENOTSUP;
+
+#undef log_catcher_got_line
+
+// ~
+
+static void control_do_line(const char *line, size_t size);
+
+__attribute__((cold))
+__attribute__((noinline))
+static int cfgfs_write_control(const char *data,
+                               size_t size,
+                               off_t offset) {
 	if (size == 8192) return -EMSGSIZE; // might be truncated
 	if (offset != 0) return -EINVAL;
 	if (!LUA_TIMEDLOCK(3.0)) return -EBUSY;
@@ -365,12 +370,11 @@ over:
 	}
 
 	opportunistic_click_and_unlock();
-
 	return (int)size;
 }
 
 static void control_do_line(const char *line, size_t size) {
-V	eprintln("cfgfs_write: line=[%s]", line);
+V	eprintln("control_do_line: line=[%s]", line);
 	lua_State *L = get_state();
 	 lua_getglobal(L, "_control");
 	  lua_pushlstring(L, line, size);
@@ -420,7 +424,6 @@ static const struct fuse_operations cfgfs_oper = {
 	.init = cfgfs_init,
 };
 
-__attribute__((cold))
 int main(int argc, char **argv) {
 
 #if defined(SANITIZER)
@@ -509,20 +512,20 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 	// see lua.h
 
 	 lua_getglobal(L, "_get_contents");
-	 assert(lua_gettop(L) == GET_CONTENTS_IDX);
-	 assert(lua_type(L, GET_CONTENTS_IDX) == LUA_TFUNCTION);
+D	 assert(lua_gettop(L) == GET_CONTENTS_IDX);
+D	 assert(lua_type(L, GET_CONTENTS_IDX) == LUA_TFUNCTION);
 	  lua_getglobal(L, "unmask_next");
-	  assert(lua_gettop(L) == UNMASK_NEXT_IDX);
-	  assert(lua_type(L, UNMASK_NEXT_IDX) == LUA_TTABLE);
+D	  assert(lua_gettop(L) == UNMASK_NEXT_IDX);
+D	  assert(lua_type(L, UNMASK_NEXT_IDX) == LUA_TTABLE);
 	   lua_getglobal(L, "_game_console_output");
-	   assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
-	   assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
+D	   assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
+D	   assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
 	    lua_getglobal(L, "cfgfs");
 	     lua_getfield(L, -1, "intercept_blacklist");
 	     lua_rotate(L, -2, 1);
 	    lua_pop(L, 1);
-	    assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
-	    assert(lua_type(L, CFG_BLACKLIST_IDX) == LUA_TTABLE);
+D	    assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
+D	    assert(lua_type(L, CFG_BLACKLIST_IDX) == LUA_TTABLE);
 
 	buffer_list_swap(&buffers, &init_cfg);
 

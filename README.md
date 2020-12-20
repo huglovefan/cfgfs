@@ -33,7 +33,7 @@ end
 
 ## Supported games
 
-- Team Fortress 2
+- [Team Fortress 2](https://arch-img.b4k.co/vg/1607779368100.png)
 - Fistful of Frags
 - *probably others if you test them*
 
