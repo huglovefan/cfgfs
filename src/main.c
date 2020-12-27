@@ -2,11 +2,13 @@
 
 #include <errno.h>
 #include <float.h>
+#include <malloc.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #pragma GCC diagnostic push
@@ -35,14 +37,6 @@
 #include "reloader.h"
 
 _Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
-
-// -----------------------------------------------------------------------------
-
-static lua_State *g_L;
-
-static lua_State *get_state(void) {
-	return g_L;
-}
 
 // -----------------------------------------------------------------------------
 
@@ -134,13 +128,7 @@ __attribute__((noinline))
 static int l_have_file(const char *restrict path) {
 	int rv = 0xf;
 
-	if (unlikely(!LUA_TRYLOCK())) {
-		if (!unlikely(LUA_TIMEDLOCK(1.0))) {
-			return -EBUSY;
-		}
-	}
-
-	lua_State *L = get_state();
+	lua_State *L = lua_get_state();
 
 	 lua_pushvalue(L, UNMASK_NEXT_IDX);
 	  lua_getfield(L, -1, path+1); // skip "/"
@@ -155,19 +143,18 @@ VV		eprintln("unmask_next[%s]: %lld -> %lld", path+1, cnt+1, cnt);
 		rv = -ENOENT;
 		goto out_locked;
 	  }
-	lua_pop(L, 2);
+	//lua_pop(L, 2); // combined below
 
 	 lua_pushvalue(L, CFG_BLACKLIST_IDX);
 	  lua_getfield(L, -1, path+1); // skip "/"
 	  bool blacklisted = lua_toboolean(L, -1);
-	lua_pop(L, 2);
+	lua_pop(L, 2+2);
 	if (unlikely(blacklisted)) {
 		rv = -ENOENT;
 		goto out_locked;
 	}
 out_locked:
-D	assert(stack_is_clean(L));
-	LUA_UNLOCK();
+	lua_release_state_no_click(L);
 	return rv;
 }
 
@@ -238,17 +225,16 @@ D		assert(0);
 		__builtin_unreachable();
 	}
 
-	LUA_LOCK();
-
 	// /unmask_next/ must not return buffer contents (can mess up the order)
 	bool silent = starts_with(path, "/cfgfs/unmask_next/");
+
+	lua_State *L = lua_get_state();
 
 	struct buffer fakebuf;
 	if (likely(!silent)) {
 		buffer_list_maybe_unshift_fake_buf(&buffers, &fakebuf, buf);
 	}
 
-	lua_State *L = get_state();
 	 lua_pushvalue(L, GET_CONTENTS_IDX);
 	  lua_pushstring(L, path);
 	lua_call(L, 1, 0);
@@ -263,7 +249,7 @@ D		assert(ent != NULL); // nothing should've removed it
 			buffer_free(ent);
 		}
 	}
-	LUA_UNLOCK();
+	lua_release_state_no_click(L);
 	VV {
 		if (rv >= 0) {
 			char tmp = exchange(buf[(size_t)rv], '\0');
@@ -284,7 +270,8 @@ static int cfgfs_write_control(const char *data, size_t size, off_t offset);
 
 #define log_catcher_got_line(p, sz) \
 	({ \
-		if (!lua_locked++) LUA_LOCK(); \
+		if (!lua_locked++) lua_lock_state(); \
+		lua_State *L = lua_get_state_already_locked(); \
 		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX); \
 		  lua_pushlstring(L, (p), (sz)); \
 		lua_call(L, 1, 0); \
@@ -299,48 +286,46 @@ static int cfgfs_write(const char *path,
 	(void)fi;
 V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
-	switch ((enum special_file_type)fi->fh) {
+	switch (*(enum special_file_type *)&fi->fh) {
 	case sft_console_log: {
 		static pthread_mutex_t logcatcher_lock = PTHREAD_MUTEX_INITIALIZER;
 		static char logbuffer[8192];
 		static char *p = logbuffer;
 		bool lua_locked = false;
-		lua_State *L = get_state();
+		size_t insize = size;
 
 		// """in theory""" this shouldn't need a lock since tf2 will only write one thing at a time
 D		assert(0 == pthread_mutex_trylock(&logcatcher_lock));
-		size_t insize = size;
 		if (likely(size >= 2 && data[size-1] == '\n')) {
 			// writing a full line in one go
-			// may contain embedded newlines but that is ok
+			// may contain embedded newlines
 			log_catcher_got_line(data, size-1);
 		} else do {
 			// idiot writing a line in multiple parts
-			// the "echo" command does this
 			char *nl = memchr(data, '\n', size);
 			if (likely(nl == NULL)) {
 				// incoming data doesn't complete a line. add it to the buffer and get out
 				memcpy(p, data, size);
 				p += size;
-				break;
+				size = 0;
 			} else {
 				// incoming data completes a line
 				size_t partlen = (size_t)(nl-data);
 				memcpy(p, data, partlen);
 				log_catcher_got_line(logbuffer, (size_t)(p-logbuffer)+partlen);
+				p = logbuffer;
 				data += partlen+1;
 				size -= partlen+1;
-				p = logbuffer;
 			}
 		} while (unlikely(size != 0));
-		if (lua_locked--) opportunistic_click_and_unlock();
+		if (lua_locked) lua_unlock_state();
 D		pthread_mutex_unlock(&logcatcher_lock);
 		return (int)insize;
 	}
 	case sft_control:
 		return cfgfs_write_control(data, size, offset);
 	case sft_none:
-		return -EINVAL;
+		return -ENOTSUP;
 	}
 D	assert(0);
 	__builtin_unreachable();
@@ -359,7 +344,7 @@ static int cfgfs_write_control(const char *data,
                                off_t offset) {
 	if (size == 8192) return -EMSGSIZE; // might be truncated
 	if (offset != 0) return -EINVAL;
-	if (!LUA_TIMEDLOCK(3.0)) return -EBUSY;
+	lua_lock_state();
 
 	const char *p = data;
 	for (;;) {
@@ -369,13 +354,13 @@ static int cfgfs_write_control(const char *data,
 		p = c+1;
 	}
 
-	opportunistic_click_and_unlock();
+	lua_unlock_state();
 	return (int)size;
 }
 
 static void control_do_line(const char *line, size_t size) {
 V	eprintln("control_do_line: line=[%s]", line);
-	lua_State *L = get_state();
+	lua_State *L = lua_get_state_already_locked();
 	 lua_getglobal(L, "_control");
 	  lua_pushlstring(L, line, size);
 	lua_call(L, 1, 0);
@@ -426,6 +411,12 @@ static const struct fuse_operations cfgfs_oper = {
 
 int main(int argc, char **argv) {
 
+	// https://lwn.net/Articles/837019/
+	mallopt(M_MMAP_MAX, 0);
+	mallopt(M_TOP_PAD, 10*1024*1000);
+	mallopt(M_TRIM_THRESHOLD, 20*1024*1000);
+	mlockall(MCL_CURRENT|MCL_FUTURE);
+
 #if defined(SANITIZER)
 	eprintln("NOTE: cfgfs was built with %s", SANITIZER);
 #endif
@@ -437,8 +428,6 @@ int main(int argc, char **argv) {
 D	eprintln("NOTE: debug checks are enabled");
 V	eprintln("NOTE: verbose messages are enabled");
 VV	eprintln("NOTE: very verbose messages are enabled");
-
-	lua_State *L;
 
 	// ~ init fuse ~
 
@@ -490,56 +479,16 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 	}
 	g_main_thread = pthread_self();
 
-	// ~ boot up lua ~
+	// ~ init other things ~
 
-	L = lua_init();
-	g_L = L;
-
-	lua_pushstring(L, AGPL_SOURCE_URL); lua_setglobal(L, "agpl_source_url");
-	lua_pushstring(L, opts.mountpoint); lua_setglobal(L, "mountpoint");
-
-	if (luaL_loadfile(L, "./builtin.lua") != LUA_OK) {
-		eprintln("error: %s", lua_tostring(L, -1));
-		eprintln("failed to load builtin.lua!");
+	if (!lua_init()) {
 		res = 9;
 		goto out_fuse_newed_and_mounted_and_signals_handled;
 	}
-	 lua_call(L, 0, 1);
-	 if (!lua_toboolean(L, -1)) { res = 9; goto out_fuse_newed_and_mounted_and_signals_handled; }
-	lua_pop(L, 1);
-
-	// put these on the stack
-	// see lua.h
-
-	 lua_getglobal(L, "_get_contents");
-D	 assert(lua_gettop(L) == GET_CONTENTS_IDX);
-D	 assert(lua_type(L, GET_CONTENTS_IDX) == LUA_TFUNCTION);
-	  lua_getglobal(L, "unmask_next");
-D	  assert(lua_gettop(L) == UNMASK_NEXT_IDX);
-D	  assert(lua_type(L, UNMASK_NEXT_IDX) == LUA_TTABLE);
-	   lua_getglobal(L, "_game_console_output");
-D	   assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
-D	   assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
-	    lua_getglobal(L, "cfgfs");
-	     lua_getfield(L, -1, "intercept_blacklist");
-	     lua_rotate(L, -2, 1);
-	    lua_pop(L, 1);
-D	    assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
-D	    assert(lua_type(L, CFG_BLACKLIST_IDX) == LUA_TTABLE);
-
-	buffer_list_swap(&buffers, &init_cfg);
-
-	 lua_getglobal(L, "_fire_startup");
-	lua_call(L, 0, 0);
-
-	assert(stack_is_clean(L));
-
-	// ~ boot up threads ~
-
-	attention_init(L);
-	cli_input_init(L);
+	attention_init();
+	cli_input_init();
 	click_init();
-	reloader_init(L);
+	reloader_init();
 
 	// ~ boot up fuse ~
 
@@ -562,16 +511,11 @@ out_fuse_newed_and_mounted:
 out_fuse_newed:
 	fuse_destroy(fuse);
 out_no_fuse:
-	if (g_L != NULL) {
-		 lua_getglobal(g_L, "_fire_unload");
-		  lua_pushboolean(g_L, 1);
-		lua_call(g_L, 1, 0);
-	}
+	lua_deinit();
 	attention_deinit();
 	cli_input_deinit();
 	click_deinit();
 	reloader_deinit();
-	if (g_L != NULL) lua_close(exchange(g_L, NULL));
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
 	if (unlink(".cfgfs_reexec") == 0) {

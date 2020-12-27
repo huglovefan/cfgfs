@@ -11,7 +11,7 @@ extern _Atomic(bool) cli_reading_line;
 // so locking that way is undefined behavior
 // -- any other thing that would work to make it properly safe?
 
-void cli_input_init(void *L);
+void cli_input_init(void);
 void cli_input_deinit(void);
 
 void cli_input_init_lua(void *L);

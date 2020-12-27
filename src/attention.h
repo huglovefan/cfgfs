@@ -7,7 +7,7 @@ enum attn {
 };
 extern _Atomic(enum attn) game_window_is_active;
 
-void attention_init(void *L);
+void attention_init(void);
 void attention_deinit(void);
 
 void attention_init_lua(void *L);

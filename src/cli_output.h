@@ -15,4 +15,8 @@ void cli_unlock_output(void);
 
 // these just take the lock (for internal use by cli_input.c)
 void cli_lock_output_nosave(void);
+_Bool cli_trylock_output_nosave(void);
 void cli_unlock_output_norestore(void);
+
+void cli_save_prompt_locked(void);
+void cli_restore_prompt_locked(void);

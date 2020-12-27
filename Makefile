@@ -8,7 +8,7 @@ STATIC_LIBFUSE := 1
 
 # ------------------------------------------------------------------------------
 
-EXE := $(shell echo $${PWD\#\#*/})
+EXE := $(shell echo $${PWD##*/})
 
 OBJS = src/main.o \
        src/buffer_list.o \

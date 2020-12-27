@@ -82,8 +82,8 @@ out:
 	return success;
 }
 
-static void do_reload(lua_State *L) {
-	LUA_LOCK();
+static void do_reload(void) {
+	lua_State *L = lua_get_state();
 
 	buffer_list_reset(&buffers);
 	buffer_list_reset(&init_cfg);
@@ -103,13 +103,14 @@ static void do_reload(lua_State *L) {
 	  lua_rotate(L, -2, 1);
 	 lua_pop(L, 1);
 
-	opportunistic_click_and_unlock();
+	lua_release_state(L);
 }
 
 // -----------------------------------------------------------------------------
 
 __attribute__((cold))
-static void *reloader_main(void *L) {
+static void *reloader_main(void *ud) {
+	(void)ud;
 	set_thread_name("reloader");
 
 	int fd = inotify_init();
@@ -120,7 +121,7 @@ static void *reloader_main(void *L) {
 
 	const char *filename = (getenv("CFGFS_SCRIPT") ?: "./script.lua");
 	while (wait_for_event(filename, fd)) {
-		do_reload(L);
+		do_reload();
 	}
 out:
 	if (fd != -1) close(fd);
@@ -131,7 +132,7 @@ out:
 
 static pthread_t thread;
 
-void reloader_init(void *L) {
+void reloader_init(void) {
 	if (thread != 0) return;
 
 	check_minus1(
@@ -140,7 +141,7 @@ void reloader_init(void *L) {
 	    goto err);
 
 	check_errcode(
-	    pthread_create(&thread, NULL, reloader_main, (void *)L),
+	    pthread_create(&thread, NULL, reloader_main, NULL),
 	    "reloader: pthread_create",
 	    goto err);
 

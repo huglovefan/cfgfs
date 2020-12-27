@@ -49,17 +49,6 @@ end
 
 --------------------------------------------------------------------------------
 
-local gd, gn = mountpoint:match('^(.+/steamapps/common/([^/]+)/[^/]+)/custom/[^/]+/cfg$')
-if gd then
-	println('recognized game: %s', gn)
-	gamedir = gd
-else
-	println('note: mounted outside game directory')
-	gamedir = false
-end
-
---------------------------------------------------------------------------------
-
 -- helper for defining globals in script.lua that persist across reloads
 -- usage:
 --   varname = global('varname', 'default value if it wasn\'t defined before')
@@ -111,7 +100,7 @@ local init_settings = function ()
 	cfgfs = {
 		-- output the "initial output" of script.lua when it's reloaded
 		-- (should only disable if you're testing things manually and it gets in the way)
-		init_on_reload = (gamedir) and true or false,
+		init_on_reload = true,
 
 		-- output the "initial output" of script.lua each time after any of these these configs are executed
 		-- probably should be something that's always executed late during the game startup process

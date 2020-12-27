@@ -76,8 +76,7 @@ static int l_update_attention(lua_State *L);
 static Display *display;
 
 static void do_xevents(Atom net_active_window,
-                       Atom net_wm_name,
-                       lua_State *L) {
+                       Atom net_wm_name) {
 	XEvent event;
 	int cnt = 0;
 	bool did_call_lua = false;
@@ -96,15 +95,13 @@ static void do_xevents(Atom net_active_window,
 			XTextProperty prop;
 			XGetTextProperty(display, focus, &prop, net_wm_name);
 
-			LUA_LOCK();
+			lua_State *L = lua_get_state();
 			 lua_pushcfunction(L, l_update_attention);
 			  lua_getglobal(L, "_attention");
 				lua_pushstring(L, (const char *)prop.value);
 			  lua_call(L, 1, 1);
 			lua_call(L, 1, 0);
-			LUA_UNLOCK();
-			// always click, in case the buffer is empty but there are timeouts to do
-			do_click();
+			lua_release_state_and_click(L);
 
 			if (prop.value) XFree(prop.value);
 		}
@@ -112,7 +109,8 @@ static void do_xevents(Atom net_active_window,
 }
 
 __attribute__((cold))
-static void *attention_main(void *L) {
+static void *attention_main(void *ud) {
+	(void)ud;
 	set_thread_name("attention");
 
 	Atom net_active_window = XInternAtom(display, "_NET_ACTIVE_WINDOW", 0);
@@ -126,7 +124,7 @@ static void *attention_main(void *L) {
 	assert(conn >= 0);
 
 	do {
-		do_xevents(net_active_window, net_wm_name, L);
+		do_xevents(net_active_window, net_wm_name);
 	} while (wait_for_event(conn));
 
 	return NULL;
@@ -136,7 +134,7 @@ static void *attention_main(void *L) {
 
 static pthread_t thread;
 
-void attention_init(void *L) {
+void attention_init(void) {
 	if (thread != 0) return;
 
 	display = XOpenDisplay(NULL);
@@ -151,7 +149,7 @@ void attention_init(void *L) {
 	    goto err);
 
 	check_errcode(
-	    pthread_create(&thread, NULL, attention_main, (void *)L),
+	    pthread_create(&thread, NULL, attention_main, NULL),
 	    "attention: pthread_create",
 	    goto err);
 

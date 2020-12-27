@@ -80,13 +80,17 @@
  #define __sanitizer_print_stack_trace()
 #endif
 
+// defined in cli_output.c
+__attribute__((cold))
+__attribute__((format(printf, 1, 2)))
+__attribute__((noreturn))
+void cfgfs_assert_fail(const char *fmt, ...);
+
 #define assert2(v, s) \
 	({ \
-		__auto_type _assert_v = (v); \
-		if (unlikely(!_assert_v)) { \
-		    fprintf(stderr, EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __func__, (s)); \
-		    __sanitizer_print_stack_trace(); \
-		    __builtin_abort(); \
+		if (unlikely(!(v))) { \
+			cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __func__, (s)); \
+			__builtin_unreachable(); \
 		} \
 	})
 

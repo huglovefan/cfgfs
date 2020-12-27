@@ -50,7 +50,6 @@ enum msg_action {
 // -----------------------------------------------------------------------------
 
 static _Atomic(bool) cli_exiting;
-static lua_State *g_L;
 
 __attribute__((cold))
 static void linehandler(char *line) {
@@ -58,12 +57,11 @@ static void linehandler(char *line) {
 
 	if (line != NULL) {
 		if (*line != '\0') {
-			LUA_LOCK();
-			lua_State *L = g_L;
+			lua_State *L = lua_get_state();
 			 lua_getglobal(L, "_cli_input");
 			  lua_pushstring(L, line);
 			lua_call(L, 1, 0);
-			opportunistic_click_and_unlock();
+			lua_release_state(L);
 			add_history(line);
 			// ...
 			/*
@@ -102,9 +100,9 @@ static void winch_handler(int signal) {
 #define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
 
 __attribute__((cold))
-static void *cli_main(void *L) {
+static void *cli_main(void *ud) {
+	(void)ud;
 	set_thread_name("cli");
-	g_L = L;
 
 	signal(SIGWINCH, winch_handler);
 
@@ -176,7 +174,7 @@ out:
 
 static pthread_t thread;
 
-void cli_input_init(void *L) {
+void cli_input_init(void) {
 	if (thread != 0) return;
 	if (!isatty(STDIN_FILENO)) return;
 
@@ -186,7 +184,7 @@ void cli_input_init(void *L) {
 	    goto err);
 
 	check_errcode(
-	    pthread_create(&thread, NULL, cli_main, L),
+	    pthread_create(&thread, NULL, cli_main, NULL),
 	    "cli: pthread_create",
 	    goto err);
 

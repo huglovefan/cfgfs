@@ -3,6 +3,7 @@
 #endif
 #include "cli_output.h"
 
+#include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -50,6 +51,28 @@ void perror(const char *s) {
 	}
 }
 
+// declared in macros.h
+__attribute__((cold))
+__attribute__((noreturn))
+void cfgfs_assert_fail(const char *fmt, ...) {
+	if (cli_trylock_output_nosave()) {
+		cli_save_prompt_locked();
+	}
+
+	va_list args;
+	va_start(args, fmt);
+	 vfprintf(stderr, fmt, args);
+	va_end(args);
+
+	typedef void (*print_backtrace_t)(void);
+	print_backtrace_t fn = (print_backtrace_t)dlsym(RTLD_DEFAULT, "__sanitizer_print_stack_trace");
+	if (fn != NULL) fn();
+
+	abort();
+}
+// it would be nice if this could print the lua backtrace too
+// would have to somehow check if it's currently locked by this thread
+
 // -----------------------------------------------------------------------------
 
 // https://stackoverflow.com/a/5070889
@@ -74,7 +97,15 @@ static void ensure_buffer(size_t sz) {
 }
 
 void cli_lock_output(void) {
-	pthread_mutex_lock(&output_lock);
+	cli_lock_output_nosave();
+	cli_save_prompt_locked();
+}
+void cli_unlock_output(void) {
+	cli_restore_prompt_locked();
+	cli_unlock_output_norestore();
+}
+
+void cli_save_prompt_locked(void) {
 	if (likely(cli_reading_line)) {
 		saved.end = rl_end;
 D		assert(saved.end >= 0);
@@ -93,7 +124,7 @@ D		assert(saved.end >= 0);
 		saved.end = restore_nothing;
 	}
 }
-void cli_unlock_output(void) {
+void cli_restore_prompt_locked(void) {
 	if (likely(saved.end != restore_nothing)) {
 		if (unlikely(saved.end != restore_empty_line)) {
 			rl_replace_line(saved.line_buffer, 0);
@@ -102,13 +133,15 @@ void cli_unlock_output(void) {
 		rl_restore_prompt();
 		rl_redisplay();
 	}
-	pthread_mutex_unlock(&output_lock);
 }
 
 // -----------------------------------------------------------------------------
 
 void cli_lock_output_nosave(void) {
 	pthread_mutex_lock(&output_lock);
+}
+_Bool cli_trylock_output_nosave(void) {
+	return (0 == pthread_mutex_trylock(&output_lock));
 }
 void cli_unlock_output_norestore(void) {
 	pthread_mutex_unlock(&output_lock);

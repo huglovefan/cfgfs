@@ -11,9 +11,6 @@
 
 void do_click(void);
 
-// unlock the lua lock and click if there is stuff in the buffer
-void opportunistic_click_and_unlock(void);
-
 void click_init(void);
 void click_deinit(void);
 

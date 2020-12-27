@@ -136,14 +136,6 @@ static void click_after(double ms) {
 
 // -----------------------------------------------------------------------------
 
-void opportunistic_click_and_unlock(void) {
-	bool should = (!buffer_list_is_empty(&buffers));
-	LUA_UNLOCK();
-	if (should) do_click();
-}
-
-// -----------------------------------------------------------------------------
-
 static int l_click_after(lua_State *L) {
 	click_after(lua_tonumber(L, 1));
 	return 0;
