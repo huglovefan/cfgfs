@@ -12,12 +12,8 @@
 #include <string.h>
 #include <sys/prctl.h>
 
-#if defined(__cplusplus)
- #include <lua.hpp>
-#else
- #include <lualib.h>
- #include <lauxlib.h>
-#endif
+#include <lualib.h>
+#include <lauxlib.h>
 
 #include "attention.h"
 #include "buffers.h"
@@ -50,7 +46,6 @@ D	assert(stack_is_clean(g_L));
 
 void lua_unlock_state(void) {
 	bool click = (!buffer_list_is_empty(&buffers));
-D	assert(stack_is_clean(g_L));
 	lua_unlock_state_no_click();
 	if (click) do_click();
 }
@@ -61,6 +56,7 @@ D	assert(g_L != NULL);
 }
 
 void lua_unlock_state_no_click(void) {
+D	assert(stack_is_clean(g_L));
 	pthread_mutex_unlock(&lua_mutex);
 }
 
@@ -71,6 +67,7 @@ void lua_unlock_state_and_click(void) {
 
 void lua_deinit(void) {
 	pthread_mutex_lock(&lua_mutex);
+D	assert(stack_is_clean(g_L));
 	if (g_L != NULL) {
 		 lua_getglobal(g_L, "_fire_unload");
 		  lua_pushboolean(g_L, 1);
@@ -335,6 +332,7 @@ bool lua_init(void) {
 	cli_input_init_lua(L);
 	click_init_lua(L);
 
+	_Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
 	lua_pushstring(L, AGPL_SOURCE_URL); lua_setglobal(L, "agpl_source_url");
 
 	if (luaL_loadfile(L, "./builtin.lua") != LUA_OK) {

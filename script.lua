@@ -957,15 +957,15 @@ cmd.kptadpb = function (_, key)
 		cmd.voicemenu(2, 5)
 	end
 	local bind_press_time = (type(key) == 'string' and rawget(is_pressed, key))
-	local check = function (t)
-		local name = t.name:lower()
-		-- steam rejects names with these words
-		if name:find('nigger')
-		or name:find('steam')
-		or name:find('valve')
-		or name:find('\n') then
-			return true
-		end
+
+	local playerlist = get_playerlist()
+	local mysteamid = assert(find_own_steamid(playerlist), 'failed to get own steamid')
+	local myteam = assert(get_team(mysteamid), 'failed to get own team')
+	local bots = {}
+	local myteam_humans = 0
+	local myteam_robots = 0
+
+	local check_lists = function (t)
 		if bad_steamids_old[t.steamid] then
 			return true
 		end
@@ -977,16 +977,35 @@ cmd.kptadpb = function (_, key)
 		end
 		return false
 	end
-	local playerlist = get_playerlist()
-	local mysteamid = assert(find_own_steamid(playerlist), 'failed to get own steamid')
-	local myteam = assert(get_team(mysteamid), 'failed to get own team')
-	local bots = {}
-	local myteam_humans = 0
-	local myteam_robots = 0
+
+	local check_impossible_names = function (t)
+		local name = t.name:lower()
+		-- steam rejects names with these words
+		if name:find('nigger')
+		or name:find('steam')
+		or name:find('valve')
+		or name:find('\n') then
+			return true
+		end
+		return false
+	end
+
+	local names = {}
+	for _, t in ipairs(playerlist) do
+		names[t.name] = true
+	end
+	local check_namestealer = function (t)
+		local name = t.name
+		name = name:gsub('\xe2\x80\x8f', '')
+		return (name ~= t.name and names[name])
+	end
+
 	for _, t in ipairs(playerlist) do
 		local team = get_team(t.steamid) --, 'failed to get team for '..t.steamid)
 		if (not team) or team == myteam then
-			local is_bot = check(t)
+			local is_bot = check_lists(t)
+			            or check_impossible_names(t)
+			            or check_namestealer(t)
 			if is_bot then
 				table.insert(bots, t)
 				myteam_robots = (myteam_robots + 1)

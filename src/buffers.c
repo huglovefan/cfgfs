@@ -1,10 +1,6 @@
 #include "buffers.h"
 
-#if defined(__cplusplus)
- #include <lua.hpp>
-#else
- #include <lua.h>
-#endif
+#include <lua.h>
 
 struct buffer_list buffers;
 struct buffer_list init_cfg;

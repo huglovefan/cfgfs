@@ -10,20 +10,13 @@
 #include <sys/prctl.h>
 #include <unistd.h>
 
-#if defined(__cplusplus)
- #include <lua.hpp>
-#else
- #include <lua.h>
-#endif
+#include <lua.h>
 
 #include "buffers.h"
 #include "cli_output.h"
 #include "click.h"
 #include "lua.h"
 #include "macros.h"
-
-// bug: editing the script with nano makes this get in an infinite loop. does it
-// modify the file in place instead of replacing it? why does that break this?
 
 // -----------------------------------------------------------------------------
 
@@ -43,8 +36,6 @@ enum msg_action {
 static bool wait_for_event(const char *path, int fd) {
 	bool success = false;
 
-	// just re-add the watch each time
-	// some editors replace the file instead of modifying the existing one
 	int wd = inotify_add_watch(fd, path, IN_MODIFY);
 	check_minus1(wd, "reloader: inotify_add_watch", goto out);
 

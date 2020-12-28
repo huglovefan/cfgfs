@@ -11,11 +11,7 @@
 
 #include <X11/Xutil.h>
 
-#if defined(__cplusplus)
- #include <lua.hpp>
-#else
- #include <lua.h>
-#endif
+#include <lua.h>
 
 #include "cli_output.h"
 #include "click.h"

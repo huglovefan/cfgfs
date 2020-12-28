@@ -60,25 +60,11 @@
 
 // -----------------------------------------------------------------------------
 
-// https://gist.github.com/4d2a407a2866402b6cb9678b0c18f71c
-// if using post-increment on an _Atomic(_Bool) in an if statement, wrap this
-// around it like:
-//   if (!clang_atomics_bug(bool++)) ...
-#define clang_atomics_bug(expr) ((int)(expr))
-
-// -----------------------------------------------------------------------------
-
 #undef assert
 
 // https://stackoverflow.com/a/2671100
 #define STRINGIZE_DETAIL(x) #x
 #define STRINGIZE(x) STRINGIZE_DETAIL(x)
-
-#if defined(SANITIZER)
- extern void __sanitizer_print_stack_trace(void);
-#else
- #define __sanitizer_print_stack_trace()
-#endif
 
 // defined in cli_output.c
 __attribute__((cold))

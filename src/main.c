@@ -12,19 +12,13 @@
 #include <unistd.h>
 
 #pragma GCC diagnostic push
- #if defined(__clang__)
-  #pragma GCC diagnostic ignored "-Wdocumentation"
- #endif
+ #pragma GCC diagnostic ignored "-Wdocumentation"
  #pragma GCC diagnostic ignored "-Wpadded"
   #include <fuse.h>
   #include <fuse_lowlevel.h>
 #pragma GCC diagnostic pop
 
-#if defined(__cplusplus)
- #include <lua.hpp>
-#else
- #include <lauxlib.h>
-#endif
+#include <lauxlib.h>
 
 #include "attention.h"
 #include "buffer_list.h"
@@ -35,8 +29,6 @@
 #include "lua.h"
 #include "macros.h"
 #include "reloader.h"
-
-_Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
 
 // -----------------------------------------------------------------------------
 

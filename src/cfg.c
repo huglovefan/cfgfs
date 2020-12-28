@@ -1,13 +1,10 @@
+#define _GNU_SOURCE // strchrnul()
 #include "cfg.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(__cplusplus)
- #include <lua.hpp>
-#else
- #include <lauxlib.h>
-#endif
+#include <lauxlib.h>
 
 #include "buffers.h"
 #include "cli_output.h"
@@ -90,8 +87,7 @@ static int l_cmd(lua_State *L) {
 	if (unlikely(outsize > max_line_length)) goto err_toolong;
 	char *buf = buffer_list_get_write_buffer(&buffers, outsize);
 	size_t wrote = cmd_stringify(buf, argc, words, mode);
-D	assert(wrote == outsize);
-else	assert(wrote <= outsize);
+	assert(wrote == outsize);
 	buf[wrote++] = '\n';
 	buffer_list_commit_write(&buffers, wrote);
 	return 0;
@@ -115,8 +111,7 @@ static int l_cmd_stringify(lua_State *L) {
 	if (unlikely(outsize > max_line_length)) goto err_toolong;
 	char *buf = alloca(outsize);
 	size_t wrote = cmd_stringify(buf, argc, words, mode);
-D	assert(wrote == outsize);
-else	assert(wrote <= outsize);
+	assert(wrote == outsize);
 	lua_pushlstring(L, buf, wrote);
 	return 1;
 err_empty:
@@ -243,6 +238,7 @@ static size_t cmd_stringify(char *restrict buf,
                             int argc,
                             const struct worddata *restrict words,
                             enum quoting_mode mode) {
+	assume(argc >= 1);
 	char *bufstart = buf;
 	switch (mode) {
 	case qm_default:
@@ -270,37 +266,20 @@ static size_t cmd_stringify(char *restrict buf,
 			}
 		}
 		break;
-	case qm_say: {
-		memcpy(buf, words[0].s, words[0].len);
-		buf += words[0].len;
-		char sep = '"';
-		for (int i = 1; i < argc; i++) {
-			*buf++ = sep;
-			sep = ' ';
-			memcpy(buf, words[i].s, words[i].len);
-			buf += words[i].len;
-			if (unlikely(words[i].flags&wf_contains_evil_char)) {
-				char *buf_ = buf-words[i].len;
-				cmd_replace_evil_chars(buf_, words[i].len, mode);
-			}
-		}
-		*buf++ = '"';
-		break;
-	}
+	case qm_say:
 	case qm_echo: {
-		memcpy(buf, words[0].s, words[0].len);
-		buf += words[0].len;
 		char sep = '"';
-		for (int i = 1; i < argc; i++) {
+		for (int i = 0; i < argc; i++) {
+			memcpy(buf, words[i].s, words[i].len);
+			if (unlikely(words[i].flags&wf_contains_evil_char)) {
+				cmd_replace_evil_chars(buf, words[i].len, mode);
+			}
+			buf += words[i].len;
 			*buf++ = sep;
 			sep = ' ';
-			memcpy(buf, words[i].s, words[i].len);
-			buf += words[i].len;
-			if (unlikely(words[i].flags&wf_contains_evil_char)) {
-				char *buf_ = buf-words[i].len;
-				cmd_replace_evil_chars(buf_, words[i].len, mode);
-			}
 		}
+		buf -= 1; // last separator
+		if (mode == qm_say) *buf++ = '"';
 		break;
 	}
 	}
@@ -309,18 +288,35 @@ static size_t cmd_stringify(char *restrict buf,
 
 // -----------------------------------------------------------------------------
 
+static void cfg(lua_State *L, const char *s, size_t sz) {
+	if (unlikely(sz == 0)) return;
+	if (unlikely(sz > max_line_length)) goto toolong;
+	buffer_list_write_line(&buffers, s, sz);
+	return;
+toolong:
+	luaL_error(L, "line too long");
+	__builtin_unreachable();
+}
+
 static int l_cfg(lua_State *L) {
 	size_t sz;
 	const char *s = lua_tolstring(L, 1, &sz);
 	if (unlikely(s == NULL)) goto typeerr;
-	if (unlikely(sz == 0)) return 0;
-	if (unlikely(sz > max_line_length)) goto toolong; // assume it's not multiple lines
-	buffer_list_write_line(&buffers, s, sz);
-	return 0;
+	if (likely(sz <= max_line_length)) {
+		cfg(L, s, sz);
+		return 0;
+	} else {
+		// doesn't fit, is it multiple lines?
+		for (;;) {
+			const char *nl = strchrnul(s, '\n');
+			cfg(L, s, (size_t)(nl-s));
+			if (!*nl) break;
+			s = nl+1;
+		}
+		return 0;
+	}
 typeerr:
 	return luaL_error(L, "argument is not a string");
-toolong:
-	return luaL_error(L, "line too long");
 }
 
 // -----------------------------------------------------------------------------

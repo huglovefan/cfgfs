@@ -8,7 +8,7 @@ bool lua_init(void);
 
 int lua_do_nothing(lua_State *L);
 
-// these are left on the stack (by main.c, reloader.c) for fast(?) access
+// these are left on the stack for fast(?) access
 // grep for uses before changing
 #define GET_CONTENTS_IDX	1
 #define UNMASK_NEXT_IDX		2

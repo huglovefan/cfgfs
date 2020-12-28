@@ -12,12 +12,8 @@
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
 
-#if defined(__cplusplus)
- #include <lua.hpp>
-#else
- #include <lua.h>
- #include <lauxlib.h>
-#endif
+#include <lua.h>
+#include <lauxlib.h>
 
 #include "attention.h"
 #include "buffers.h"

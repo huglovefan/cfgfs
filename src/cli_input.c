@@ -15,11 +15,7 @@
 #pragma GCC diagnostic pop
 #include <readline/history.h>
 
-#if defined(__cplusplus)
- #include <lua.hpp>
-#else
- #include <lua.h>
-#endif
+#include <lua.h>
 
 #include "buffers.h"
 #include "cli_output.h"
