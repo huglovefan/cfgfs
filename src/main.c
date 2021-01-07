@@ -32,27 +32,19 @@
 
 // -----------------------------------------------------------------------------
 
-enum main_quittingness {
-	nothing = 0,
-	quit_softly = 1,
-};
-
 static pthread_t g_main_thread;
-static enum main_quittingness quitstate;
+static bool main_quit_called;
 
 __attribute__((cold))
 void main_quit(void) {
 	pthread_t main_thread = g_main_thread;
 	if (main_thread) {
 		pthread_kill(main_thread, SIGINT);
-		quitstate = quit_softly;
+		main_quit_called = true;
 	}
 }
 
 // -----------------------------------------------------------------------------
-
-// have_file: check if a file exists (and get its type)
-// returns 0xd (dir), 0xf (file) or a negative errno value
 
 enum special_file_type {
 	sft_none = 0,
@@ -60,20 +52,20 @@ enum special_file_type {
 	sft_control = 2,
 };
 
-static int l_have_file(const char *restrict path);
+static int l_lookup_path(const char *restrict path);
 
 #define starts_with(self, other) \
-	(memcmp(self, other, strlen(other)) == 0)
+	(0 == memcmp(self, other, strlen(other)))
 
 #define ends_with(self, other) \
-	(memcmp(self+length-strlen(other), other, strlen(other)) == 0)
+	(0 == memcmp(self+length-strlen(other), other, strlen(other)))
 
 #define equals(self, other) \
 	(length == strlen(other) && \
-	 memcmp(self, other, length) == 0)
+	 0 == memcmp(self, other, length))
 
 __attribute__((always_inline))
-static int have_file(const char *restrict path, enum special_file_type *type) {
+static int lookup_path(const char *restrict path, enum special_file_type *type) {
 	const char *slashdot;
 	slashdot = *&slashdot; // not uninitialized
 	const char *p = path;
@@ -109,7 +101,7 @@ static int have_file(const char *restrict path, enum special_file_type *type) {
 		return 0xf;
 	}
 
-	return l_have_file(path);
+	return l_lookup_path(path);
 }
 
 #undef starts_with
@@ -117,7 +109,7 @@ static int have_file(const char *restrict path, enum special_file_type *type) {
 #undef equals
 
 __attribute__((noinline))
-static int l_have_file(const char *restrict path) {
+static int l_lookup_path(const char *restrict path) {
 	int rv = 0xf;
 
 	lua_State *L = lua_get_state();
@@ -159,7 +151,7 @@ static int cfgfs_getattr(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_getattr: %s", path);
 
-	int rv = have_file(path, NULL);
+	int rv = lookup_path(path, NULL);
 
 	if (rv == 0xf) {
 		stbuf->st_mode = 0444|S_IFREG;
@@ -182,7 +174,7 @@ static int cfgfs_open(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_open: %s", path);
 
-	int rv = have_file(path, (enum special_file_type *)&fi->fh);
+	int rv = lookup_path(path, (enum special_file_type *)&fi->fh);
 
 	if (rv == 0xf) {
 		return 0;
@@ -196,7 +188,7 @@ D		assert(rv < 0);
 
 // ~
 
-#define starts_with(this, that) (strncmp(this, that, strlen(that)) == 0)
+#define starts_with(this, that) (0 == strncmp(this, that, strlen(that)))
 
 __attribute__((hot))
 static int cfgfs_read(const char *restrict path,
@@ -208,14 +200,8 @@ static int cfgfs_read(const char *restrict path,
 V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 	int rv = 0;
 
-	// not known to happen
-	// with !direct_io, cfgfs_read() is always called with size=4096
-	// i think offset will always be 0 unless we return >= 4096 bytes
-	if (unlikely(!(size >= reported_cfg_size && offset == 0))) {
-D		eprintln("cfgfs_read: invalid argument! size=%zu offset=%zu", size, offset);
-D		assert(0);
-		__builtin_unreachable();
-	}
+	if (unlikely(offset != 0)) return 0;
+	assume(size >= reported_cfg_size);
 
 	// /unmask_next/ must not return buffer contents (can mess up the order)
 	bool silent = starts_with(path, "/cfgfs/unmask_next/");
@@ -244,9 +230,7 @@ D		assert(ent != NULL); // nothing should've removed it
 	lua_release_state_no_click(L);
 	VV {
 		if (rv >= 0) {
-			char tmp = exchange(buf[(size_t)rv], '\0');
-			eprintln("data=[[%s]] rv=%d", buf, rv);
-			buf[(size_t)rv] = tmp;
+			eprintln("data=[[%.*s]] rv=%d", rv, buf, rv);
 		} else {
 			eprintln("data=(null) rv=%d", rv);
 		}
@@ -270,11 +254,11 @@ static int cfgfs_write_control(const char *data, size_t size, off_t offset);
 	})
 
 __attribute__((hot))
-static int cfgfs_write(const char *path,
-                       const char *data,
+static int cfgfs_write(const char *restrict path,
+                       const char *restrict data,
                        size_t size,
                        off_t offset,
-                       struct fuse_file_info *fi) {
+                       struct fuse_file_info *restrict fi) {
 	(void)fi;
 V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
@@ -319,8 +303,6 @@ D		pthread_mutex_unlock(&logcatcher_lock);
 	case sft_none:
 		return -ENOTSUP;
 	}
-D	assert(0);
-	__builtin_unreachable();
 }
 
 #undef log_catcher_got_line
@@ -375,6 +357,8 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	cfg->negative_timeout = 0;
 	cfg->attr_timeout = DBL_MAX;
 
+	cfg->direct_io = true;
+
 	return NULL;
 }
 
@@ -401,6 +385,21 @@ static const struct fuse_operations cfgfs_oper = {
 	.init = cfgfs_init,
 };
 
+// https://github.com/libfuse/libfuse/blob/f54eb86/include/fuse.h#L852
+enum fuse_main_rv {
+	rv_ok                 = 0,
+	rv_invalid_argument   = 1,
+	rv_missing_mountpoint = 2,
+	rv_fuse_setup_failed  = 3,
+	rv_mount_failed       = 4,
+	rv_daemonize_failed   = 5,
+	rv_signal_failed      = 6,
+	rv_fs_error           = 7,
+	// cfgfs-specific
+	rv_cfgfs_lua_failed    = 10,
+	rv_cfgfs_reexec_failed = 11,
+};
+
 int main(int argc, char **argv) {
 
 	// https://lwn.net/Articles/837019/
@@ -423,18 +422,16 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 
 	// ~ init fuse ~
 
-	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-	struct fuse *fuse;
-	struct fuse_cmdline_opts opts;
-	struct fuse_session *se;
-	int res;
+	enum fuse_main_rv res;
 
-	if (fuse_parse_cmdline(&args, &opts) != 0) {
-		return 1;
+	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+	struct fuse_cmdline_opts opts;
+	if (0 != fuse_parse_cmdline(&args, &opts)) {
+		return rv_invalid_argument;
 	}
 	if (opts.show_version) {
 		fuse_lowlevel_version();
-		res = 0;
+		res = rv_ok;
 		goto out_no_fuse;
 	}
 	if (opts.show_help) {
@@ -444,29 +441,29 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 		println("FUSE options:");
 		fuse_cmdline_help();
 		fuse_lib_help(&args);
-		res = 0;
+		res = rv_ok;
 		goto out_no_fuse;
 	}
-	if (!opts.show_help && !opts.mountpoint) {
+	if (!opts.mountpoint) {
 		eprintln("error: no mountpoint specified");
-		res = 2;
+		res = rv_missing_mountpoint;
 		goto out_no_fuse;
 	}
 
 	opts.foreground = true;
 
-	fuse = fuse_new(&args, &cfgfs_oper, sizeof(cfgfs_oper), NULL);
+	struct fuse *fuse = fuse_new(&args, &cfgfs_oper, sizeof(cfgfs_oper), NULL);
 	if (fuse == NULL) {
-		res = 3;
+		res = rv_fuse_setup_failed;
 		goto out_no_fuse;
 	}
-	if (fuse_mount(fuse, opts.mountpoint) != 0) {
-		res = 4;
+	if (0 != fuse_mount(fuse, opts.mountpoint)) {
+		res = rv_mount_failed;
 		goto out_fuse_newed;
 	}
-	se = fuse_get_session(fuse);
-	if (fuse_set_signal_handlers(se) != 0) {
-		res = 6;
+	struct fuse_session *se = fuse_get_session(fuse);
+	if (0 != fuse_set_signal_handlers(se)) {
+		res = rv_signal_failed;
 		goto out_fuse_newed_and_mounted;
 	}
 	g_main_thread = pthread_self();
@@ -474,7 +471,7 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 	// ~ init other things ~
 
 	if (!lua_init()) {
-		res = 9;
+		res = rv_cfgfs_lua_failed;
 		goto out_fuse_newed_and_mounted_and_signals_handled;
 	}
 	attention_init();
@@ -484,15 +481,13 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 
 	// ~ boot up fuse ~
 
-	res = fuse_loop_mt(fuse, &(struct fuse_loop_config){
+	int loop_rv = fuse_loop_mt(fuse, &(struct fuse_loop_config){
 		.clone_fd = false,
 		.max_idle_threads = 5,
 	});
-	if (res) {
-		res = 7;
-	}
-	if (quitstate == quit_softly) {
-		res = 0;
+	res = rv_ok;
+	if (loop_rv != 0 && !main_quit_called) {
+		res = rv_fs_error;
 	}
 
 out_fuse_newed_and_mounted_and_signals_handled:
@@ -510,11 +505,11 @@ out_no_fuse:
 	reloader_deinit();
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
-	if (unlink(".cfgfs_reexec") == 0) {
+	if (0 == unlink(".cfgfs_reexec")) {
 		execvp(argv[0], argv);
 		perror("cfgfs: exec");
-		return 8;
+		return rv_cfgfs_reexec_failed;
 	}
-	return res;
+	return (int)res;
 
 }

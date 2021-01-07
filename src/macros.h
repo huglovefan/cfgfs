@@ -1,15 +1,5 @@
 #pragma once
 
-#define likely(x)   __builtin_expect(!!(x), 1)
-#define unlikely(x) __builtin_expect(!!(x), 0)
-
-#define assume(v) \
-	({ \
-		__auto_type _assume_v = (v); \
-		if (!_assume_v) __builtin_unreachable(); \
-		_assume_v; \
-	})
-
 #ifndef V
  #define V if (0)
 #endif
@@ -19,6 +9,17 @@
 #ifndef D
  #define D if (0)
 #endif
+
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+
+#define assume(v) \
+	({ \
+		__auto_type _assume_v = (v); \
+		D assert(_assume_v, "bad assume()"); \
+		if (!_assume_v) __builtin_unreachable(); \
+		_assume_v; \
+	})
 
 // https://en.cppreference.com/w/cpp/utility/exchange
 #define exchange(var, newval) \
@@ -58,6 +59,23 @@
 		(ts).tv_nsec = (long)(fmod((ms),1000.0)*1000000.0); \
 	})
 
+#define UNREACHABLE() \
+	({ \
+		D cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Unreachable code hit\n", __func__); \
+		__builtin_unreachable(); \
+	})
+
+// assert that the compiler/optimizer can figure out "cond" is always true
+// if it is true, the call to the nonexistent function will be optimized away and won't cause an error at link time
+#define assert_known(cond) \
+	({ \
+		if (!(cond)) __constant_assert_failed(); \
+	})
+__attribute__((noreturn))
+extern void __constant_assert_failed(void);
+
+#define assert_known_unreachable() assert_known(0)
+
 // -----------------------------------------------------------------------------
 
 #undef assert
@@ -76,7 +94,6 @@ void cfgfs_assert_fail(const char *fmt, ...);
 	({ \
 		if (unlikely(!(v))) { \
 			cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __func__, (s)); \
-			__builtin_unreachable(); \
 		} \
 	})
 

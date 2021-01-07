@@ -16,6 +16,7 @@
 #pragma GCC diagnostic pop
 
 #include "cli_input.h"
+#include "lua.h"
 #include "macros.h"
 
 static pthread_mutex_t output_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -70,8 +71,6 @@ void cfgfs_assert_fail(const char *fmt, ...) {
 
 	abort();
 }
-// it would be nice if this could print the lua backtrace too
-// would have to somehow check if it's currently locked by this thread
 
 // -----------------------------------------------------------------------------
 

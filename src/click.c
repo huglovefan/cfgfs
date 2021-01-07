@@ -32,6 +32,9 @@ static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 static Display *display;
 static KeyCode keycode;
 
+static bool thread_attr_inited = false;
+static pthread_attr_t thread_attr;
+
 void do_click(void) {
 	if (game_window_is_active != attn_inactive &&
 	    (0 == pthread_mutex_trylock(&click_lock))) {
@@ -46,7 +49,15 @@ void do_click(void) {
 
 static bool click_set_key(const char *name);
 
+__attribute__((cold))
 void click_init(void) {
+	if (!thread_attr_inited) {
+		pthread_attr_init(&thread_attr);
+		pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
+		pthread_attr_setstacksize(&thread_attr, 0xffff);
+		thread_attr_inited = true;
+	}
+
 	pthread_mutex_lock(&click_lock);
 
 	display = XOpenDisplay(NULL);
@@ -61,7 +72,13 @@ out:
 	pthread_mutex_unlock(&click_lock);
 }
 
+__attribute__((cold))
 void click_deinit(void) {
+	if (thread_attr_inited) {
+		pthread_attr_destroy(&thread_attr);
+		thread_attr_inited = false;
+	}
+
 	pthread_mutex_lock(&click_lock);
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
 	keycode = 0;
@@ -116,14 +133,12 @@ static void click_at(double ms) {
 	_Static_assert(sizeof(msp) >= sizeof(ms));
 	memcpy(&msp, &ms, sizeof(double));
 
+D	assert(thread_attr_inited);
 	pthread_t thread;
-	int err = pthread_create(&thread, NULL, click_thread, msp);
+	int err = pthread_create(&thread, &thread_attr, click_thread, msp);
 	if (unlikely(err != 0)) {
 V		eprintln("click_at: pthread_create: %s", strerror(err));
-		return;
 	}
-
-	pthread_detach(thread);
 }
 
 static void click_after(double ms) {
@@ -176,3 +191,43 @@ void click_init_lua(void *L) {
 	 lua_pushcfunction(L, l_click_received);
 	lua_setglobal(L, "_click_received");
 }
+
+#if 0
+
+aaaaaaaaaaaa
+this doesn't need to make a thread for every click
+
+#define MAX_CLICKS 100
+
+struct click_ent {
+	double target; // mono ms
+};
+struct click_ent clicks[MAX_CLICKS];
+
+struct pollfs fds[1] = {
+	{.fd = msgpipe[?], .events = POLLIN},
+};
+for (;;) {
+	pthread_mutex_lock(&lock);
+	double now = mono_ms();
+	double lowest = HUGE_VAL;
+	bool clicked = false;
+	for (int i = 0; i < MAX_CLICKS; i++) {
+		if (clicks[i].target <= now) {
+			if (!clicked++) click();
+		} else {
+			if (clicks[i].target < lowest) {
+				lowest = clicks[i].target;
+			}
+		}
+	}
+	pthread_mutex_unlock(&lock);
+	do {
+		rv = poll(fds, 1, (int)(now-lowest));
+		// check msgpipe
+		// check if lowest <= now
+	} while (rv == -1 && errno == ENOENT);
+	if (rv == -1) break;
+}
+
+#endif

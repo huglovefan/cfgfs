@@ -17,21 +17,17 @@
 #include "click.h"
 #include "lua.h"
 #include "macros.h"
+#include "pipe_io.h"
 
 // -----------------------------------------------------------------------------
 
 static int msgpipe[2] = {-1, -1};
 
-enum msg_action {
+enum msg {
 	msg_exit = 1,
 };
 
-#define msg_write(c) ({ char c_ = (c); write(msgpipe[1], &c_, 1); })
-#define msg_read()   ({ char c = 0; read(msgpipe[0], &c, 1); c; })
-
 // -----------------------------------------------------------------------------
-
-#define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
 
 static bool wait_for_event(const char *path, int fd) {
 	bool success = false;
@@ -39,34 +35,25 @@ static bool wait_for_event(const char *path, int fd) {
 	int wd = inotify_add_watch(fd, path, IN_MODIFY);
 	check_minus1(wd, "reloader: inotify_add_watch", goto out);
 
-	struct pollfd fds[2] = {
-		{.fd = fd,         .events = POLLIN},
-		{.fd = msgpipe[0], .events = POLLIN},
-	};
-	for (;;) {
-		int rv = poll(fds, 2, -1);
-		if (unlikely(rv == -1)) {
-			if (likely(errno == EINTR)) continue;
-			perror("reloader: poll");
-			break;
-		}
-		if (unlikely((fds[0].revents|fds[1].revents) & POLLNOTGOOD)) break;
-		if (unlikely(fds[1].revents & POLLIN)) {
-			switch (msg_read()) {
-			case msg_exit:
-				goto out;
-			default:
-D				assert(0);
-				__builtin_unreachable();
-			}
-		}
-		if (likely(fds[0].revents & POLLIN)) {
-			char buf[sizeof(struct inotify_event) + PATH_MAX + 1];
-			ssize_t in_rv = read(fd, buf, sizeof(buf));
-			check_minus1(in_rv, "reloader: read", goto out);
-			success = true;
+	switch (rdselect(msgpipe[0], fd)) {
+	case 2: {
+		char buf[sizeof(struct inotify_event) + PATH_MAX + 1];
+		ssize_t rv = read(fd, buf, sizeof(buf));
+		check_minus1(rv, "reloader: read", break);
+		success = true;
+		break;
+	}
+	case 1:
+		switch (readch(msgpipe[0])) {
+		case msg_exit:
 			goto out;
 		}
+		break;
+	case 0:
+		perror("reloader: rdselect");
+		break;
+	default:
+		break;
 	}
 out:
 	if (wd != -1) inotify_rm_watch(fd, wd);
@@ -86,7 +73,7 @@ static void do_reload(void) {
 	  lua_rotate(L, -2, 1);
 	lua_call(L, 1, 0);
 
-	// this comes from the settings table so it has to be reloaded
+	// this has to be reloaded since it comes from the settings table
 	assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
 	lua_pop(L, 1);
 	 lua_getglobal(L, "cfgfs");
@@ -146,7 +133,7 @@ err:
 void reloader_deinit(void) {
 	if (thread == 0) return;
 
-	msg_write(msg_exit);
+	writech(msgpipe[1], msg_exit);
 
 	pthread_join(thread, NULL);
 

@@ -23,6 +23,7 @@
 #include "lua.h"
 #include "macros.h"
 #include "main.h"
+#include "pipe_io.h"
 
 _Atomic(bool) cli_reading_line;
 
@@ -35,17 +36,15 @@ static char *prompt; // protected by cli_(un)lock_output()
 
 static int msgpipe[2] = {-1, -1};
 
-enum msg_action {
-	msg_winch = 1,
-	msg_exit = 2,
+enum msg {
+	msg_exit = 1,
+	msg_winch = 2,
 };
-
-#define msg_write(c) ({ char c_ = (c); write(msgpipe[1], &c_, 1); })
-#define msg_read()   ({ char c = 0; read(msgpipe[0], &c, 1); c; })
 
 // -----------------------------------------------------------------------------
 
-static _Atomic(bool) cli_exiting;
+// true if we're exiting because the user typed ^D at the terminal
+static _Atomic(bool) cli_got_eof;
 
 __attribute__((cold))
 static void linehandler(char *line) {
@@ -71,11 +70,11 @@ static void linehandler(char *line) {
 			*/
 		}
 	} else {
-		cli_exiting = true;
-		msg_write(msg_exit);
+		cli_got_eof = true;
+		writech(msgpipe[1], msg_exit);
 	}
 
-	if (unlikely(cli_exiting)) {
+	if (unlikely(cli_got_eof)) {
 		// has to be called from here so it doesn't print another prompt
 		rl_callback_handler_remove();
 	}
@@ -88,12 +87,10 @@ static void linehandler(char *line) {
 __attribute__((cold))
 static void winch_handler(int signal) {
 	(void)signal;
-	msg_write(msg_winch);
+	writech(msgpipe[1], msg_winch);
 }
 
 // -----------------------------------------------------------------------------
-
-#define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
 
 __attribute__((cold))
 static void *cli_main(void *ud) {
@@ -110,20 +107,19 @@ static void *cli_main(void *ud) {
 	 using_history();
 	cli_unlock_output_norestore();
 
-	struct pollfd fds[2] = {
-		{.fd = STDIN_FILENO, .events = POLLIN},
-		{.fd = msgpipe[0],   .events = POLLIN},
-	};
 	for (;;) {
-		int rv = poll(fds, 2, -1);
-		if (unlikely(rv == -1)) {
-			if (likely(errno == EINTR)) continue;
-			perror("cli: poll");
+		switch (rdselect(msgpipe[0], STDIN_FILENO)) {
+		case 2:
+			cli_lock_output_nosave(); cli_unlock_output_norestore();
+			rl_callback_read_char();
+			cli_reading_line = !cli_got_eof;
+			cli_lock_output_nosave(); cli_unlock_output_norestore();
+			// threadsanitizer complains if these locks/unlocks are removed
+			// something to do with the save/restore code in cli_output.c
+			// i don't see how this could make it any safer though
 			break;
-		}
-		if (unlikely((fds[0].revents|fds[1].revents) & POLLNOTGOOD)) break;
-		if (unlikely(fds[1].revents & POLLIN)) {
-			switch (msg_read()) {
+		case 1:
+			switch (readch(msgpipe[0])) {
 			case msg_winch:
 				cli_lock_output_nosave();
 				 rl_resize_terminal();
@@ -131,19 +127,13 @@ static void *cli_main(void *ud) {
 				break;
 			case msg_exit:
 				goto out;
-			default:
-D				assert(0);
-				__builtin_unreachable();
 			}
-		}
-		if (likely(fds[0].revents & POLLIN)) {
-			cli_lock_output_nosave(); cli_unlock_output_norestore();
-			rl_callback_read_char();
-			cli_reading_line = !cli_exiting;
-			cli_lock_output_nosave(); cli_unlock_output_norestore();
-			// threadsanitizer complains if these locks/unlocks are removed
-			// something to do with the save/restore code in cli_output.c
-			// i don't see how this could make it any safer though
+			break;
+		case 0:
+			perror("cli: rdselect");
+			goto out;
+		default:
+			goto out;
 		}
 	}
 out:
@@ -158,10 +148,8 @@ out:
 	 rl_callback_handler_remove();
 	cli_unlock_output_norestore();
 
-	// we're executing this line because
-	// 1. user typed end-of-input character -> want main to quit in this case
-	// 2. main is already quitting and telling us to quit -> no harm in calling this
-	main_quit();
+	// tell it to quit if it isn't already
+	if (cli_got_eof) main_quit();
 
 	return NULL;
 }
@@ -194,7 +182,7 @@ err:
 void cli_input_deinit(void) {
 	if (thread == 0) return;
 
-	msg_write(msg_exit);
+	writech(msgpipe[1], msg_exit);
 
 	pthread_join(thread, NULL);
 
@@ -207,7 +195,7 @@ void cli_input_deinit(void) {
 // -----------------------------------------------------------------------------
 
 static int l_set_prompt(lua_State *L) {
-	const char *newone = lua_tostring(L, 1) ?: DEFAULT_PROMPT;
+	const char *newone = (lua_tostring(L, 1) ?: DEFAULT_PROMPT);
 	cli_lock_output();
 	 free(prompt);
 	 prompt = strdup(newone);

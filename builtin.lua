@@ -158,9 +158,14 @@ end
 
 local ev_timeouts = make_resetable_table()
 
+-- coroutine -> function(error value)
+-- callbacks here are called when the coroutine makes an error
 ev_error_handlers = setmetatable({}, {__mode = 'k'}) -- local
 
--- callback to call next time the coroutine yields or returns
+-- coroutine -> function(the_coroutine, this_function)
+-- callbacks here are called once when the coroutine yields/returns/errors, then removed from the table
+-- the callback can re-add itself during the call if it wants to be called next time
+-- (this is badly named)
 local ev_return_handlers = setmetatable({}, {__mode = 'k'})
 
 local sym_ready = {}
@@ -192,7 +197,8 @@ do
 		end
 	end
 	local ev_loop_fn_catch = function (err)
-		return err, debug.traceback(err, 2)
+		-- this is a table because only one value can be returned from here
+		return {err, debug.traceback(err, 2)}
 	end
 	ev_loop_fn = function (...)
 		return xpcall(ev_loop_fn_main, ev_loop_fn_catch, ...)
@@ -206,19 +212,20 @@ local ev_handle_return = function (co, ok, rv1, rv2, rv3)
 			ev_loop_co = coroutine.create(ev_loop_fn)
 		end
 		if rv1 == false and coroutine.status(co) == 'dead' then
+			-- note: rv2 is the return value from ev_loop_fn_catch()
 			local handler = ev_error_handlers[co]
 			if handler then
 				ev_error_handlers[co] = nil
-				ev_call(handler, rv2)
+				ev_call(handler, rv2[1])
 			else
-				eprintln('\aerror: %s', rv3)
+				eprintln('\aerror: %s', rv2[2])
 			end
 			local ok, err = coroutine.close(co) -- hope this doesn't yield?
 			if not ok then
 				eprintln('\aerror: %s', err)
 			end
 		end
-		local cb = ev_return_handlers[co] -- badly named
+		local cb = ev_return_handlers[co]
 		if cb then
 			ev_return_handlers[co] = nil
 			return ev_call(cb, co, cb)
@@ -1044,6 +1051,7 @@ _game_console_output = function (line)
 	local spam = false
 	if #line >= 19 then
 		local c = line:sub(1, 1)
+		if c == '#' and #line >= 55 and line:find('^##### CTexture::LoadTextureBitsFromFile couldn\'t find ') then goto match end
 		if c == '-' and #line >= 27 and line:find('^%-%-%- Missing Vgui material ') then goto match end
 		if c == 'A' and #line >= 48 and line:find('^Attemped to precache unknown particle system ".*"!$') then goto match end
 		if c == 'C' and #line >= 44 and line:find('^Cannot update control point [0-9]+ for effect \'.*\'%.$') then goto match end

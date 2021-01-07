@@ -18,6 +18,7 @@ OBJS = src/main.o \
        src/reloader.o \
        src/cli_input.o \
        src/cli_output.o \
+       src/pipe_io.o \
        src/keys.o \
        src/click.o \
        src/attention.o
@@ -117,6 +118,7 @@ endif
 
 CPPFLAGS += -pthread
 LDLIBS += -pthread
+LDLIBS += -ldl
 
 CPPFLAGS += -DEXE='"$(EXE)"'
 
@@ -128,8 +130,10 @@ LDLIBS += -lreadline
 LDLIBS += -lX11 -lXtst
 
 # lua
-# -export-dynamic: required to export symbols so that external C modules work
-LDLIBS += -Wl,-export-dynamic -llua -ldl -lm
+LUA_CFLAGS ?= $(shell pkg-config --cflags lua5.4)
+LUA_LIBS   ?= $(shell pkg-config --libs   lua5.4)
+CFLAGS += $(LUA_CFLAGS)
+LDLIBS += $(LUA_LIBS)
 
 # fuse
 CPPFLAGS += -I/usr/include/fuse3 -DFUSE_USE_VERSION=35

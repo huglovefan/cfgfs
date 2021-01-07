@@ -17,6 +17,7 @@
 #include "click.h"
 #include "lua.h"
 #include "macros.h"
+#include "pipe_io.h"
 
 _Atomic(enum attn) game_window_is_active = attn_unknown;
 
@@ -24,48 +25,27 @@ _Atomic(enum attn) game_window_is_active = attn_unknown;
 
 static int msgpipe[2] = {-1, -1};
 
-enum msg_action {
+enum msg {
 	msg_exit = 1,
 };
 
-#define msg_write(c) ({ char c_ = (c); write(msgpipe[1], &c_, 1); })
-#define msg_read()   ({ char c = 0; read(msgpipe[0], &c, 1); c; })
-
 // -----------------------------------------------------------------------------
 
-#define POLLNOTGOOD (POLLERR|POLLHUP|POLLNVAL)
-
 static bool wait_for_event(int conn) {
-	bool success = false;
-
-	struct pollfd fds[2] = {
-		{.fd = conn,       .events = POLLIN},
-		{.fd = msgpipe[0], .events = POLLIN},
-	};
-	for (;;) {
-		int rv = poll(fds, 2, -1);
-		if (unlikely(rv == -1)) {
-			if (likely(errno == EINTR)) continue;
-			perror("attention: poll");
-			break;
+	switch (rdselect(msgpipe[0], conn)) {
+	case 2:
+		return true;
+	case 1:
+		switch (readch(msgpipe[0])) {
+		case msg_exit:
+			return false;
 		}
-		if (unlikely((fds[0].revents|fds[1].revents) & POLLNOTGOOD)) break;
-		if (unlikely(fds[1].revents & POLLIN)) {
-			switch (msg_read()) {
-			case msg_exit:
-				goto out;
-			default:
-D				assert(0);
-				__builtin_unreachable();
-			}
-		}
-		if (likely(fds[0].revents & POLLIN)) {
-			success = true;
-			break;
-		}
+	case 0:
+		perror("attention: rdselect");
+		return false;
+	default:
+		return false;
 	}
-out:
-	return success;
 }
 
 static int l_update_attention(lua_State *L);
@@ -160,7 +140,7 @@ err:
 void attention_deinit(void) {
 	if (thread == 0) return;
 
-	msg_write(msg_exit);
+	writech(msgpipe[1], msg_exit);
 
 	pthread_join(thread, NULL);
 

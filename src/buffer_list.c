@@ -103,7 +103,8 @@ D			assert(self->nonfull != ent);
 
 #define buffer_new() \
 	({ \
-		struct buffer *_new_ent = calloc(1, (sizeof(struct buffer) + reported_cfg_size)); \
+		struct buffer *_new_ent = malloc((sizeof(struct buffer) + reported_cfg_size)); \
+		memset(_new_ent, 0, sizeof(struct buffer)); \
 		_new_ent->data = ((char *)_new_ent + sizeof(struct buffer)); \
 		_new_ent; \
 	})

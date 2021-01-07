@@ -211,6 +211,8 @@ end
 
 --------------------------------------------------------------------------------
 
+-- footwork
+
 nullcancel_pair = function (this_key, other_key, this_act, other_act)
 	local this_dn, this_up = '+'..this_act, '-'..this_act
 	local other_dn, other_up = '+'..other_act, '-'..other_act
@@ -298,33 +300,12 @@ add_listener('+mouse2', function ()
 	end
 end)
 
--- tell cfgfs you're a specific class (for testing)
-local key2cls = {
-	kp_end = 'scout',
-	kp_downarrow = 'soldier',
-	kp_pgdn = 'pyro',
-	kp_leftarrow = 'demoman',
-	kp_5 = 'heavyweapons',
-	kp_rightarrow = 'engineer',
-	kp_home = 'medic',
-	kp_uparrow = 'sniper',
-	kp_pgup = 'spy',
-}
-for k, v in pairs(key2cls) do
-	add_listener('+'..k, function ()
-		if is_pressed['alt'] then
-			class = v
-			fire_event('classchange', v)
-		end
-	end)
-end
-
 add_listener({'+1', '+2', '+3'}, function (_, key)
 	cmd.next_map_vote(tonumber(key)-1)
 end)
 
-cmd.mute = function () cvar.voice_scale = 0.1 end
-cmd.unmute = function () cvar.voice_scale = 0.5 end
+cmd.mute = function () cvar.voice_enable = 0 end
+cmd.unmute = function () cvar.voice_enable = 1 end
 
 do
 	local myname = nil
@@ -455,6 +436,44 @@ end)
 -- lux = 47
 cvar.tf_mm_custom_ping_enabled = 1
 cvar.tf_mm_custom_ping = 35
+
+-- get the demo file from https://docs.mastercomfig.com/en/latest/benchmarks/
+cmd.cfgfs_benchmark = function ()
+	os.execute('prios')
+
+	cmd.alias('game_overrides_once')
+
+	local do_perf = true
+	local perf_cmd = 'v doas perf record -p $(pidof hl2_linux)'
+	local pid = ''
+	local starting = function ()
+		if not do_perf then return end
+		pid = io.popen(perf_cmd .. ' >&2 & echo $!'):read('a')
+	end
+	local stopping = function ()
+		if not do_perf then return end
+		os.execute('v kill ' .. pid)
+	end
+
+	cmd.timedemo('benchmark_test')
+
+	local ready = false
+	for _, line in wait_for_events('game_console_output') do
+		if not ready then
+			if line == "'user/demoman.cfg' not present; not executing." then
+				starting()
+				ready = true
+			end
+		else
+			if line:find('^4812 frames ') then
+				stopping()
+				break
+			end
+		end
+	end
+
+	cmd.quit()
+end
 
 --------------------------------------------------------------------------------
 
@@ -652,67 +671,38 @@ end)
 
 --------------------------------------------------------------------------------
 
--- detect bots on the server
--- it just checks if their steam name is different and if they're on some lists
-
 local json = require 'json'
-local rex  = require 'rex_pcre2'
 
-table.includes = function (t, v)
-	for i = 1, #t do
-		if t[i] == v then return true end
+-- detect bots on the server
+-- it mostly just checks if they're on some lists
+
+local bad_steamids = {}
+add_listener('startup', function ()
+	panic = fatal
+	local p <close> = assert(io.popen('sh misc/get_bad_steamids.sh'))
+	local cnt = 0
+	for line in p:lines() do
+		local steamid, lists = assert(line:match('^(%S+)%s+(%S+)$'))
+		bad_steamids[steamid] = lists
+		cnt = cnt+1
 	end
-	return false
-end
-
-local bad_steamids_old = {}
--- update ^ with a newly read name and steamid from status
+	println('bad_steamids: loaded %d of them', cnt)
+end)
 local bad_steamids_check_status_entry = function (name, steamid)
 	name = name:lower()
 	if name:find('nigger')
 	or name:find('steam')
 	or name:find('valve')
 	or name:find('\n') then
-		bad_steamids_old[steamid] = true
+		if bad_steamids[steamid] then
+			if not (','..bad_steamids[steamid]..','):find(',console%.log,') then
+				bad_steamids[steamid] = 'console.log,'..bad_steamids[steamid]
+			end
+		else
+			bad_steamids[steamid] = 'console.log'
+		end
 	end
 end
-
-local bad_steamids_milenko = {}
-local bad_steamids_pazer = {}
-local bad_names_pazer = {}
-add_listener('startup', function ()
-	-- read old statuses from the console log
-	-- (it is small enough to read to a string)
-	local f <close> = open_log()
-	assert(f:seek('set', 0))
-	local s = assert(f:read('a'))
-	for id, name, steamid in rex.gmatch(s,
-	    '# +([0-9]+) "((?:.|\n){0,32})"(?=.{32}) +(\\[U:1:[0-9]+\\]) +[0-9]+:[0-9]+(?::[0-9]+)? +[0-9]+ +[0-9]+ [a-z]+\n') do
-		name = name:gsub('^%([0-9]+%)', '')
-		bad_steamids_check_status_entry(name, steamid)
-	end
-	-- https://github.com/PazerOP/tf2_bot_detector
-	local f <close> = io.open(os.getenv('HOME')..'/git/tf2_bot_detector/staging/cfg/playerlist.official.json')
-	if f then
-		for _, t in ipairs(json.decode(f:read('a')).players) do
-			if table.includes(t.attributes, 'cheater') then
-				bad_steamids_pazer[t.steamid] = true
-				if t.last_seen and t.last_seen.player_name then
-					bad_names_pazer[t.last_seen.player_name:gsub('^%([0-9]+%)', '')] = true
-				end
-			end
-		end
-	end
-	-- https://github.com/incontestableness/milenko
-	local f <close> = io.open(os.getenv('HOME')..'/git/milenko/playerlist.milenko-list.json')
-	if f then
-		for _, t in ipairs(json.decode(f:read('a')).players) do
-			bad_steamids_milenko[t.steamid] = true
-		end
-	end
-	-- https://github.com/PazerOP/tf2_bot_detector/wiki/Customization#third-party-player-lists-and-rules
-	-- there are a few more lists
-end)
 
 --[[ get_playerlist ]] do
 
@@ -723,7 +713,7 @@ local playerlist_currently_updating = false
 
 local playerlist_cache_time <const> = 5*1000
 
-get_playerlist = function () -- local
+get_playerlist = function ()
 	if playerlist and _ms() <= playerlist_updated+playerlist_cache_time then
 		return playerlist
 	end
@@ -803,7 +793,7 @@ local teamnames = {
 	['TF_GC_TEAM_INVADERS'] = 'red',
 	['TF_GC_TEAM_DEFENDERS'] = 'blu',
 }
-get_team = function (steamid) -- local
+get_team = function (steamid)
 	if _ms() <= teamdata_updated+teamdata_cache_time then
 		return teamdata[steamid]
 	end
@@ -914,20 +904,8 @@ cmd.bots = function ()
 		   ~= mangle_name_for_comparing(players[t.steamid].name) then
 			complain('steam name differs: %s', printableish(t.personaname))
 		end
-		if bad_steamids_old[players[t.steamid].steamid] then
-			complain('steamid had an impossible name in the past')
-		end
-		if bad_steamids_pazer[players[t.steamid].steamid] then
-			complain('steamid is included in the pazer list')
-		end
-		if bad_steamids_milenko[players[t.steamid].steamid] then
-			complain('steamid is included in the milenko list')
-		end
-		if bad_names_pazer[players[t.steamid].name:gsub('^%([0-9]+%)', '')] then
-			complain('in-game name is included in the pazer list')
-		end
-		if bad_names_pazer[t.personaname] then
-			complain('steam name is included in the pazer list')
+		if bad_steamids[players[t.steamid].steamid] then
+			complain('on lists: %s', bad_steamids[players[t.steamid].steamid])
 		end
 		bad_steamids_check_status_entry(players[t.steamid].name, players[t.steamid].steamid)
 	end
@@ -940,14 +918,21 @@ cmd.bots = function ()
 	cmd.echo('')
 end
 
-local find_own_steamid = function (playerlist)
-	local myname = cvar.name or cvar.name or cvar.name -- retry lol
-	for _, t in ipairs(playerlist) do
-		if t.name == myname then
-			return t.steamid
+local find_own_steamid do
+	local own_steamid = nil
+	find_own_steamid = function (playerlist) -- local
+		if own_steamid then
+			return own_steamid
 		end
+		local myname = cvar.name or cvar.name or cvar.name -- retry lol
+		for _, t in ipairs(playerlist) do
+			if t.name == myname then
+				own_steamid = t.steamid
+				return t.steamid
+			end
+		end
+		return nil
 	end
-	return nil
 end
 
 -- kick players that are definitely probably bots
@@ -966,16 +951,7 @@ cmd.kptadpb = function (_, key)
 	local myteam_robots = 0
 
 	local check_lists = function (t)
-		if bad_steamids_old[t.steamid] then
-			return true
-		end
-		if bad_steamids_pazer[t.steamid] then
-			return true
-		end
-		if bad_steamids_milenko[t.steamid] then
-			return true
-		end
-		return false
+		return (nil ~= bad_steamids[t.steamid])
 	end
 
 	local check_impossible_names = function (t)
