@@ -1,7 +1,6 @@
 cmd.echo('<script.lua>')
 
 cfgfs.game_window_title_is('Team Fortress 2 - OpenGL')
-cfgfs.init_after_cfg['comfig/modules_run.cfg'] = true
 cfgfs.intercept_blackhole['comfig/echo.cfg'] = true
 
 --------------------------------------------------------------------------------
@@ -306,22 +305,6 @@ end)
 
 cmd.mute = function () cvar.voice_enable = 0 end
 cmd.unmute = function () cvar.voice_enable = 1 end
-
-do
-	local myname = nil
-	local pat = nil
-	add_listener('classchange', function ()
-		myname = (cvar.name or myname)
-		if myname then
-			pat = '^'..myname:gsub('[^A-Za-z0-9_]', '.')..' killed '
-		end
-	end)
-	add_listener('game_console_output', function (line)
-		if pat and line:find(pat) and line:find(' %(crit%)$') then
-			cmd('+use_action_slot_item')
-		end
-	end)
-end
 
 --------------------------------------------------------------------------------
 

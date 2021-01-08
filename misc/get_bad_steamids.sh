@@ -27,7 +27,7 @@ do_list wgetjane 'https://gist.githubusercontent.com/wgetJane/0bc01bd46d76953622
 	!/^\[/ { list=$0; next; }
 	{
 		if (steamids[$0] != "")
-			steamids[$0] += "," list;
+			steamids[$0] = steamids[$0] "," list;
 		else
 			steamids[$0] = list;
 	}

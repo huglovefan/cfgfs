@@ -74,7 +74,7 @@ static void do_xevents(Atom net_active_window,
 			lua_State *L = lua_get_state();
 			 lua_pushcfunction(L, l_update_attention);
 			  lua_getglobal(L, "_attention");
-				lua_pushstring(L, (const char *)prop.value);
+			   lua_pushstring(L, (const char *)prop.value);
 			  lua_call(L, 1, 1);
 			lua_call(L, 1, 0);
 			lua_release_state_and_click(L);

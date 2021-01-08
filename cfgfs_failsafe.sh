@@ -1,6 +1,9 @@
-#!/bin/sh
-
 # script used by cfgfs_run to start cfgfs. this is what's shown in the terminal
+
+if [ $# -ne 1 ]; then
+	>&2 echo "usage: cfgfs_failsafe.sh <mountpoint>"
+	exit 1
+fi
 
 run() {
 	if mountpoint -q -- "$1"; then

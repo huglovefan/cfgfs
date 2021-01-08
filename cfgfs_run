@@ -46,8 +46,17 @@ mkdir -p "$cfgfs_mountpoint" || exit
 
 {
 cd -- "$cfgfs_dir" || exit
+
+# steam sets this to "C" which breaks unicode support in xterm
+if [ "$LC_ALL" = "C" ]; then unset LC_ALL; fi
+
+# steam sets these to funny values which breaks things
 unset LD_PRELOAD
 unset LD_LIBRARY_PATH
+
+export GAMEDIR="$gamedir"
+export GAMEROOT="$gameroot"
+
 exec xterm -title cfgfs -e /bin/sh cfgfs_failsafe.sh "$cfgfs_mountpoint"
 } &
 cfgfs_term_pid=$!
