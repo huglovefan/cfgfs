@@ -1,0 +1,81 @@
+#!/bin/sh
+
+# wrapper script that starts cfgfs together with the game
+
+if [ $# -eq 0 ]; then
+	>&2 echo "usage: cfgfs_run [...] <game_executable> -game <dirname> [...]"
+	>&2 echo "or rather, you're not meant to use this directly but by setting it in the launch options"
+	exit 1
+fi
+
+# pwd:
+# [[/home/human/.local/share/Steam/steamapps/common/Team Fortress 2]]
+# %command%:
+# [['/home/human/.local/share/Steam/steamapps/common/Team Fortress 2/hl2.sh' -game tf -steam]]
+
+t=$(realpath -- "$0") || exit
+t=$(dirname -- "$t") || exit
+[ -e "$t/cfgfs" ] || exit
+
+cfgfs_dir=$t
+cfgfs_mountpoint=
+gamedir=
+gameroot=$PWD
+
+find_gamedir_from_cmdline() {
+	while [ $# -ge 3 ]; do
+		if [ -f "$1" -a -x "$1" ] && \
+		   [ "$2" = "-game" ] && \
+		   [ -d "$gameroot/$3" ] \
+		; then
+			gamedir=$gameroot/$3
+			return 0
+		fi
+		shift
+	done
+	return 1
+}
+if ! find_gamedir_from_cmdline "$@"; then
+	>&2 echo "cfgfs_run: missing -game parameter"
+	exit 1
+fi
+
+cfgfs_mountpoint=$gamedir/custom/!cfgfs/cfg
+
+mkdir -p "$cfgfs_mountpoint" || exit
+
+{
+cd -- "$cfgfs_dir" || exit
+unset LD_PRELOAD
+unset LD_LIBRARY_PATH
+exec xterm -title cfgfs -e /bin/sh cfgfs_failsafe.sh "$cfgfs_mountpoint"
+} &
+cfgfs_term_pid=$!
+
+wait_cfgfs_ready() {
+	iter=1
+	while true; do
+		if mountpoint -q "$cfgfs_mountpoint"; then
+			return 0
+		fi
+		if [ ! -e "/proc/$cfgfs_term_pid" ]; then
+			return 1
+		fi
+		if [ $iter -le 10 ]; then
+			command sleep 0.1
+			# hope the non-builtin sleep supports fractional sleeping
+		else
+			sleep 1 || return 1
+		fi
+		iter=$((iter+1))
+	done
+}
+
+wait_cfgfs_ready || exit
+
+command "$@" +exec cfgfs/init
+rv=$?
+
+fusermount -u "$cfgfs_mountpoint" 2>/dev/null
+
+exit $rv

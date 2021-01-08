@@ -164,6 +164,21 @@ watch:
 		continue;\
 	done
 
+install:
+	@set -e; \
+	for dir in /usr/local/bin ~/.local/bin ~/bin; do \
+		case ":$$PATH:" in \
+		*":$$dir:"*) \
+			if [ -d "$$dir" -a -w "$$dir" ]; then \
+				ln -fsv "$$PWD/cfgfs_run" "$$dir/"; \
+				exit 0; \
+			fi;; \
+		esac; \
+	done; \
+	>&2 echo "error: no suitable install directory found in "'$$'"PATH"; \
+	>&2 echo "add a directory like ~/bin to your path (google it) or try running this as root"; \
+	exit 1;
+
 # ------------------------------------------------------------------------------
 
 MNTLNK := mnt

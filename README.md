@@ -43,15 +43,19 @@ end
 - `libfuse3`
 - `libreadline`
 - `libx11`, `libxtst`
+- `clang` compiler
+- xterm (for `cfgfs_run`)
 
 At the moment only GNU/Linux is supported. I don't have a Windows computer to
 test with and I don't <del>want one</del> know if this will even work on it.
 
-## Usage
+## Installation
 
-it's not really ready yet
+1. Run `make && make install` to compile cfgfs and install the `cfgfs_run`
+   symlink.
+2. Add `cfgfs_run %command%` to the beginning of the launch options for the game
+   you wish to play.  
+   If you already have something using `%command%` there, then add only
+   `cfgfs_run`.
 
-```sh
-make start # start for TF2
-make startfof # start for FoF
-```
+`script.lua` contains my "config", you'll probably want to delete most of it

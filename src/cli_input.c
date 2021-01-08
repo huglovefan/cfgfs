@@ -75,7 +75,7 @@ static void linehandler(char *line) {
 	}
 
 	if (unlikely(cli_got_eof)) {
-		// has to be called from here so it doesn't print another prompt
+		// has to be called from here so it doesn't print the prompt again
 		rl_callback_handler_remove();
 	}
 

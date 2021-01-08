@@ -33,6 +33,8 @@
 // -----------------------------------------------------------------------------
 
 static pthread_t g_main_thread;
+
+// true if we're exiting because main_quit() was called
 static bool main_quit_called;
 
 __attribute__((cold))
@@ -270,8 +272,9 @@ V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 		bool lua_locked = false;
 		size_t insize = size;
 
-		// """in theory""" this shouldn't need a lock since tf2 will only write one thing at a time
+		// tf2 only writes one thing at a time so this doesn't really need a lock
 D		assert(0 == pthread_mutex_trylock(&logcatcher_lock));
+
 		if (likely(size >= 2 && data[size-1] == '\n')) {
 			// writing a full line in one go
 			// may contain embedded newlines
@@ -422,16 +425,17 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 
 	// ~ init fuse ~
 
-	enum fuse_main_rv res;
+	enum fuse_main_rv rv;
 
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct fuse_cmdline_opts opts;
 	if (0 != fuse_parse_cmdline(&args, &opts)) {
-		return rv_invalid_argument;
+		rv = rv_invalid_argument;
+		goto out_no_fuse;
 	}
 	if (opts.show_version) {
 		fuse_lowlevel_version();
-		res = rv_ok;
+		rv = rv_ok;
 		goto out_no_fuse;
 	}
 	if (opts.show_help) {
@@ -441,12 +445,12 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 		println("FUSE options:");
 		fuse_cmdline_help();
 		fuse_lib_help(&args);
-		res = rv_ok;
+		rv = rv_ok;
 		goto out_no_fuse;
 	}
 	if (!opts.mountpoint) {
 		eprintln("error: no mountpoint specified");
-		res = rv_missing_mountpoint;
+		rv = rv_missing_mountpoint;
 		goto out_no_fuse;
 	}
 
@@ -454,16 +458,16 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 
 	struct fuse *fuse = fuse_new(&args, &cfgfs_oper, sizeof(cfgfs_oper), NULL);
 	if (fuse == NULL) {
-		res = rv_fuse_setup_failed;
+		rv = rv_fuse_setup_failed;
 		goto out_no_fuse;
 	}
 	if (0 != fuse_mount(fuse, opts.mountpoint)) {
-		res = rv_mount_failed;
+		rv = rv_mount_failed;
 		goto out_fuse_newed;
 	}
 	struct fuse_session *se = fuse_get_session(fuse);
 	if (0 != fuse_set_signal_handlers(se)) {
-		res = rv_signal_failed;
+		rv = rv_signal_failed;
 		goto out_fuse_newed_and_mounted;
 	}
 	g_main_thread = pthread_self();
@@ -471,7 +475,7 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 	// ~ init other things ~
 
 	if (!lua_init()) {
-		res = rv_cfgfs_lua_failed;
+		rv = rv_cfgfs_lua_failed;
 		goto out_fuse_newed_and_mounted_and_signals_handled;
 	}
 	attention_init();
@@ -485,9 +489,9 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 		.clone_fd = false,
 		.max_idle_threads = 5,
 	});
-	res = rv_ok;
+	rv = rv_ok;
 	if (loop_rv != 0 && !main_quit_called) {
-		res = rv_fs_error;
+		rv = rv_fs_error;
 	}
 
 out_fuse_newed_and_mounted_and_signals_handled:
@@ -508,8 +512,8 @@ out_no_fuse:
 	if (0 == unlink(".cfgfs_reexec")) {
 		execvp(argv[0], argv);
 		perror("cfgfs: exec");
-		return rv_cfgfs_reexec_failed;
+		rv = rv_cfgfs_reexec_failed;
 	}
-	return (int)res;
+	return (int)rv;
 
 }
