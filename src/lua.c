@@ -326,7 +326,6 @@ bool lua_init(void) {
 	end\
 	") != LUA_OK) lua_error(L);
 
-	attention_init_lua(L);
 	buffers_init_lua(L);
 	cfg_init_lua(L);
 	cli_input_init_lua(L);

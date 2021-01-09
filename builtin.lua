@@ -98,49 +98,32 @@ do
 
 local init_settings = function ()
 	cfgfs = {
-		-- output the "initial output" of script.lua when it's reloaded
-		-- (should only disable if you're testing things manually and it gets in the way)
-		init_on_reload = true,
-
-		-- output the "initial output" of script.lua each time after any of these these configs are executed
-		-- probably should be something that's always executed late during the game startup process
-		init_after_cfg = {
-			-- ['example.cfg'] = true,
-		},
-
-		-- same as init_after_cfg but before the config
-		-- (maybe not very useful?)
-		init_before_cfg = {
-			-- ['example.cfg'] = true,
-		},
-		-- avoid interfering with the execution these "configs"
-		-- add files from the cfg directory that aren't in cfg format here
-		-- (messing with them causes problems)
 		intercept_blacklist = {
-			-- tf2
-			['mtp.cfg'] = true,
-			-- fof
 			['banned_ip.cfg'] = true,
 			['banned_user.cfg'] = true,
 		},
-		-- KeyValues Error: LoadFromBuffer: missing { in file cfg/pure_server_minimal.txt
-		-- KeyValues Error: LoadFromBuffer: missing { in file cfg/trusted_keys_base.txt
 
-		-- prevent the game from executing these configs
 		intercept_blackhole = {
-			-- ['example.cfg'] = true,
+			-- ['name.cfg'] = true,
 		},
 
-		-- after script.lua is reloaded, "restore" these globals by firing the corresponding events with their values
-		-- (globals normally persist across reloads though)
 		restore_globals_on_reload = {
-			['class'] = 'classchange',
-			['slot'] = 'slotchange',
+			-- ['varname'] = true,
 		},
 
-		-- work around lack of alias command for games that don't have it (fof)
 		compat_noalias = false,
 	}
+
+	if os.getenv('GAMENAME') == 'Team Fortress 2' then
+		cfgfs.intercept_blacklist['mtp.cfg'] = true
+		cfgfs.restore_globals_on_reload['class'] = true
+		cfgfs.restore_globals_on_reload['slot'] = true
+	end
+
+	if os.getenv('GAMENAME') == 'Fistful of Frags' then
+		-- https://steamcommunity.com/games/fof/announcements/detail/199616928162078893
+		cfgfs.compat_noalias = true
+	end
 end
 
 init_settings()
@@ -869,16 +852,8 @@ _get_contents_ = function (path)
 			cmd.echo('')
 		end
 
-		if cfgfs.init_before_cfg[path] then
-			_init()
-		end
-
 		if not cfgfs.intercept_blackhole[path] then
 			cfgf('exec"cfgfs/unmask_next/%s";exec"%s"', path, path)
-		end
-
-		if cfgfs.init_after_cfg[path] then
-			_init()
 		end
 
 		local cls = (path:before('.cfg') or path)
@@ -908,36 +883,16 @@ end
 
 do
 
-local is_active = nil
-local game_title = nil
+local is_active = false
 
-_attention = function (active_title)
-	if game_title == nil then
-		return nil
-	end
-	local was_active = is_active
-	is_active = (active_title == game_title)
-	if is_active ~= was_active then
-		fire_event('attention', is_active)
-	end
-	return is_active
+_attention = function (new_is_active)
+	fire_event('attention', new_is_active)
+	is_active = new_is_active
 end
 
 is_game_window_active = function ()
 	return is_active
 end
-
-local game_window_title_is = function (title)
-	game_title = title
-	return _update_attention(_attention(_get_attention()))
-end
-
--- ...
-cfgfs.game_window_title_is = game_window_title_is
-
-add_reset_callback(function ()
-	cfgfs.game_window_title_is = game_window_title_is
-end)
 
 end
 
@@ -1180,9 +1135,7 @@ end
 _reload_2 = function (ok)
 	if not ok then return end
 
-	if cfgfs.init_on_reload then
-		_init()
-	end
+	_init()
 
 	for name, evt in pairs(cfgfs.restore_globals_on_reload) do
 		if global(name) then

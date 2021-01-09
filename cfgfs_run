@@ -57,6 +57,13 @@ unset LD_LIBRARY_PATH
 export GAMEDIR="$gamedir"
 export GAMEROOT="$gameroot"
 
+# parse the game name from gameinfo.txt
+if [ -f "$gamedir/gameinfo.txt" ] && \
+   gamename=$(grep -Poim1 '^\s*(?:game\s|"game")\s*(?:"\K[^"]*(?=(?:"\s*)?$)|\K.*?(?=\s*$))' "$gamedir/gameinfo.txt") \
+; then
+	export GAMENAME="$gamename"
+fi
+
 exec xterm -title cfgfs -e /bin/sh cfgfs_failsafe.sh "$cfgfs_mountpoint"
 } &
 cfgfs_term_pid=$!

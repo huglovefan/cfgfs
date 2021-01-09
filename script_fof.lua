@@ -1,9 +1,5 @@
 cmd.echo('<script_fof.lua>')
 
-cfgfs.game_window_title_is('Fistful of Frags - OpenGL')
-cfgfs.compat_noalias = true -- https://steamcommunity.com/games/fof/announcements/detail/199616928162078893
-cfgfs.init_after_cfg['config.cfg'] = true -- why does it sometimes not do autoexec?
-
 --------------------------------------------------------------------------------
 
 cvar.con_logfile = 'console.log'

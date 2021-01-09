@@ -36,7 +36,7 @@ static bool thread_attr_inited = false;
 static pthread_attr_t thread_attr;
 
 void do_click(void) {
-	if (game_window_is_active != attn_inactive &&
+	if (game_window_is_active &&
 	    (0 == pthread_mutex_trylock(&click_lock))) {
 		if (display != NULL && keycode != 0) {
 			XTestFakeKeyEvent(display, keycode, True, CurrentTime);

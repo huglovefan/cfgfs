@@ -19,7 +19,7 @@
 #include "macros.h"
 #include "pipe_io.h"
 
-_Atomic(enum attn) game_window_is_active = attn_unknown;
+_Atomic(_Bool) game_window_is_active = 0;
 
 // -----------------------------------------------------------------------------
 
@@ -30,6 +30,10 @@ enum msg {
 };
 
 // -----------------------------------------------------------------------------
+
+static Display *display;
+static const char *game_window_title = NULL;
+#define window_title_suffix " - OpenGL"
 
 static bool wait_for_event(int conn) {
 	switch (rdselect(msgpipe[0], conn)) {
@@ -47,9 +51,6 @@ static bool wait_for_event(int conn) {
 		return false;
 	}
 }
-
-static int l_update_attention(lua_State *L);
-static Display *display;
 
 static void do_xevents(Atom net_active_window,
                        Atom net_wm_name) {
@@ -71,13 +72,20 @@ static void do_xevents(Atom net_active_window,
 			XTextProperty prop;
 			XGetTextProperty(display, focus, &prop, net_wm_name);
 
-			lua_State *L = lua_get_state();
-			 lua_pushcfunction(L, l_update_attention);
-			  lua_getglobal(L, "_attention");
-			   lua_pushstring(L, (const char *)prop.value);
-			  lua_call(L, 1, 1);
-			lua_call(L, 1, 0);
-			lua_release_state_and_click(L);
+			const char *title = (const char *)prop.value;
+VV			eprintln("attention: title=\"%s\"", title);
+			bool oldattn = game_window_is_active;
+			bool newattn = title != NULL && 0 == strcmp(title, game_window_title);
+			if (newattn != oldattn) {
+				game_window_is_active = newattn;
+VV				eprintln("attention: game_window_is_active=%d", newattn);
+
+				lua_State *L = lua_get_state();
+				 lua_getglobal(L, "_attention");
+				  lua_pushboolean(L, newattn);
+				lua_call(L, 1, 0);
+				lua_release_state_and_click(L);
+			}
 
 			if (prop.value) XFree(prop.value);
 		}
@@ -99,9 +107,18 @@ static void *attention_main(void *ud) {
 	int conn = ConnectionNumber(display);
 	assert(conn >= 0);
 
+	const char *gamename = getenv("GAMENAME");
+	size_t gnlen = strlen(gamename);
+	char title[gnlen+strlen(window_title_suffix)+1];
+	sprintf(title, "%s%s", gamename, window_title_suffix);
+	game_window_title = title;
+VV	eprintln("attention: game_window_title=\"%s\"", game_window_title);
+
 	do {
 		do_xevents(net_active_window, net_wm_name);
 	} while (wait_for_event(conn));
+
+	game_window_title = NULL;
 
 	return NULL;
 }
@@ -112,6 +129,10 @@ static pthread_t thread;
 
 void attention_init(void) {
 	if (thread != 0) return;
+	if (!getenv("GAMENAME")) {
+		eprintln("attention: unknown game, exiting");
+		return;
+	}
 
 	display = XOpenDisplay(NULL);
 	if (display == NULL) {
@@ -150,63 +171,4 @@ void attention_deinit(void) {
 	XCloseDisplay(exchange(display, NULL));
 
 	thread = 0;
-}
-
-// -----------------------------------------------------------------------------
-
-#define display dpy /* silence -Wshadow. can't use the global as it is not thread-safe */
-
-// get the title of the active window
-// (not performance-critical)
-static char *get_attention(void) {
-	char *rv = NULL;
-
-	Display *display = XOpenDisplay(NULL);
-	if (display) {
-		Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
-
-		Window focus;
-		int revert;
-		XGetInputFocus(display, &focus, &revert);
-
-		XTextProperty prop;
-		XGetTextProperty(display, focus, &prop, net_wm_name);
-
-		if (prop.value) {
-			rv = strdup((const char *)prop.value);
-			XFree(prop.value);
-		}
-
-		XCloseDisplay(display);
-	}
-	return rv;
-}
-
-// -----------------------------------------------------------------------------
-
-static int l_get_attention(lua_State *L) {
-	char *s = get_attention();
-	lua_pushstring(L, s);
-	free(s);
-	return 1;
-}
-
-static int l_update_attention(lua_State *L) {
-	enum attn newval;
-	if (!lua_isnil(L, 1)) {
-		newval = (lua_toboolean(L, 1))
-		         ? attn_active
-		         : attn_inactive;
-	} else {
-		newval = attn_unknown;
-	}
-	game_window_is_active = newval;
-	return 0;
-}
-
-void attention_init_lua(void *L) {
-	 lua_pushcfunction(L, l_get_attention);
-	lua_setglobal(L, "_get_attention");
-	 lua_pushcfunction(L, l_update_attention);
-	lua_setglobal(L, "_update_attention");
 }

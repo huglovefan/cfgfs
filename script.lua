@@ -1,6 +1,5 @@
 cmd.echo('<script.lua>')
 
-cfgfs.game_window_title_is('Team Fortress 2 - OpenGL')
 cfgfs.intercept_blackhole['comfig/echo.cfg'] = true
 
 --------------------------------------------------------------------------------

@@ -6,7 +6,7 @@ if [ $# -ne 1 ]; then
 fi
 
 run() {
-	if mountpoint -q -- "$1"; then
+	if mount | fgrep -q " $1 "; then
 		fusermount -u -- "$1" || return
 	fi
 
