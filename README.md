@@ -52,7 +52,7 @@ test with and I don't <del>want one</del> know if this will even work on it.
 ## Installation
 
 1. Run `make && make install` to compile cfgfs and install the `cfgfs_run`
-   script.
+   script
 2. Add `cfgfs_run %command%` to the beginning of the game's launch options.  
    If you already have something using `%command%` there, add only `cfgfs_run`.
 
