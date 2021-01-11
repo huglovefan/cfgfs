@@ -184,9 +184,7 @@ install:
 MNTLNK := mnt
 
 TF2MNT := ~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg
-FOFMNT := ~/.local/share/Steam/steamapps/common/Fistful\ of\ Frags/fof/custom/!cfgfs/cfg
 
-# start in game (tf2) directory
 start: $(EXE)
 	@set -e; \
 	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
@@ -195,22 +193,3 @@ start: $(EXE)
 	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
 	ln -fs $(TF2MNT) $(MNTLNK); \
 	exec ./$(EXE) $(CFGFS_FLAGS) $(TF2MNT)
-
-# start in game (fof) directory
-startfof: $(EXE)
-	@set -e; \
-	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
-	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
-	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
-	[ -d $(FOFMNT) ] || mkdir -p $(FOFMNT); \
-	ln -fs $(FOFMNT) $(MNTLNK); \
-	CFGFS_SCRIPT=./script_fof.lua exec ./$(EXE) $(CFGFS_FLAGS) $(FOFMNT)
-
-# start it here
-start2: $(EXE)
-	@set -e; \
-	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
-	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
-	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
-	mkdir -p $(MNTLNK); \
-	exec ./$(EXE) $(CFGFS_FLAGS) $(MNTLNK)

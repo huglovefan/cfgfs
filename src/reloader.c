@@ -73,14 +73,6 @@ static void do_reload(void) {
 	  lua_rotate(L, -2, 1);
 	lua_call(L, 1, 0);
 
-	// this has to be reloaded since it comes from the settings table
-	assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
-	lua_pop(L, 1);
-	 lua_getglobal(L, "cfgfs");
-	  lua_getfield(L, -1, "intercept_blacklist");
-	  lua_rotate(L, -2, 1);
-	 lua_pop(L, 1);
-
 	lua_release_state(L);
 }
 
@@ -97,7 +89,7 @@ static void *reloader_main(void *ud) {
 	    "reloader: inotify_init",
 	    goto out);
 
-	const char *filename = (getenv("CFGFS_SCRIPT") ?: "./script.lua");
+	const char *filename = (getenv("CFGFS_SCRIPT") ?: "script.lua");
 	while (wait_for_event(filename, fd)) {
 		do_reload();
 	}

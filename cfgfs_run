@@ -64,6 +64,17 @@ if [ -f "$gamedir/gameinfo.txt" ] && \
 	export GAMENAME="$gamename"
 fi
 
+if [ -z "$CFGFS_SCRIPT" ]; then
+	export CFGFS_SCRIPT=script_${SteamAppId}.lua
+	if [ ! -e "$CFGFS_SCRIPT" ]; then
+		{
+		echo "-- cfgfs script for ${GAMENAME:-app id ${SteamAppId}}"
+		echo ""
+		echo "cmd.echo('cfgfs: script_${SteamAppId}.lua loaded')"
+		} >>"$CFGFS_SCRIPT"
+	fi
+fi
+
 exec xterm -title cfgfs -e /bin/sh cfgfs_failsafe.sh "$cfgfs_mountpoint"
 } &
 cfgfs_term_pid=$!
@@ -89,9 +100,20 @@ wait_cfgfs_ready() {
 
 wait_cfgfs_ready || exit
 
-command "$@" +exec cfgfs/init
+if [ -f "$gamedir/console.log" -a ! -L "$gamedir/console.log" ]; then
+	mv -fv "$gamedir/console.log" "$gamedir/console.log.$(date +%s)"
+fi
+ln -sfv custom/!cfgfs/cfg/console.log "$gamedir/console.log"
+
+command "$@" \
+    -condebug \
+    +exec cfgfs/init
 rv=$?
 
-fusermount -u "$cfgfs_mountpoint" 2>/dev/null
+fusermount -u "$cfgfs_mountpoint" 2>/dev/null &
+
+if [ -L "$gamedir/console.log" ]; then
+	rm -fv "$gamedir/console.log"
+fi
 
 exit $rv

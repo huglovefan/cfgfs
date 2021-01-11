@@ -1,8 +1,8 @@
+-- cfgfs script for Fistful of Frags
+
 cmd.echo('<script_fof.lua>')
 
 --------------------------------------------------------------------------------
-
-cvar.con_logfile = 'console.log'
 
 cvar.sensitivity = 2.6
 
@@ -52,17 +52,16 @@ bind('d',                               nullcancel_pair('d', 'a', 'moveright', '
 bind('tab',                             '+showscores;cl_showfps 2;cl_showpos 1',
                                         '-showscores;cl_showfps 0;cl_showpos 0')
 
-cmd.bind('f8',                          'exec cfgfs/click')
+bind('f8',                              'cfgfs_click')
 bind('f9',                              release_all_keys)
 
 bind('f10', function ()
-	local old = cvar.con_enable
 	cvar.con_enable = 1
 	cmd.toggleconsole()
-	cvar.con_enable = old
+	cvar.con_enable = 0
 end)
 
-cmd.bind('f11',                         'exec cfgfs/click')
+bind('f11',                             'cfgfs_click')
 
 --------------------------------------------------------------------------------
 

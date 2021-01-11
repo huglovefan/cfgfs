@@ -112,34 +112,14 @@ static int lookup_path(const char *restrict path, enum special_file_type *type) 
 
 __attribute__((noinline))
 static int l_lookup_path(const char *restrict path) {
-	int rv = 0xf;
-
 	lua_State *L = lua_get_state();
-
-	 lua_pushvalue(L, UNMASK_NEXT_IDX);
-	  lua_getfield(L, -1, path+1); // skip "/"
-	  lua_Integer cnt = lua_tointeger(L, -1);
-	  if (unlikely(cnt != 0)) {
-		   cnt -= 1;
-		   lua_pushstring(L, path+1); // skip "/"
-		    lua_pushinteger(L, cnt);
-		  lua_rawset(L, -4);
-		lua_pop(L, 2);
-VV		eprintln("unmask_next[%s]: %lld -> %lld", path+1, cnt+1, cnt);
-		rv = -ENOENT;
-		goto out_locked;
-	  }
-	//lua_pop(L, 2); // combined below
-
-	 lua_pushvalue(L, CFG_BLACKLIST_IDX);
-	  lua_getfield(L, -1, path+1); // skip "/"
-	  bool blacklisted = lua_toboolean(L, -1);
-	lua_pop(L, 2+2);
-	if (unlikely(blacklisted)) {
-		rv = -ENOENT;
-		goto out_locked;
-	}
-out_locked:
+	 lua_getglobal(L, "_lookup_path");
+	  lua_pushstring(L, path+1); // skip "/"
+	 lua_call(L, 1, 1);
+	 int rv = (int)lua_tointeger(L, -1);
+	lua_pop(L, 1);
+D	assert(rv == 0 || rv == 0xd || rv == 0xf);
+	if (rv == 0) rv = -ENOENT;
 	lua_release_state_no_click(L);
 	return rv;
 }
@@ -474,13 +454,13 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 
 	// ~ init other things ~
 
+	click_init(); // required by builtin.lua
 	if (!lua_init()) {
 		rv = rv_cfgfs_lua_failed;
 		goto out_fuse_newed_and_mounted_and_signals_handled;
 	}
 	attention_init();
 	cli_input_init();
-	click_init();
 	reloader_init();
 
 	// ~ boot up fuse ~

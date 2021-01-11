@@ -52,44 +52,45 @@ static bool wait_for_event(int conn) {
 	}
 }
 
-static void do_xevents(Atom net_active_window,
-                       Atom net_wm_name) {
-	XEvent event;
+static void check_attention(Atom net_wm_name) {
+	Window focus;
+	int revert;
+	XGetInputFocus(display, &focus, &revert);
+
+	XTextProperty prop;
+	XGetTextProperty(display, focus, &prop, net_wm_name);
+
+	const char *title = (const char *)prop.value;
+VV	eprintln("attention: title=\"%s\"", title);
+	bool oldattn = game_window_is_active;
+	bool newattn = title != NULL && 0 == strcmp(title, game_window_title);
+	if (newattn != oldattn) {
+		game_window_is_active = newattn;
+V		eprintln("attention: game_window_is_active=%d", newattn);
+
+		lua_State *L = lua_get_state();
+		 lua_getglobal(L, "_attention");
+		  lua_pushboolean(L, newattn);
+		lua_call(L, 1, 0);
+		lua_release_state_and_click(L);
+	}
+
+	if (prop.value) XFree(prop.value);
+}
+
+static bool did_active_window_change(Atom net_active_window) {
 	int cnt = 0;
-	bool did_call_lua = false;
+	bool attention_changed = false;
 
 	while (++cnt <= 10 && XPending(display)) {
+		XEvent event;
 		XNextEvent(display, &event);
-
-		if (event.type == 28 &&
-		    event.xproperty.atom == net_active_window &&
-		    !did_call_lua++)
-		{
-			Window focus;
-			int revert;
-			XGetInputFocus(display, &focus, &revert);
-
-			XTextProperty prop;
-			XGetTextProperty(display, focus, &prop, net_wm_name);
-
-			const char *title = (const char *)prop.value;
-VV			eprintln("attention: title=\"%s\"", title);
-			bool oldattn = game_window_is_active;
-			bool newattn = title != NULL && 0 == strcmp(title, game_window_title);
-			if (newattn != oldattn) {
-				game_window_is_active = newattn;
-VV				eprintln("attention: game_window_is_active=%d", newattn);
-
-				lua_State *L = lua_get_state();
-				 lua_getglobal(L, "_attention");
-				  lua_pushboolean(L, newattn);
-				lua_call(L, 1, 0);
-				lua_release_state_and_click(L);
-			}
-
-			if (prop.value) XFree(prop.value);
+		if (event.type == 28 && event.xproperty.atom == net_active_window) {
+			attention_changed = true;
 		}
 	}
+
+	return attention_changed;
 }
 
 __attribute__((cold))
@@ -114,9 +115,12 @@ static void *attention_main(void *ud) {
 	game_window_title = title;
 VV	eprintln("attention: game_window_title=\"%s\"", game_window_title);
 
-	do {
-		do_xevents(net_active_window, net_wm_name);
-	} while (wait_for_event(conn));
+	check_attention(net_wm_name);
+	while (wait_for_event(conn)) {
+		if (did_active_window_change(net_active_window)) {
+			check_attention(net_wm_name);
+		}
+	}
 
 	game_window_title = NULL;
 
@@ -130,7 +134,7 @@ static pthread_t thread;
 void attention_init(void) {
 	if (thread != 0) return;
 	if (!getenv("GAMENAME")) {
-		eprintln("attention: unknown game, exiting");
+		eprintln("warning: $GAMENAME not set, the \"attention\" event won't work");
 		return;
 	}
 

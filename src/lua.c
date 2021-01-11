@@ -346,18 +346,9 @@ bool lua_init(void) {
 	 lua_getglobal(L, "_get_contents");
 D	 assert(lua_gettop(L) == GET_CONTENTS_IDX);
 D	 assert(lua_type(L, GET_CONTENTS_IDX) == LUA_TFUNCTION);
-	  lua_getglobal(L, "unmask_next");
-D	  assert(lua_gettop(L) == UNMASK_NEXT_IDX);
-D	  assert(lua_type(L, UNMASK_NEXT_IDX) == LUA_TTABLE);
-	   lua_getglobal(L, "_game_console_output");
-D	   assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
-D	   assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
-	    lua_getglobal(L, "cfgfs");
-	     lua_getfield(L, -1, "intercept_blacklist");
-	     lua_rotate(L, -2, 1);
-	    lua_pop(L, 1);
-D	    assert(lua_gettop(L) == CFG_BLACKLIST_IDX);
-D	    assert(lua_type(L, CFG_BLACKLIST_IDX) == LUA_TTABLE);
+	  lua_getglobal(L, "_game_console_output");
+D	  assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
+D	  assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
 
 	buffer_list_swap(&buffers, &init_cfg);
 

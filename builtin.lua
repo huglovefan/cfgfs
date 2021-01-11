@@ -4,6 +4,7 @@ _println = assert(_print)
 println = function (fmt, ...) return _print(string.format(fmt, ...)) end
 _eprintln = assert(_eprint)
 eprintln = function (fmt, ...) return _eprint(string.format(fmt, ...)) end
+
 print = function (...)
 	local t = {...}
 	local l = select('#', ...)
@@ -98,26 +99,33 @@ do
 
 local init_settings = function ()
 	cfgfs = {
-		intercept_blacklist = {
-			['banned_ip.cfg'] = true,
-			['banned_user.cfg'] = true,
+		intercept_cfgs = {
+			['config.cfg'] = true,
 		},
 
-		intercept_blackhole = {
+		hide_cfgs = {
 			-- ['name.cfg'] = true,
 		},
 
 		restore_globals_on_reload = {
-			-- ['varname'] = true,
+			-- ['varname'] = 'eventname',
 		},
 
 		compat_noalias = false,
 	}
 
 	if os.getenv('GAMENAME') == 'Team Fortress 2' then
-		cfgfs.intercept_blacklist['mtp.cfg'] = true
-		cfgfs.restore_globals_on_reload['class'] = true
-		cfgfs.restore_globals_on_reload['slot'] = true
+		cfgfs.intercept_cfgs['scout.cfg'] = true
+		cfgfs.intercept_cfgs['soldier.cfg'] = true
+		cfgfs.intercept_cfgs['pyro.cfg'] = true
+		cfgfs.intercept_cfgs['demoman.cfg'] = true
+		cfgfs.intercept_cfgs['heavyweapons.cfg'] = true
+		cfgfs.intercept_cfgs['engineer.cfg'] = true
+		cfgfs.intercept_cfgs['medic.cfg'] = true
+		cfgfs.intercept_cfgs['sniper.cfg'] = true
+		cfgfs.intercept_cfgs['spy.cfg'] = true
+		cfgfs.restore_globals_on_reload['class'] = 'classchange'
+		cfgfs.restore_globals_on_reload['slot'] = 'slotchange'
 	end
 
 	if os.getenv('GAMENAME') == 'Fistful of Frags' then
@@ -203,7 +211,7 @@ local ev_handle_return = function (co, ok, rv1, rv2, rv3)
 			else
 				eprintln('\aerror: %s', rv2[2])
 			end
-			local ok, err = coroutine.close(co) -- hope this doesn't yield?
+			local ok, err = coroutine.close(co) -- can this yield?
 			if not ok then
 				eprintln('\aerror: %s', err)
 			end
@@ -252,15 +260,6 @@ local ev_do_timeouts = function ()
 
 	local newts = {}
 	ev_timeouts = {}
-	-- if this thing ever gets the ability to cancel timeouts, then grabbing
-	--  and replacing the global list like this won't do because there needs
-	--  to be a way to remove a timeout from it from outside
-	-- possibly better alternative: put timeouts in a sorted list and in
-	--  the loop here, check the item at the head and only remove it if we're
-	--  going to run it
-	-- ^ may need something to avoid resuming wait(0) ones too early (like a
-	--  "generation" counter, don't resume ones added during this same cfgfs
-	--  call)
 
 	local now = nil
 	for i = 1, #ts do
@@ -316,6 +315,20 @@ setmetatable(is_pressed, {
 		return error(string.format('unknown key "%s"', key), 2)
 	end,
 })
+
+_lookup_path = function (path)
+	local cnt = (unmask_next[path] or 0)
+	if cnt > 0 then
+		unmask_next[path] = cnt-1
+		return 0
+	end
+	if not (cfgfs.intercept_cfgs[path]
+	        or cfgfs.hide_cfgs[path])
+	then
+		return 0
+	end
+	return 0xf
+end
 
 --------------------------------------------------------------------------------
 
@@ -401,7 +414,7 @@ cmdp = setmetatable({--[[ empty ]]}, {
 	end,
 })
 
--- works like 99% of the time
+-- works like 98% of the time
 run_capturing_output = function (cmd)
 	reexec()
 
@@ -504,10 +517,19 @@ cvar = setmetatable({--[[ empty ]]}, {
 
 --------------------------------------------------------------------------------
 
+local click_key_bound = false
+
 bind = function (key, cmd, cmd2)
 	local n = key2num[key]
 	if not n then
 		return error(string.format('tried to bind unknown key "%s"', key), 2)
+	end
+	if cmd == 'cfgfs_click' and key:find('^f[0-9]+$') then
+		local cmd = _G.cmd
+		click_key_bound = true
+		cmd.bind(key, 'exec cfgfs/click')
+		_click_set_key(key)
+		return
 	end
 	if not cfgfs.compat_noalias then
 		if not binds_down[key] then
@@ -772,8 +794,7 @@ _get_contents_ = function (path)
 			return fire_event('-'..name, false, name)
 
 		else
-			-- fatal
-			return error('unknown bind type')
+			return fatal('unknown bind type')
 		end
 		-- ^ this is duplicated because function calls are SLOW ^
 		return
@@ -852,7 +873,7 @@ _get_contents_ = function (path)
 			cmd.echo('')
 		end
 
-		if not cfgfs.intercept_blackhole[path] then
+		if not cfgfs.hide_cfgs[path] then
 			cfgf('exec"cfgfs/unmask_next/%s";exec"%s"', path, path)
 		end
 
@@ -1010,15 +1031,19 @@ _game_console_output = function (line)
 		if c == '-' and #line >= 27 and line:find('^%-%-%- Missing Vgui material ') then goto match end
 		if c == 'A' and #line >= 48 and line:find('^Attemped to precache unknown particle system ".*"!$') then goto match end
 		if c == 'C' and #line >= 44 and line:find('^Cannot update control point [0-9]+ for effect \'.*\'%.$') then goto match end
+		if c == 'C' and #line >= 99 and line:find('^Convar .* has conflicting FCVAR_CHEAT flags %(child: FCVAR_CHEAT, parent: no FCVAR_CHEAT, parent wins%)$') then goto match end
 		if c == 'E' and #line >= 34 and line:find('^EmitSound: pitch out of bounds = %-?[0-9]+$') then goto match end
 		if c == 'E' and #line >= 41 and line:find('^Error: Material ".*" uses unknown shader ".*"$') then goto match end
+		if c == 'F' and #line >= 72 and line:find('^For FCVAR_REPLICATED, ConVar must be defined in client and game .dlls %(.*%)$') then goto match end
 		if c == 'F' and #line >= 102 and line:find('^Failed to find attachment point specified for .* event%. Trying to spawn effect \'.*\' on attachment named \'.*\'$') then goto match end
 		if c == 'M' and #line >= 68 and line:find('^Model \'.*\' doesn\'t have attachment \'.*\' to attach particle system \'.*\' to%.$') then goto match end
 		if c == 'N' and #line >= 35 and line:find('^No such variable ".*" for material ".*"$') then goto match end
+		if c == 'P' and #line >= 40 and line:find('^Parent cvar in server.dll not allowed %(.*%)$') then goto match end
 		if c == 'R' and #line >= 78 and line:find('^Requesting texture value from var ".*" which is not a texture value %(material: .*%)$') then goto match end
 		if c == 'S' and #line >= 36 and line:find('^Shutdown function [A-Za-z0-9_]+%(%) not in list!!!$') then goto match end
 		if c == 'S' and #line >= 49 and line:find('^SetupBones: invalid bone array size %([0-9]+ %- needs [0-9]+%)$') then goto match end
 		if c == 'U' and #line >= 19 and line:find('^Unable to remove .+!$') then goto match end
+		if c == 'U' and #line >= 55 and line:find('^Unable to bind a key for command ".*" after [0-9]+ attempt%(s%)%.$') then goto match end
 		if c == 'm' and #line >= 42 and line:find('^m_face%->glyph%->bitmap%.width is [0-9]+ for ch:[0-9]+ ') then goto match end
 		if line == 'Unknown command "dimmer_clicked"' then goto match end
 		goto nomatch
@@ -1099,14 +1124,32 @@ end
 
 --------------------------------------------------------------------------------
 
-local builtin_aliases = function ()
+-- local click_key_bound: declared near bind() where it's set
+
+local before_script_exec = function ()
+	click_key_bound = false
+end
+local after_script_exec = function ()
+	cmd.cfgfs_click = 'exec cfgfs/click'
+	cmd.cfgfs_init = 'exec cfgfs/init'
+	cmd.cfgfs_init_log = function ()
+		cvar.con_logfile = ''
+		cvar.con_logfile = 'console.log'
+	end
 	cmd.cfgfs_license = 'exec cfgfs/license'
 	cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
+	cmd.release_all_keys = assert(release_all_keys)
+	cfg('cfgfs_init_log')
+	if not click_key_bound then
+		eprintln('\awarning: no function key bound to "cfgfs_click" found!')
+		eprintln(' why: one of the f1-f12 keys must be bound to "cfgfs_click" for delayed command execution to work')
+		eprintln(' how: add a keybind like "bind(\'f11\', \'cfgfs_click\')" and re-save script.lua')
+	end
 end
 
 -- reload and re-run script.lua
 _reload_1 = function ()
-	local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or './script.lua')
+	local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or 'script.lua')
 	if not ok then
 		eprintln('\aerror: %s', err)
 		eprintln('failed to reload script.lua!')
@@ -1116,8 +1159,11 @@ _reload_1 = function ()
 
 	_fire_unload(false)
 	do_reset()
+
+	before_script_exec()
 	local ok, err = xpcall(script, debug.traceback)
-	builtin_aliases()
+	after_script_exec()
+
 	if not ok then
 		eprintln('\aerror: %s', err)
 		eprintln('script.lua was reloaded with an error!')
@@ -1147,6 +1193,10 @@ _reload_2 = function (ok)
 end
 
 _fire_startup = function ()
+	-- probably crashed. need to reopen the log file
+	if os.getenv('CFGFS_RESTARTED') then
+		_init()
+	end
 	return fire_event('startup')
 end
 
@@ -1162,7 +1212,7 @@ end
 
 --------------------------------------------------------------------------------
 
-local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or './script.lua')
+local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or 'script.lua')
 if not ok then
 	eprintln('\aerror: %s', err)
 	eprintln('failed to load script.lua!')
@@ -1170,8 +1220,10 @@ if not ok then
 end
 local script = ok
 
+before_script_exec()
 local ok, err = xpcall(script, debug.traceback)
-builtin_aliases()
+after_script_exec()
+
 if not ok then
 	eprintln('\aerror: %s', err)
 	eprintln('failed to load script.lua!')

@@ -5,6 +5,10 @@ if [ $# -ne 1 ]; then
 	exit 1
 fi
 
+if [ -n "$GAMEDIR" -a -z "$GAMENAME" ]; then
+	>&2 echo "warning: failed to parse game name from gameinfo.txt!"
+fi
+
 run() {
 	if mount | fgrep -q " $1 "; then
 		fusermount -u -- "$1" || return
@@ -23,6 +27,7 @@ run() {
 }
 
 while ! run "$1"; do
+	export CFGFS_RESTARTED=1
 	printf '\a'
 	sleep 1 || break
 done
