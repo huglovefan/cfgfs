@@ -37,6 +37,6 @@ D		assert(rv != 0);
 				return i+1;
 			}
 		}
-		UNREACHABLE();
+		unreachable_weak();
 	}
 }

@@ -12,6 +12,7 @@ static int l_init(lua_State *L) {
 	return 0;
 }
 
+__attribute__((cold))
 static int l_buffer_is_empty(lua_State *L) {
 	lua_pushboolean(L, buffer_list_is_empty(&buffers));
 	return 1;

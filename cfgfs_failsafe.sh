@@ -23,11 +23,15 @@ run() {
 		echo "cfgfs exited with status $rv"
 	fi
 
+	export CFGFS_RESTARTED=1
+
+	# re-enable echo in case readline had disabled it
+	stty echo
+
 	return $rv
 }
 
 while ! run "$1"; do
-	export CFGFS_RESTARTED=1
 	printf '\a'
 	sleep 1 || break
 done

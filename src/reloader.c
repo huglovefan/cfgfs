@@ -30,6 +30,7 @@ enum msg {
 // -----------------------------------------------------------------------------
 
 static bool wait_for_event(const char *path, int fd) {
+	one_true_entry();
 	bool success = false;
 
 	int wd = inotify_add_watch(fd, path, IN_MODIFY);
@@ -48,7 +49,7 @@ static bool wait_for_event(const char *path, int fd) {
 		case msg_exit:
 			goto out;
 		}
-		break;
+		unreachable_weak();
 	case 0:
 		perror("reloader: rdselect");
 		break;
@@ -57,11 +58,13 @@ static bool wait_for_event(const char *path, int fd) {
 	}
 out:
 	if (wd != -1) inotify_rm_watch(fd, wd);
+	one_true_exit();
 	return success;
 }
 
 static void do_reload(void) {
 	lua_State *L = lua_get_state();
+	if (L == NULL) return;
 
 	buffer_list_reset(&buffers);
 	buffer_list_reset(&init_cfg);
@@ -127,7 +130,13 @@ void reloader_deinit(void) {
 
 	writech(msgpipe[1], msg_exit);
 
-	pthread_join(thread, NULL);
+	struct timespec ts = {0};
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += 1;
+	int err = pthread_timedjoin_np(thread, NULL, &ts);
+	if (err != 0) {
+		return;
+	}
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));

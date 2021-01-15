@@ -337,8 +337,11 @@ end
 cfg = assert(_cfg)
 cfgf = function (fmt, ...) return cfg(string.format(fmt, ...)) end
 
--- note: this is a separate table so that reassigning a value always calls __newindex()
+-- note: these are separate tables so that reassigning a value always calls __newindex()
 local cmd_fns = make_resetable_table()
+local cmdv_fns = make_resetable_table()
+local cmdp_fns = make_resetable_table()
+
 cmd = setmetatable({--[[ empty ]]}, {
 	__index = function (self, k)
 		local fn = cmd_fns[k]
@@ -376,7 +379,6 @@ cmd = setmetatable({--[[ empty ]]}, {
 	end,
 	__call = assert(_cmd),
 })
-local cmdv_fns = make_resetable_table()
 cmdv = setmetatable({--[[ empty ]]}, {
 	__index = function (_, k)
 		local fn = cmdv_fns[k]
@@ -395,7 +397,6 @@ cmdv = setmetatable({--[[ empty ]]}, {
 		return cmd(...)
 	end,
 })
-local cmdp_fns = make_resetable_table()
 cmdp = setmetatable({--[[ empty ]]}, {
 	__index = function (_, k)
 		local fn = cmdp_fns[k]
@@ -414,40 +415,44 @@ cmdp = setmetatable({--[[ empty ]]}, {
 	end,
 })
 
--- works like 98% of the time
-run_capturing_output = function (cmd)
-	reexec()
-
-	local lines = {}
-	local fn = function (line)
-		return table.insert(lines, line)
-	end
-	add_listener('game_console_output', fn)
-
-	if type(cmd) == 'function' then
-		ev_call(cmd)
-	else
-		cfg(cmd)
-	end
-
-	reexec()
-
-	remove_listener('game_console_output', fn)
-
-	return lines
-end
-
 local get_cvars = function (t)
+	if #t == 0 then
+		return {}
+	end
+	while not game_window_is_active() do
+		wait_for_event('attention')
+	end
 	local rv = {}
-	for _, l in ipairs(run_capturing_output(function ()
-		for _, k in ipairs(t) do
+	local incnt, outcnt = 0, 0
+	for _, k in ipairs(t) do
+		if rv[k] == nil then
 			cmd.help(k)
+			rv[k] = false
+			outcnt = outcnt+1
 		end
-	end)) do
-		local mk, mv = l:match('"([^"]+)" = "([^"]*)"')
+	end
+	for _, line in wait_for_events('game_console_output', 1000) do
+		local mk, mv = line:match('"([^"]+)" = "([^"]*)"')
 		if mk then
-			rv[mk] = mv
+			if rv[mk] == false then
+				rv[mk] = mv
+				incnt = incnt+1
+			end
 		end
+		local mk = line:match('help:  no cvar or command named (.*)$')
+		if mk then
+			if rv[mk] == false then
+				rv[mk] = nil
+				incnt = incnt+1
+			end
+		end
+		if incnt == outcnt then
+			break
+		end
+	end
+	if incnt ~= outcnt then
+		eprintln('warning: could only read %d of %d cvar(s)',
+		    incnt, outcnt)
 	end
 	return rv
 end
@@ -484,7 +489,7 @@ cvar = setmetatable({--[[ empty ]]}, {
 	end,
 	-- cvars list -> name/value map (gets the values)
 	-- name/value map -> nothing (sets the values)
-	-- (untested)
+	-- (this is completely untested, i have not used it once)
 	__call = function (_, t)
 		local is_list = (t[1] ~= nil)
 		local is_map = true -- default to true for empty tables
@@ -560,10 +565,6 @@ bind = function (key, cmd, cmd2)
 	binds_down[key] = cmd
 	binds_up[key] = cmd2
 end
--- at some point, should try making this bind simple string commands directly
--- (so that they don't call into cfgfs)
--- * would hide the problem with commands that need a key bound to them directly
--- * excess calls were preferred when click() didn't exist but that time is gone
 
 --------------------------------------------------------------------------------
 
@@ -914,6 +915,9 @@ end
 is_game_window_active = function ()
 	return is_active
 end
+game_window_is_active = function ()
+	return is_active
+end
 
 end
 
@@ -1030,6 +1034,7 @@ _game_console_output = function (line)
 		if c == '#' and #line >= 55 and line:find('^##### CTexture::LoadTextureBitsFromFile couldn\'t find ') then goto match end
 		if c == '-' and #line >= 27 and line:find('^%-%-%- Missing Vgui material ') then goto match end
 		if c == 'A' and #line >= 48 and line:find('^Attemped to precache unknown particle system ".*"!$') then goto match end
+		if c == 'C' and #line >= 23 and line:find('^Could not find table ".*"$') then goto match end
 		if c == 'C' and #line >= 44 and line:find('^Cannot update control point [0-9]+ for effect \'.*\'%.$') then goto match end
 		if c == 'C' and #line >= 99 and line:find('^Convar .* has conflicting FCVAR_CHEAT flags %(child: FCVAR_CHEAT, parent: no FCVAR_CHEAT, parent wins%)$') then goto match end
 		if c == 'E' and #line >= 34 and line:find('^EmitSound: pitch out of bounds = %-?[0-9]+$') then goto match end
@@ -1096,7 +1101,7 @@ end
 --------------------------------------------------------------------------------
 
 _control = function (line)
-	return fire_event('control_message', line)
+	return fire_event('control', line)
 end
 
 --------------------------------------------------------------------------------
@@ -1137,6 +1142,11 @@ local after_script_exec = function ()
 		cvar.con_logfile = 'console.log'
 	end
 	cmd.cfgfs_license = 'exec cfgfs/license'
+	cmd.cfgfs_restart = function ()
+		cvar.con_logfile = ''
+		wait(0)
+		os.exit(1)
+	end
 	cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
 	cmd.release_all_keys = assert(release_all_keys)
 	cfg('cfgfs_init_log')

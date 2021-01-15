@@ -1,6 +1,3 @@
-#ifndef _GNU_SOURCE
- #define _GNU_SOURCE 1 // unlocked_stdio. there's no vfprintf_unlocked though
-#endif
 #include "cli_output.h"
 
 #include <dlfcn.h>

@@ -1,4 +1,3 @@
-#define _GNU_SOURCE // strchrnul()
 #include "cfg.h"
 
 #include <stdlib.h>
@@ -315,6 +314,7 @@ static int l_cfg(lua_State *L) {
 		}
 		return 0;
 	}
+	unreachable_strong();
 typeerr:
 	return luaL_error(L, "argument is not a string");
 }

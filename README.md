@@ -43,7 +43,6 @@ end
 - `libfuse3`
 - `libreadline`
 - `libx11`, `libxtst`
-- `clang` compiler
 - xterm (for `cfgfs_run`)
 
 At the moment only GNU/Linux is supported. I don't have a Windows computer to

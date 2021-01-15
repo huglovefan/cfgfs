@@ -1,6 +1,3 @@
-#ifndef _GNU_SOURCE
- #define _GNU_SOURCE 1 // unlocked_stdio
-#endif
 #include "lua.h"
 
 #include <dlfcn.h>
@@ -26,7 +23,7 @@
 #include "main.h"
 
 static lua_State *g_L;
-static pthread_mutex_t lua_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t lua_mutex = PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP;
 
 lua_State *lua_get_state(void) {
 	lua_lock_state();
@@ -36,12 +33,23 @@ D	assert(g_L != NULL);
 
 void lua_release_state(lua_State *L) {
 D	assert(L != NULL);
+D	assert(L == g_L);
 	lua_unlock_state();
 }
 
-void lua_lock_state(void) {
-	pthread_mutex_lock(&lua_mutex);
+bool lua_lock_state(void) {
+	int err = pthread_mutex_lock(&lua_mutex);
+	if (unlikely(err != 0)) {
+		errno = err;
+		return false;
+	}
+	if (unlikely(g_L == NULL)) {
+		pthread_mutex_unlock(&lua_mutex);
+		errno = EIO;
+		return false;
+	}
 D	assert(stack_is_clean(g_L));
+	return true;
 }
 
 void lua_unlock_state(void) {
@@ -66,15 +74,13 @@ void lua_unlock_state_and_click(void) {
 }
 
 void lua_deinit(void) {
-	pthread_mutex_lock(&lua_mutex);
-D	assert(stack_is_clean(g_L));
-	if (g_L != NULL) {
+	if (lua_lock_state()) {
 		 lua_getglobal(g_L, "_fire_unload");
 		  lua_pushboolean(g_L, 1);
 		lua_call(g_L, 1, 0);
 		lua_close(exchange(g_L, NULL));
+		pthread_mutex_unlock(&lua_mutex);
 	}
-	pthread_mutex_unlock(&lua_mutex);
 }
 
 // -----------------------------------------------------------------------------
@@ -250,19 +256,6 @@ static int l_eprint(lua_State *L) {
 
 // -----------------------------------------------------------------------------
 
-static int l_get_thread_name(lua_State *L) {
-	char s[17] = {0};
-	char *p = s;
-	if (unlikely(-1 == prctl(PR_GET_NAME, s, 0, 0, 0))) {
-		perror("get_thread_name");
-		p = NULL;
-	}
-	lua_pushstring(L, s);
-	return 1;
-}
-
-// -----------------------------------------------------------------------------
-
 __attribute__((cold))
 bool lua_init(void) {
 
@@ -296,9 +289,6 @@ bool lua_init(void) {
 	  lua_pushcfunction(L, l_string_trim);
 	 lua_setfield(L, -2, "trim");
 	lua_pop(L, 1);
-
-	 lua_pushcfunction(L, l_get_thread_name);
-	lua_setglobal(L, "_get_thread_name");
 
 	lua_newtable(L); lua_setglobal(L, "num2key");
 	lua_newtable(L); lua_setglobal(L, "key2num");

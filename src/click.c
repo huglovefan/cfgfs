@@ -67,7 +67,6 @@ void click_init(void) {
 	}
 
 	click_set_key("f11");
-
 out:
 	pthread_mutex_unlock(&click_lock);
 }
@@ -110,12 +109,15 @@ V	eprintln("click_set_key: key set to %s (ks=%ld, kc=%d)", name, ks, kc);
 static void mono_ms_wait_until(double target) {
 	struct timespec ts;
 	ms2ts(ts, target);
-	int err;
-again:
-	err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
-	if (likely(err == 0)) return;
-	if (likely(err == EINTR)) goto again;
-	perror("click: clock_nanosleep");
+	for (;;) {
+		int err = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL);
+		if (unlikely(err != 0)) {
+			if (likely(err == EINTR)) continue;
+			eprintln("click: clock_nanosleep: %s", strerror(err));
+			break;
+		}
+		break;
+	}
 }
 
 static void *click_thread(void *msp) {
@@ -191,43 +193,3 @@ void click_init_lua(void *L) {
 	 lua_pushcfunction(L, l_click_received);
 	lua_setglobal(L, "_click_received");
 }
-
-#if 0
-
-aaaaaaaaaaaa
-this doesn't need to make a thread for every click
-
-#define MAX_CLICKS 100
-
-struct click_ent {
-	double target; // mono ms
-};
-struct click_ent clicks[MAX_CLICKS];
-
-struct pollfs fds[1] = {
-	{.fd = msgpipe[?], .events = POLLIN},
-};
-for (;;) {
-	pthread_mutex_lock(&lock);
-	double now = mono_ms();
-	double lowest = HUGE_VAL;
-	bool clicked = false;
-	for (int i = 0; i < MAX_CLICKS; i++) {
-		if (clicks[i].target <= now) {
-			if (!clicked++) click();
-		} else {
-			if (clicks[i].target < lowest) {
-				lowest = clicks[i].target;
-			}
-		}
-	}
-	pthread_mutex_unlock(&lock);
-	do {
-		rv = poll(fds, 1, (int)(now-lowest));
-		// check msgpipe
-		// check if lowest <= now
-	} while (rv == -1 && errno == ENOENT);
-	if (rv == -1) break;
-}
-
-#endif

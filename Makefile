@@ -1,8 +1,15 @@
 #SANITIZER := -fsanitize=address,undefined
 #SANITIZER := -fsanitize=thread,undefined
+CCACHE    ?= $(shell if command -v ccache >/dev/null; then echo ccache; fi)
 CC        := $(shell echo $${CC:-clang})
 
-CFLAGS ?= -Ofast -g
+ifneq (,$(CCACHE))
+ ifeq (,$(findstring ccache,$(CC)))
+  CC := $(CCACHE) $(CC)
+ endif
+endif
+
+CFLAGS ?= -O2 -g
 
 STATIC_LIBFUSE := 1
 
@@ -10,29 +17,36 @@ STATIC_LIBFUSE := 1
 
 EXE := $(shell echo $${PWD##*/})
 
-OBJS = src/main.o \
-       src/buffer_list.o \
+OBJS = \
+       src/main.o \
        src/buffers.o \
+       src/buffer_list.o \
        src/lua.o \
+       src/cli_output.o \
        src/cfg.o \
+       src/click.o \
+       src/pipe_io.o \
+       src/attention.o \
        src/reloader.o \
        src/cli_input.o \
-       src/cli_output.o \
-       src/pipe_io.o \
        src/keys.o \
-       src/click.o \
-       src/attention.o
+
 DEPS = $(OBJS:.o=.d)
 SRCS = $(OBJS:.o=.c)
 
 # make it make dependency files for make
 CPPFLAGS += -MMD -MP
 
-# be able to override functions from static libraries
-LDFLAGS += -Wl,-z,muldefs
+CFLAGS += -std=gnu11
+CPPFLAGS += -D_GNU_SOURCE
 
-CFLAGS += -Weverything \
+ifneq (,$(findstring clang,$(CC)))
+CFLAGS += \
+          -Weverything \
+          -Werror=format \
           -Werror=implicit-function-declaration \
+          -Werror=incompatible-function-pointer-types \
+          -Werror=return-type \
           -Wno-alloca \
           -Wno-atomic-implicit-seq-cst \
           -Wno-c++17-extensions \
@@ -47,7 +61,17 @@ CFLAGS += -Weverything \
           -Wno-language-extension-token \
           -Wno-padded \
           -Wno-reserved-id-macro \
-          -Wno-vla
+          -Wno-vla \
+# .
+else
+CFLAGS += \
+          -Wall \
+          -Wextra \
+          -Werror=implicit-function-declaration \
+          -Wno-bool-operation \
+          -Wno-misleading-indentation \
+# .
+endif
 
 ifneq (,$(findstring clang,$(CC)))
  ifneq (,$(findstring -flto=thin,$(CFLAGS)))
@@ -85,6 +109,11 @@ endif
 
 ifeq ($(D),1)
  CPPFLAGS += -DD="if(1)"
+endif
+
+ifeq ($(A),1)
+ CFLAGS += --analyzer
+ LDFLAGS += --analyzer
 endif
 
 # pgo
@@ -179,6 +208,15 @@ install:
 	>&2 echo "add a directory like ~/bin to your path (google it) or try running this as root"; \
 	exit 1;
 
+.PHONY: test
+test:
+	@exec timeout 5 sh test/run.sh
+
+scan:
+	@scan-build --use-cc=clang make -s -B VV=1
+analyze:
+	@CC=gcc CFLAGS='-O2 -fdiagnostics-color -flto' LDFLAGS='-O2 -fdiagnostics-color -flto' make -B A=1 VV=1
+
 # ------------------------------------------------------------------------------
 
 MNTLNK := mnt
@@ -192,4 +230,8 @@ start: $(EXE)
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
 	ln -fs $(TF2MNT) $(MNTLNK); \
-	exec ./$(EXE) $(CFGFS_FLAGS) $(TF2MNT)
+	export CFGFS_SCRIPT=script_440.lua; \
+	export GAMEDIR=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf; \
+	export GAMEROOT=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2; \
+	export GAMENAME=Team\ Fortress\ 2; \
+	exec ./$(EXE) $(CFGFS_FLAGS) "$${GAMEDIR}/custom/!cfgfs/cfg"

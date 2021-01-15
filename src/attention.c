@@ -44,6 +44,7 @@ static bool wait_for_event(int conn) {
 		case msg_exit:
 			return false;
 		}
+		unreachable_weak();
 	case 0:
 		perror("attention: rdselect");
 		return false;
@@ -69,10 +70,12 @@ VV	eprintln("attention: title=\"%s\"", title);
 V		eprintln("attention: game_window_is_active=%d", newattn);
 
 		lua_State *L = lua_get_state();
+		if (L == NULL) goto lua_done;
 		 lua_getglobal(L, "_attention");
 		  lua_pushboolean(L, newattn);
 		lua_call(L, 1, 0);
 		lua_release_state_and_click(L);
+lua_done:;
 	}
 
 	if (prop.value) XFree(prop.value);
@@ -133,10 +136,7 @@ static pthread_t thread;
 
 void attention_init(void) {
 	if (thread != 0) return;
-	if (!getenv("GAMENAME")) {
-		eprintln("warning: $GAMENAME not set, the \"attention\" event won't work");
-		return;
-	}
+	if (!getenv("GAMENAME")) return;
 
 	display = XOpenDisplay(NULL);
 	if (display == NULL) {
@@ -167,7 +167,13 @@ void attention_deinit(void) {
 
 	writech(msgpipe[1], msg_exit);
 
-	pthread_join(thread, NULL);
+	struct timespec ts = {0};
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += 1;
+	int err = pthread_timedjoin_np(thread, NULL, &ts);
+	if (err != 0) {
+		return;
+	}
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));

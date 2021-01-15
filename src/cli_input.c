@@ -29,7 +29,9 @@ _Atomic(bool) cli_reading_line;
 
 #define DEFAULT_PROMPT "] "
 
-//static char *history_file;
+#define HISTORY_FILE ".cli_history"
+#define HISTORY_MAX_ITEMS 1000
+
 static char *prompt; // protected by cli_(un)lock_output()
 
 // -----------------------------------------------------------------------------
@@ -53,21 +55,21 @@ static void linehandler(char *line) {
 	if (line != NULL) {
 		if (*line != '\0') {
 			lua_State *L = lua_get_state();
+			if (L == NULL) goto lua_done;
 			 lua_getglobal(L, "_cli_input");
 			  lua_pushstring(L, line);
 			lua_call(L, 1, 0);
 			lua_release_state(L);
-			add_history(line);
-			// ...
-			/*
-			HIST_ENTRY *ent = current_history();
-			if (!ent || 0 == strcmp(line, ent->line)) {
+lua_done:;
+			bool same_as_last_history_item =
+			    (history_length != 0 &&
+			     0 == strcmp(line, history_get(history_length)->line));
+
+			if (!same_as_last_history_item) {
 				add_history(line);
-				if (history_file) {
-					append_history(1, history_file);
-				}
+				append_history(1, HISTORY_FILE);
 			}
-			*/
+
 		}
 	} else {
 		cli_got_eof = true;
@@ -104,9 +106,19 @@ static void *cli_main(void *ud) {
 	 cli_reading_line = true;
 	 rl_callback_handler_install(prompt, linehandler);
 	 rl_bind_key('\t', rl_insert); // disable filename completion
-	 using_history();
 	cli_unlock_output_norestore();
 
+	// create the history file if it doesn't exist
+	// otherwise append_history() can't append to it
+	FILE *tmp = fopen(HISTORY_FILE, "a");
+	if (tmp != NULL) fclose(exchange(tmp, NULL));
+
+	using_history();
+	stifle_history(HISTORY_MAX_ITEMS);
+	read_history(HISTORY_FILE);
+	history_set_pos(history_length);
+
+	one_true_entry();
 	for (;;) {
 		switch (rdselect(msgpipe[0], STDIN_FILENO)) {
 		case 2:
@@ -137,6 +149,7 @@ static void *cli_main(void *ud) {
 		}
 	}
 out:
+	one_true_exit();
 	signal(SIGWINCH, SIG_DFL);
 
 	cli_lock_output_nosave();
@@ -148,7 +161,10 @@ out:
 	 rl_callback_handler_remove();
 	cli_unlock_output_norestore();
 
-	// tell it to quit if it isn't already
+	// this saves any modified history items
+	write_history(HISTORY_FILE);
+
+	// tell main to quit if it isn't already
 	if (cli_got_eof) main_quit();
 
 	return NULL;
@@ -184,7 +200,13 @@ void cli_input_deinit(void) {
 
 	writech(msgpipe[1], msg_exit);
 
-	pthread_join(thread, NULL);
+	struct timespec ts = {0};
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += 1;
+	int err = pthread_timedjoin_np(thread, NULL, &ts);
+	if (err != 0) {
+		return;
+	}
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));
@@ -195,10 +217,10 @@ void cli_input_deinit(void) {
 // -----------------------------------------------------------------------------
 
 static int l_set_prompt(lua_State *L) {
-	const char *newone = (lua_tostring(L, 1) ?: DEFAULT_PROMPT);
+	char *newone = strdup(lua_tostring(L, 1) ?: DEFAULT_PROMPT);
 	cli_lock_output();
 	 free(prompt);
-	 prompt = strdup(newone);
+	 prompt = newone;
 	 rl_set_prompt(prompt);
 	cli_unlock_output();
 	return 0;

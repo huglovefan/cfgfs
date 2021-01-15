@@ -12,7 +12,9 @@
 #include <unistd.h>
 
 #pragma GCC diagnostic push
- #pragma GCC diagnostic ignored "-Wdocumentation"
+ #if defined(__clang__)
+  #pragma GCC diagnostic ignored "-Wdocumentation"
+ #endif
  #pragma GCC diagnostic ignored "-Wpadded"
   #include <fuse.h>
   #include <fuse_lowlevel.h>
@@ -113,6 +115,7 @@ static int lookup_path(const char *restrict path, enum special_file_type *type) 
 __attribute__((noinline))
 static int l_lookup_path(const char *restrict path) {
 	lua_State *L = lua_get_state();
+	if (unlikely(L == NULL)) return -errno;
 	 lua_getglobal(L, "_lookup_path");
 	  lua_pushstring(L, path+1); // skip "/"
 	 lua_call(L, 1, 1);
@@ -189,6 +192,9 @@ V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 	bool silent = starts_with(path, "/cfgfs/unmask_next/");
 
 	lua_State *L = lua_get_state();
+	if (unlikely(L == NULL)) {
+		return -errno;
+	}
 
 	struct buffer fakebuf;
 	if (likely(!silent)) {
@@ -224,11 +230,17 @@ D		assert(ent != NULL); // nothing should've removed it
 
 // ~
 
-static int cfgfs_write_control(const char *data, size_t size, off_t offset);
+static int cfgfs_write_control(const char *data, size_t size);
 
 #define log_catcher_got_line(p, sz) \
 	({ \
-		if (!lua_locked++) lua_lock_state(); \
+		if (likely(!lua_locked)) { \
+			if (unlikely(!lua_lock_state())) { \
+				rv = -errno; \
+				goto out; \
+			} \
+			lua_locked = true; \
+		} \
 		lua_State *L = lua_get_state_already_locked(); \
 		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX); \
 		  lua_pushlstring(L, (p), (sz)); \
@@ -251,16 +263,27 @@ V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 		static char *p = logbuffer;
 		bool lua_locked = false;
 		size_t insize = size;
+		int rv = (int)insize;
 
 		// tf2 only writes one thing at a time so this doesn't really need a lock
 D		assert(0 == pthread_mutex_trylock(&logcatcher_lock));
 
+		one_true_entry();
 		if (likely(size >= 2 && data[size-1] == '\n')) {
 			// writing a full line in one go
 			// may contain embedded newlines
 			log_catcher_got_line(data, size-1);
 		} else do {
 			// idiot writing a line in multiple parts
+
+			// size check
+			size_t buffer_used = (size_t)(p-logbuffer);
+			size_t buffer_left = sizeof(logbuffer)-buffer_used;
+			if (unlikely(size > buffer_left)) {
+				rv = -E2BIG;
+				goto out;
+			}
+
 			char *nl = memchr(data, '\n', size);
 			if (likely(nl == NULL)) {
 				// incoming data doesn't complete a line. add it to the buffer and get out
@@ -277,15 +300,18 @@ D		assert(0 == pthread_mutex_trylock(&logcatcher_lock));
 				size -= partlen+1;
 			}
 		} while (unlikely(size != 0));
+out:
+		one_true_exit();
 		if (lua_locked) lua_unlock_state();
 D		pthread_mutex_unlock(&logcatcher_lock);
-		return (int)insize;
+		return rv;
 	}
 	case sft_control:
-		return cfgfs_write_control(data, size, offset);
+		return cfgfs_write_control(data, size);
 	case sft_none:
 		return -ENOTSUP;
 	}
+	unreachable_weak();
 }
 
 #undef log_catcher_got_line
@@ -297,11 +323,9 @@ static void control_do_line(const char *line, size_t size);
 __attribute__((cold))
 __attribute__((noinline))
 static int cfgfs_write_control(const char *data,
-                               size_t size,
-                               off_t offset) {
+                               size_t size) {
 	if (size == 8192) return -EMSGSIZE; // might be truncated
-	if (offset != 0) return -EINVAL;
-	lua_lock_state();
+	if (!lua_lock_state()) return -errno;
 
 	const char *p = data;
 	for (;;) {
@@ -316,7 +340,7 @@ static int cfgfs_write_control(const char *data,
 }
 
 static void control_do_line(const char *line, size_t size) {
-V	eprintln("control_do_line: line=[%s]", line);
+V	eprintln("control_do_line: line=[%.*s]", (int)size, line);
 	lua_State *L = lua_get_state_already_locked();
 	 lua_getglobal(L, "_control");
 	  lua_pushlstring(L, line, size);
@@ -348,13 +372,10 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 // -----------------------------------------------------------------------------
 
 __attribute__((cold))
-void fuse_log(enum fuse_log_level level, const char *fmt, ...) {
+static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) {
 	(void)level;
 	cli_lock_output();
-	va_list ap;
-	va_start(ap, fmt);
-	vfprintf(stderr, fmt, ap);
-	va_end(ap);
+	vfprintf(stderr, fmt, args);
 	cli_unlock_output();
 }
 
@@ -383,6 +404,38 @@ enum fuse_main_rv {
 	rv_cfgfs_reexec_failed = 11,
 };
 
+static void check_env(void) {
+	static const struct var {
+		const char *name, *what;
+	} vars[] = {
+		{"GAMEDIR", "path to mod directory containing gameinfo.txt"},
+		{"GAMEROOT", "path to parent directory of GAMEDIR"},
+		{"GAMENAME", "game title from gameinfo.txt"},
+		{"CFGFS_SCRIPT", "path to the script to load"},
+		{NULL, NULL},
+	};
+	bool warned = false;
+
+	for (const struct var *p = vars; p->name != NULL; p++) {
+		const char *v = getenv(p->name);
+		if (v != NULL && *v != '\0') {
+			continue;
+		}
+		if (!warned) {
+			eprintln("warning: the following environment variables are unset:");
+			warned = true;
+		}
+		if (p->what != NULL) {
+			eprintln("- %s (%s)", p->name, p->what);
+		} else {
+			eprintln("- %s", p->name);
+		}
+	}
+	if (warned) {
+		eprintln("features that depend on them will be unavailable");
+	}
+}
+
 int main(int argc, char **argv) {
 
 	// https://lwn.net/Articles/837019/
@@ -403,9 +456,13 @@ D	eprintln("NOTE: debug checks are enabled");
 V	eprintln("NOTE: verbose messages are enabled");
 VV	eprintln("NOTE: very verbose messages are enabled");
 
-	// ~ init fuse ~
+	check_env();
 
 	enum fuse_main_rv rv;
+
+	// ~ init fuse ~
+
+	fuse_set_log_func(cfgfs_log);
 
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct fuse_cmdline_opts opts;
@@ -454,7 +511,7 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 
 	// ~ init other things ~
 
-	click_init(); // required by builtin.lua
+	click_init();
 	if (!lua_init()) {
 		rv = rv_cfgfs_lua_failed;
 		goto out_fuse_newed_and_mounted_and_signals_handled;
@@ -490,6 +547,7 @@ out_no_fuse:
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
 	if (0 == unlink(".cfgfs_reexec")) {
+		setenv("CFGFS_RESTARTED", "1", 1);
 		execvp(argv[0], argv);
 		perror("cfgfs: exec");
 		rv = rv_cfgfs_reexec_failed;

@@ -18,7 +18,7 @@ int lua_do_nothing(lua_State *L);
 
 lua_State *lua_get_state(void);
 void lua_release_state(lua_State *);
-void lua_lock_state(void);
+bool lua_lock_state(void);
 void lua_unlock_state(void);
 lua_State *lua_get_state_already_locked(void);
 void lua_unlock_state_no_click(void);
