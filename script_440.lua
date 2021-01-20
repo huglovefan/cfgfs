@@ -284,12 +284,6 @@ end
 cmd.fortune = wrap('fortune | cowsay')
 cmd.top = wrap('top -bn1')
 
-cmd.disconnect2 = function ()
-	for i = 1, 41 do
-		cmd.cmd('cmd')
-	end
-end
-
 add_listener('+mouse2', function ()
 	if (class == 'engineer' or class == 'spy') and slot >= 4 then
 		cmd.pda_click()

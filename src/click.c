@@ -73,15 +73,15 @@ out:
 
 __attribute__((cold))
 void click_deinit(void) {
-	if (thread_attr_inited) {
-		pthread_attr_destroy(&thread_attr);
-		thread_attr_inited = false;
-	}
-
 	pthread_mutex_lock(&click_lock);
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
 	keycode = 0;
 	pthread_mutex_unlock(&click_lock);
+
+	if (thread_attr_inited) {
+		pthread_attr_destroy(&thread_attr);
+		thread_attr_inited = false;
+	}
 }
 
 // -----------------------------------------------------------------------------

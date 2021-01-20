@@ -408,10 +408,10 @@ static void check_env(void) {
 	static const struct var {
 		const char *name, *what;
 	} vars[] = {
+		{"CFGFS_SCRIPT", "path to the script to load"},
 		{"GAMEDIR", "path to mod directory containing gameinfo.txt"},
 		{"GAMEROOT", "path to parent directory of GAMEDIR"},
 		{"GAMENAME", "game title from gameinfo.txt"},
-		{"CFGFS_SCRIPT", "path to the script to load"},
 		{NULL, NULL},
 	};
 	bool warned = false;

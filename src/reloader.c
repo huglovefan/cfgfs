@@ -29,9 +29,19 @@ enum msg {
 
 // -----------------------------------------------------------------------------
 
-static bool wait_for_event(const char *path, int fd) {
+// this was previously reusing the same inotify fd (like the man page says) but
+//  doing it that way would cause an infinite loop if the file was appended to
+//  or edited using nano
+// fixed by making it call inotify_init() again each time
+
+static bool wait_for_event(void) {
 	one_true_entry();
 	bool success = false;
+
+	int fd = inotify_init();
+	check_minus1(fd, "reloader: inotify_init", goto out);
+
+	const char *path = (getenv("CFGFS_SCRIPT") ?: "script.lua");
 
 	int wd = inotify_add_watch(fd, path, IN_MODIFY);
 	check_minus1(wd, "reloader: inotify_add_watch", goto out);
@@ -57,7 +67,7 @@ static bool wait_for_event(const char *path, int fd) {
 		break;
 	}
 out:
-	if (wd != -1) inotify_rm_watch(fd, wd);
+	if (fd != -1) close(fd); // closes wd too
 	one_true_exit();
 	return success;
 }
@@ -86,18 +96,10 @@ static void *reloader_main(void *ud) {
 	(void)ud;
 	set_thread_name("reloader");
 
-	int fd = inotify_init();
-	check_minus1(
-	    fd,
-	    "reloader: inotify_init",
-	    goto out);
-
-	const char *filename = (getenv("CFGFS_SCRIPT") ?: "script.lua");
-	while (wait_for_event(filename, fd)) {
+	while (wait_for_event()) {
 		do_reload();
 	}
-out:
-	if (fd != -1) close(fd);
+
 	return NULL;
 }
 

@@ -27,12 +27,10 @@
 
 _Atomic(bool) cli_reading_line;
 
-#define DEFAULT_PROMPT "] "
+#define DEFAULT_PROMPT "> "
 
 #define HISTORY_FILE ".cli_history"
 #define HISTORY_MAX_ITEMS 1000
-
-static char *prompt; // protected by cli_(un)lock_output()
 
 // -----------------------------------------------------------------------------
 
@@ -102,9 +100,8 @@ static void *cli_main(void *ud) {
 	signal(SIGWINCH, winch_handler);
 
 	cli_lock_output_nosave();
-	 if (!prompt) prompt = strdup(DEFAULT_PROMPT);
 	 cli_reading_line = true;
-	 rl_callback_handler_install(prompt, linehandler);
+	 rl_callback_handler_install(DEFAULT_PROMPT, linehandler);
 	 rl_bind_key('\t', rl_insert); // disable filename completion
 	cli_unlock_output_norestore();
 
@@ -153,7 +150,6 @@ out:
 	signal(SIGWINCH, SIG_DFL);
 
 	cli_lock_output_nosave();
-	 free(exchange(prompt, NULL));
 	 // put the next thing on its own line again
 	 // for some reason, stdout here doesn't print it if you did ^C
 	 fputc('\n', stderr);
@@ -217,11 +213,9 @@ void cli_input_deinit(void) {
 // -----------------------------------------------------------------------------
 
 static int l_set_prompt(lua_State *L) {
-	char *newone = strdup(lua_tostring(L, 1) ?: DEFAULT_PROMPT);
+	const char *newone = (lua_tostring(L, 1) ?: DEFAULT_PROMPT);
 	cli_lock_output();
-	 free(prompt);
-	 prompt = newone;
-	 rl_set_prompt(prompt);
+	rl_set_prompt(newone);
 	cli_unlock_output();
 	return 0;
 }

@@ -47,6 +47,8 @@ CFLAGS += \
           -Werror=implicit-function-declaration \
           -Werror=incompatible-function-pointer-types \
           -Werror=return-type \
+          -Werror=sometimes-uninitialized \
+          -Werror=uninitialized \
           -Wno-alloca \
           -Wno-atomic-implicit-seq-cst \
           -Wno-c++17-extensions \

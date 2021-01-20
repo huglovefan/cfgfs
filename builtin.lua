@@ -1,3 +1,11 @@
+--
+-- this file should really be split into modules but i haven't found a
+--  good way to do that yet
+-- most of the functions here depend on something else in the file so it's
+--  not as simple as "copypasting one thing at a time into its own file"
+-- or maybe it is if you know where to start
+--
+
 local ev_error_handlers
 
 _println = assert(_print)
@@ -316,6 +324,18 @@ setmetatable(is_pressed, {
 	end,
 })
 
+local num2class = {
+	'scout', 'soldier', 'pyro',
+	'demoman', 'heavyweapons', 'engineer',
+	'medic', 'sniper', 'spy',
+}
+
+local class2num = {}
+
+for num, class in ipairs(num2class) do
+	class2num[class] = num
+end
+
 _lookup_path = function (path)
 	local cnt = (unmask_next[path] or 0)
 	if cnt > 0 then
@@ -568,20 +588,6 @@ end
 
 --------------------------------------------------------------------------------
 
-local num2class = {
-	'scout', 'soldier', 'pyro',
-	'demoman', 'heavyweapons', 'engineer',
-	'medic', 'sniper', 'spy',
-}
-
-local class2num = {}
-
-for num, class in ipairs(num2class) do
-	class2num[class] = num
-end
-
---------------------------------------------------------------------------------
-
 add_listener = function (name, cb)
 	if type(name) == 'table' then
 		for _, name in ipairs(name) do
@@ -623,7 +629,7 @@ remove_listener = function (name, cb)
 	end
 end
 
-local last_event = nil
+local last_event_name = nil
 
 fire_event = function (name, ...)
 	local t = events[name]
@@ -631,7 +637,7 @@ fire_event = function (name, ...)
 		local copy = {table.unpack(t)}
 		for _, cb in ipairs(copy) do
 			if t[cb] then
-				last_event = name
+				last_event_name = name
 				if type(cb) == 'function' then
 					ev_call(cb, ...)
 				elseif type(cb) == 'thread' then
@@ -649,7 +655,7 @@ wait_for_event = function (name, timeout)
 		spinoff(function ()
 			wait(timeout)
 			if not done then
-				last_event = nil
+				last_event_name = nil
 				return ev_resume(this_co)
 			end
 		end)
@@ -658,7 +664,7 @@ wait_for_event = function (name, timeout)
 	local t = {coroutine.yield()}
 	done = true
 	remove_listener(name, this_co)
-	return last_event, table.unpack(t)
+	return last_event_name, table.unpack(t)
 end
 
 -- like wait_for_event() but usable in a for-in loop
@@ -674,7 +680,7 @@ wait_for_events = function (name, timeout, timeout_per_event)
 				wait(timeout)
 				timeout_done = true
 				if want_resume then
-					last_event = nil
+					last_event_name = nil
 					return ev_resume(this_co)
 				end
 			end)
@@ -685,7 +691,7 @@ wait_for_events = function (name, timeout, timeout_per_event)
 					local rv = coroutine.yield()
 					want_resume = false
 					remove_listener(name, this_co)
-					return last_event, rv
+					return last_event_name, rv
 				else
 					return nil
 				end
@@ -705,13 +711,6 @@ end
 --------------------------------------------------------------------------------
 
 _get_contents = function (path)
-	_in_get_contents = true
-	_get_contents_(path)
-	_in_get_contents = false
-end
-_in_get_contents = false
-
-_get_contents_ = function (path)
 	-- keybind?
 	local t = bindfilenames[path]
 	if t then
@@ -938,24 +937,21 @@ local repl_fn = function (code)
 end
 
 local lua_mode = true
-if lua_mode then _set_prompt('> ') end
 
 local attention_message_shown = false
 local yield_id = 1
 
 _cli_input = function (line)
 
-	if line == '>>' then
-		eprintln('Entered Lua mode. Type "]]" to return to cfg mode.')
-		lua_mode = true
-		_set_prompt('> ')
-		return
-	end
-
-	if line == ']]' then
+	if lua_mode and line == ']]' then
 		eprintln('Entered cfg mode. Type ">>" to return to Lua mode.')
 		lua_mode = false
 		_set_prompt('] ')
+		return
+	elseif not lua_mode and line == '>>' then
+		eprintln('Entered Lua mode. Type "]]" to return to cfg mode.')
+		lua_mode = true
+		_set_prompt('> ')
 		return
 	end
 
@@ -967,16 +963,9 @@ _cli_input = function (line)
 		return
 	end
 
-	local do_lua = false
-	if not lua_mode and line:find('^!') then
-		line = line:sub(2)
-		do_lua = true
-	end
-	do_lua = (do_lua or lua_mode)
-
 	local buffer_was_empty = _buffer_is_empty()
 
-	if do_lua then
+	if lua_mode then
 		local id = yield_id
 		local cb_initial
 		local cb_yielded
@@ -1023,6 +1012,8 @@ _cli_input = function (line)
 
 end
 
+--------------------------------------------------------------------------------
+
 local our_logfile = assert(io.open('console.log', 'a'))
 our_logfile:setvbuf('line')
 
@@ -1060,7 +1051,7 @@ _game_console_output = function (line)
 	-- print the line to the terminal
 	-- color codes: /usr/share/doc/xterm-*/ctlseqs.txt (ctrl+f "Character Attributes")
 	if not spam then
-		-- copy the line so we can modify it
+		-- copy the line so we can modify it (and write the original to the log)
 		local line = line
 
 		-- colorize color codes so the \7 doesn't cause the terminal to blink
