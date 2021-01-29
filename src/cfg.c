@@ -75,10 +75,14 @@ static enum quoting_mode cmd_get_quoting_mode(int argc, const struct worddata *w
 static size_t cmd_get_outsize(int argc, const struct worddata *words, size_t total_len, enum quoting_mode mode);
 static size_t cmd_stringify(char *buf, int argc, const struct worddata *words, enum quoting_mode mode);
 
+static struct worddata g_words[max_argc];
+static char stringify_outbuf[max_line_length+1];
+
 static int l_cmd(lua_State *L) {
 	int argc = lua_gettop(L)-1; // first arg is the cmd table
-	if (unlikely(!(argc >= 1))) return 0;
-	struct worddata words[argc];
+	if (unlikely(argc <= 0)) return 0;
+	if (unlikely(argc > max_argc)) goto err_toomany;
+	struct worddata *words = g_words;
 	size_t total_len = cmd_preparse(L, argc, words);
 	if (unlikely(total_len == (size_t)-1)) goto err_invalid;
 	enum quoting_mode mode = cmd_get_quoting_mode(argc, words);
@@ -90,6 +94,8 @@ static int l_cmd(lua_State *L) {
 	buf[wrote++] = '\n';
 	buffer_list_commit_write(&buffers, wrote);
 	return 0;
+err_toomany:
+	return luaL_error(L, "too many arguments");
 err_invalid:
 	return luaL_error(L, "argument is not a string");
 err_toolong:
@@ -100,15 +106,15 @@ __attribute__((minsize))
 static int l_cmd_stringify(lua_State *L) {
 	const char *errmsg;
 	int argc = lua_gettop(L);
-	if (unlikely(argc == 0)) goto err_empty;
+	if (unlikely(argc <= 0)) goto err_empty;
 	if (unlikely(argc > max_argc)) goto err_toomany;
-	struct worddata *words = alloca(sizeof(struct worddata)*(size_t)argc);
+	struct worddata *words = g_words;
 	size_t total_len = cmd_preparse(L, argc, words);
 	if (unlikely(total_len == (size_t)-1)) goto err_invalid;
 	enum quoting_mode mode = cmd_get_quoting_mode(argc, words);
 	size_t outsize = cmd_get_outsize(argc, words, total_len, mode);
 	if (unlikely(outsize > max_line_length)) goto err_toolong;
-	char *buf = alloca(outsize);
+	char *buf = stringify_outbuf;
 	size_t wrote = cmd_stringify(buf, argc, words, mode);
 	assert(wrote == outsize);
 	lua_pushlstring(L, buf, wrote);

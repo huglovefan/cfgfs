@@ -34,6 +34,8 @@ enum msg {
 //  or edited using nano
 // fixed by making it call inotify_init() again each time
 
+static char readbuf[sizeof(struct inotify_event) + PATH_MAX + 1];
+
 static bool wait_for_event(void) {
 	one_true_entry();
 	bool success = false;
@@ -48,8 +50,7 @@ static bool wait_for_event(void) {
 
 	switch (rdselect(msgpipe[0], fd)) {
 	case 2: {
-		char buf[sizeof(struct inotify_event) + PATH_MAX + 1];
-		ssize_t rv = read(fd, buf, sizeof(buf));
+		ssize_t rv = read(fd, readbuf, sizeof(readbuf));
 		check_minus1(rv, "reloader: read", break);
 		success = true;
 		break;
@@ -79,12 +80,20 @@ static void do_reload(void) {
 	buffer_list_reset(&buffers);
 	buffer_list_reset(&init_cfg);
 
+#if LUA_VERSION_NUM >= 503
 	lua_getglobal(L, "_reload_1");
 	 lua_call(L, 0, 1);
 	  buffer_list_swap(&buffers, &init_cfg);
 	  lua_getglobal(L, "_reload_2");
 	  lua_rotate(L, -2, 1);
 	lua_call(L, 1, 0);
+#else
+	 lua_getglobal(L, "_reload_2");
+	  lua_getglobal(L, "_reload_1");
+	 lua_call(L, 1, 1);
+	 buffer_list_swap(&buffers, &init_cfg);
+	lua_call(L, 1, 0);
+#endif
 
 	lua_release_state(L);
 }

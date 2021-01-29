@@ -8,8 +8,8 @@
 
 int rdselect_real(int count, ...) {
 	assume(count >= 1);
-	assume(count <= 126); // C standard says calls have a limit of 127 arguments
-	struct pollfd fds[count];
+	assume(count <= RDSELECT_MAX_FD);
+	struct pollfd fds[RDSELECT_MAX_FD];
 
 	va_list args;
 	va_start(args, count);

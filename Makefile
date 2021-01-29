@@ -44,31 +44,31 @@ ifneq (,$(findstring clang,$(CC)))
 CFLAGS += \
           -Weverything \
           -Werror=format \
+          -Werror=fortify-source \
           -Werror=implicit-function-declaration \
           -Werror=incompatible-function-pointer-types \
+          -Werror=int-conversion \
           -Werror=return-type \
           -Werror=sometimes-uninitialized \
           -Werror=uninitialized \
-          -Wno-alloca \
           -Wno-atomic-implicit-seq-cst \
-          -Wno-c++17-extensions \
           -Wno-c++98-compat \
           -Wno-disabled-macro-expansion \
           -Wno-format-nonliteral \
           -Wno-gnu-auto-type \
           -Wno-gnu-conditional-omitted-operand \
-          -Wno-gnu-folding-constant \
           -Wno-gnu-statement-expression \
           -Wno-gnu-zero-variadic-macro-arguments \
           -Wno-language-extension-token \
           -Wno-padded \
           -Wno-reserved-id-macro \
-          -Wno-vla \
+          -Wframe-larger-than=512 \
 # .
 else
 CFLAGS += \
           -Wall \
           -Wextra \
+          -Wstrict-overflow=5 \
           -Werror=implicit-function-declaration \
           -Wno-bool-operation \
           -Wno-misleading-indentation \
@@ -118,6 +118,15 @@ ifeq ($(A),1)
  LDFLAGS += --analyzer
 endif
 
+ifeq ($(WE),1)
+ CFLAGS += -Werror
+ ifeq (,$(findstring clang,$(CC)))
+  # "warning: always_inline function might not be inlinable"
+  # "warning: minsize attribute directive ignored"
+  CFLAGS += -Wno-error=attributes
+ endif
+endif
+
 # pgo
 ifeq ($(PGO),1)
  CFLAGS   += -fprofile-generate
@@ -150,6 +159,7 @@ endif
 CPPFLAGS += -pthread
 LDLIBS += -pthread
 LDLIBS += -ldl
+LDLIBS += -lm
 
 CPPFLAGS += -DEXE='"$(EXE)"'
 
@@ -161,8 +171,9 @@ LDLIBS += -lreadline
 LDLIBS += -lX11 -lXtst
 
 # lua
-LUA_CFLAGS ?= $(shell pkg-config --cflags lua5.4)
-LUA_LIBS   ?= $(shell pkg-config --libs   lua5.4)
+LUA_PKG    ?= lua5.4
+LUA_CFLAGS ?= $(shell pkg-config --cflags $(LUA_PKG))
+LUA_LIBS   ?= $(shell pkg-config --libs   $(LUA_PKG))
 CFLAGS += $(LUA_CFLAGS)
 LDLIBS += $(LUA_LIBS)
 
@@ -187,8 +198,9 @@ $(EXE): $(OBJS)
 
 # ~
 
+CFGFS_RM ?= rm -v
 clean:
-	@rm -fv -- $(EXE) $(OBJS) $(DEPS)
+	@$(CFGFS_RM) -f -- $(EXE) $(OBJS) $(DEPS)
 
 watch:
 	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >.cfgfs_reexec;pkill -INT cfgfs||rm .cfgfs_reexec'; do\
@@ -213,11 +225,13 @@ install:
 .PHONY: test
 test:
 	@exec timeout 5 sh test/run.sh
+testbuild:
+	@exec timeout 60 sh test/build.sh
 
 scan:
-	@scan-build --use-cc=clang make -s -B VV=1
+	@scan-build --use-cc=clang make -Bs VV=1
 analyze:
-	@CC=gcc CFLAGS='-O2 -fdiagnostics-color -flto' LDFLAGS='-O2 -fdiagnostics-color -flto' make -B A=1 VV=1
+	@CC=gcc CFLAGS='-O2 -fdiagnostics-color -flto' LDFLAGS='-O2 -fdiagnostics-color -flto' make -Bs A=1 VV=1
 
 # ------------------------------------------------------------------------------
 

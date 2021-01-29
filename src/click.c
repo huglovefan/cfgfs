@@ -132,7 +132,7 @@ static void *click_thread(void *msp) {
 
 static void click_at(double ms) {
 	void *msp;
-	_Static_assert(sizeof(msp) >= sizeof(ms));
+	_Static_assert(sizeof(msp) >= sizeof(ms), "double doesn't fit in pointer");
 	memcpy(&msp, &ms, sizeof(double));
 
 D	assert(thread_attr_inited);

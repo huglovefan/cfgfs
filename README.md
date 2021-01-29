@@ -57,3 +57,21 @@ test with and I don't <del>want one</del> know if this will even work on it.
 
 The cfgfs "config" will be loaded from `script_APPID.lua` where `APPID` is the
 Steam app id of the game.
+
+(the ones included contain my configs, you'll probably want to delete most of
+them)
+
+## What else?
+
+If you're using this, I'd like to hear any feedback and thoughts you might
+have in the [discussions](https://github.com/huglovefan/cfgfs/discussions).
+Open a new thread and describe your experience there. Any kind of comments are
+appreciated, but I'm especially interested in hearing if there was anything you
+found [*confusing*](https://en.wikipedia.org/wiki/Horror_and_terror),
+[*excellent*](https://en.wikipedia.org/wiki/Ecstasy_(emotion)) or
+[*missing*](https://en.wikipedia.org/wiki/Disappointment).
+
+If you can't get it to work (or have some other problem), then please
+[open an issue](https://github.com/huglovefan/cfgfs/issues/new). Include at
+least a description of *what's wrong*, what game you were trying to play and
+what GNU/Linux distro you're using.

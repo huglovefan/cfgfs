@@ -6,12 +6,14 @@
 -- or maybe it is if you know where to start
 --
 
-local ev_error_handlers
-
 _println = assert(_print)
 println = function (fmt, ...) return _print(string.format(fmt, ...)) end
 _eprintln = assert(_eprint)
 eprintln = function (fmt, ...) return _eprint(string.format(fmt, ...)) end
+
+if _VERSION == 'Lua 5.1' then
+	table.unpack = unpack
+end
 
 print = function (...)
 	local t = {...}
@@ -25,6 +27,8 @@ print = function (...)
 end
 
 fatal = assert(_fatal)
+
+local ev_error_handlers
 
 setmetatable(_G, {
 	__index = function (self, k)
@@ -849,10 +853,11 @@ _get_contents = function (path)
 		end
 
 		if path == 'license.cfg' then
-			local f <close> = assert(io.open('LICENSE', 'r'))
+			local f = assert(io.open('LICENSE', 'r'))
 			for line in f:lines() do
 				cmd.echo(line)
 			end
+			f:close()
 			return
 		end
 
@@ -956,10 +961,11 @@ _cli_input = function (line)
 	end
 
 	if line == 'cfgfs_license' then
-		local f <close> = assert(io.open('LICENSE', 'r'))
+		local f = assert(io.open('LICENSE', 'r'))
 		for line in f:lines() do
 			println('%s', line)
 		end
+		f:close()
 		return
 	end
 
@@ -1099,8 +1105,9 @@ end
 
 local logpos = 0
 do
-	local f <close> = assert(io.open('console.log', 'r'))
+	local f = assert(io.open('console.log', 'r'))
 	logpos = assert(f:seek('end'))
+	f:close()
 end
 
 open_log = function ()
@@ -1110,12 +1117,13 @@ open_log = function ()
 end
 
 grep = function (pat)
-	local f <close> = open_log()
+	local f = open_log()
 	for line in f:lines() do
 		if line:find(pat) then
 			println('%s', line)
 		end
 	end
+	f:close()
 end
 
 --------------------------------------------------------------------------------

@@ -113,8 +113,14 @@ static void *attention_main(void *ud) {
 
 	const char *gamename = getenv("GAMENAME");
 	size_t gnlen = strlen(gamename);
-	char title[gnlen+strlen(window_title_suffix)+1];
-	sprintf(title, "%s%s", gamename, window_title_suffix);
+	char *title = malloc(gnlen+strlen(window_title_suffix)+1);
+	if (title == NULL) {
+		perror("attention: malloc");
+		goto out;
+	}
+	memcpy(title, gamename, gnlen);
+	memcpy(title+gnlen, window_title_suffix, strlen(window_title_suffix));
+	title[gnlen+strlen(window_title_suffix)] = '\0';
 	game_window_title = title;
 VV	eprintln("attention: game_window_title=\"%s\"", game_window_title);
 
@@ -124,8 +130,9 @@ VV	eprintln("attention: game_window_title=\"%s\"", game_window_title);
 			check_attention(net_wm_name);
 		}
 	}
-
+out:
 	game_window_title = NULL;
+	free(exchange(title, NULL));
 
 	return NULL;
 }

@@ -43,8 +43,8 @@ __attribute__((cold))
 void main_quit(void) {
 	pthread_t main_thread = g_main_thread;
 	if (main_thread) {
-		pthread_kill(main_thread, SIGINT);
 		main_quit_called = true;
+		pthread_kill(main_thread, SIGINT);
 	}
 }
 
@@ -70,8 +70,8 @@ static int l_lookup_path(const char *restrict path);
 
 __attribute__((always_inline))
 static int lookup_path(const char *restrict path, enum special_file_type *type) {
-	const char *slashdot;
-	slashdot = *&slashdot; // not uninitialized
+	const char *slashdot = path;
+D	assert(*slashdot == '/');
 	const char *p = path;
 	for (; *p != '\0'; p++) {
 		switch (*p) {
@@ -256,7 +256,9 @@ static int cfgfs_write(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
-	switch (*(enum special_file_type *)&fi->fh) {
+	enum special_file_type sft;
+	memcpy(&sft, &fi->fh, sizeof(enum special_file_type));
+	switch (sft) {
 	case sft_console_log: {
 		static pthread_mutex_t logcatcher_lock = PTHREAD_MUTEX_INITIALIZER;
 		static char logbuffer[8192];
@@ -438,6 +440,8 @@ static void check_env(void) {
 
 int main(int argc, char **argv) {
 
+	one_true_entry();
+
 	// https://lwn.net/Articles/837019/
 	mallopt(M_MMAP_MAX, 0);
 	mallopt(M_TOP_PAD, 10*1024*1000);
@@ -539,6 +543,7 @@ out_fuse_newed_and_mounted:
 out_fuse_newed:
 	fuse_destroy(fuse);
 out_no_fuse:
+	one_true_exit();
 	lua_deinit();
 	attention_deinit();
 	cli_input_deinit();

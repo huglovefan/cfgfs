@@ -22,6 +22,10 @@
 #include "macros.h"
 #include "main.h"
 
+#if LUA_VERSION_NUM == 501 && !defined(LUA_OK)
+ #define LUA_OK 0
+#endif
+
 static lua_State *g_L;
 static pthread_mutex_t lua_mutex = PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP;
 
@@ -88,6 +92,7 @@ void lua_deinit(void) {
 static void lua_print_backtrace(lua_State *L) {
 	size_t sz;
 	const char *s;
+#if LUA_VERSION_NUM >= 502
 	if (lua_checkstack(L, 1)) {
 		luaL_traceback(L, L, NULL, 0);
 		s = lua_tolstring(L, -1, &sz);
@@ -96,6 +101,18 @@ static void lua_print_backtrace(lua_State *L) {
 		}
 		lua_pop(L, 1);
 	}
+#else
+	if (lua_checkstack(L, 2)) {
+		lua_getglobal(L, "debug");
+		lua_getfield(L, -1, "traceback");
+		lua_call(L, 0, 1);
+		s = lua_tolstring(L, -1, &sz);
+		if (s != NULL && sz != strlen("stack traceback:")) {
+			fprintf(stderr, "%s\n", s);
+		}
+		lua_pop(L, 2);
+	}
+#endif
 }
 static void c_print_backtrace(void) {
 	typedef void (*print_backtrace_t)(void);
