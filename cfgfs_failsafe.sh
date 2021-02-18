@@ -9,14 +9,35 @@ if [ -n "$GAMEDIR" -a -z "$GAMENAME" ]; then
 	>&2 echo "warning: failed to parse game name from gameinfo.txt!"
 fi
 
+sudo_or_doas() {
+	if command -v sudo >/dev/null; then
+		( set -x; sudo "$@" )
+	elif command -v doas >/dev/null; then
+		( set -x; doas "$@" )
+	else
+		# print the "command not found" message i guess
+		( set -x; sudo "$@" )
+	fi
+}
+
 run() {
 	if mount | fgrep -q " $1 "; then
-		fusermount -u -- "$1" || return
+		if ! out=$(LANG=C fusermount -u -- "$1" 2>&1); then
+			case $out in
+			*'Device or resource busy'*)
+				sudo_or_doas umount --force --lazy "$1" || return
+				;;
+			*)
+				if [ -n "$out" ]; then >&2 echo "$out"; fi
+				return 1
+				;;
+			esac
+		fi
 	fi
 
 	mkdir -p -- "$1" || return
 
-	./cfgfs "$1"
+	( . ./env.sh; exec ./cfgfs "$1" )
 	rv=$?
 
 	if [ $rv -ne 0 ]; then

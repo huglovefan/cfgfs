@@ -209,7 +209,7 @@ do
 end
 ev_loop_co = coroutine.create(ev_loop_fn)
 
-local ev_handle_return = function (co, ok, rv1, rv2, rv3)
+local ev_handle_return = function (co, ok, rv1, rv2)
 	if ok then
 		if co == ev_loop_co and rv1 ~= sym_ready then
 			ev_loop_co = coroutine.create(ev_loop_fn)
@@ -480,26 +480,6 @@ local get_cvars = function (t)
 	end
 	return rv
 end
--- note: the match pattern does not use "^"
--- due to mysteries, the console output sometimes comes up jumbled with the
---  order of words messed up
--- like
---[[
-	] help con_enable
-	 archive"con_enable" = "1"
-	 ( def. "0" ) - Allows the console to be activated.
-	] help con_enable
-	 - Allows the console to be activated.
-	"con_enable" = "1" ( def. "0" )
-	 archive
-	] help con_enable
-	 ( def. "0" )"con_enable" = "1"
-	 archive
-	 - Allows the console to be activated.
-]]
--- etc etc
--- i wonder what causes it
--- luckily the `"name" = "value"` part is always intact
 
 cvar = setmetatable({--[[ empty ]]}, {
 	__index = function (_, k)

@@ -1,4 +1,4 @@
-#include "lua.h"
+#include "builtins.h"
 
 #include <dlfcn.h>
 #include <errno.h>
@@ -12,135 +12,35 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
-#include "attention.h"
-#include "buffers.h"
-#include "cfg.h"
-#include "cli_input.h"
-#include "cli_output.h"
-#include "click.h"
-#include "keys.h"
-#include "macros.h"
-#include "main.h"
+#include "../attention.h"
+#include "../buffers.h"
+#include "../cfg.h"
+#include "../cli_input.h"
+#include "../cli_output.h"
+#include "../click.h"
+#include "../keys.h"
+#include "../lua.h"
+#include "../macros.h"
+#include "../main.h"
 
-#if LUA_VERSION_NUM == 501 && !defined(LUA_OK)
+#if LUA_VERSION_NUM == 501
  #define LUA_OK 0
 #endif
 
-static lua_State *g_L;
-static pthread_mutex_t lua_mutex = PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP;
-
-lua_State *lua_get_state(void) {
-	lua_lock_state();
-D	assert(g_L != NULL);
-	return g_L;
-}
-
-void lua_release_state(lua_State *L) {
-D	assert(L != NULL);
-D	assert(L == g_L);
-	lua_unlock_state();
-}
-
-bool lua_lock_state(void) {
-	int err = pthread_mutex_lock(&lua_mutex);
-	if (unlikely(err != 0)) {
-		errno = err;
-		return false;
-	}
-	if (unlikely(g_L == NULL)) {
-		pthread_mutex_unlock(&lua_mutex);
-		errno = EIO;
-		return false;
-	}
-D	assert(stack_is_clean(g_L));
-	return true;
-}
-
-void lua_unlock_state(void) {
-	bool click = (!buffer_list_is_empty(&buffers));
-	lua_unlock_state_no_click();
-	if (click) do_click();
-}
-
-lua_State *lua_get_state_already_locked(void) {
-D	assert(g_L != NULL);
-	return g_L;
-}
-
-void lua_unlock_state_no_click(void) {
-D	assert(stack_is_clean(g_L));
-	pthread_mutex_unlock(&lua_mutex);
-}
-
-void lua_unlock_state_and_click(void) {
-	lua_unlock_state_no_click();
-	do_click();
-}
-
-void lua_deinit(void) {
-	if (lua_lock_state()) {
-		 lua_getglobal(g_L, "_fire_unload");
-		  lua_pushboolean(g_L, 1);
-		lua_call(g_L, 1, 0);
-		lua_close(exchange(g_L, NULL));
-		pthread_mutex_unlock(&lua_mutex);
-	}
-}
-
 // -----------------------------------------------------------------------------
 
-static void lua_print_backtrace(lua_State *L) {
-	size_t sz;
-	const char *s;
-#if LUA_VERSION_NUM >= 502
-	if (lua_checkstack(L, 1)) {
-		luaL_traceback(L, L, NULL, 0);
-		s = lua_tolstring(L, -1, &sz);
-		if (s != NULL && sz != strlen("stack traceback:")) {
-			fprintf(stderr, "%s\n", s);
-		}
-		lua_pop(L, 1);
-	}
-#else
-	if (lua_checkstack(L, 2)) {
-		lua_getglobal(L, "debug");
-		lua_getfield(L, -1, "traceback");
-		lua_call(L, 0, 1);
-		s = lua_tolstring(L, -1, &sz);
-		if (s != NULL && sz != strlen("stack traceback:")) {
-			fprintf(stderr, "%s\n", s);
-		}
-		lua_pop(L, 2);
-	}
-#endif
-}
-static void c_print_backtrace(void) {
-	typedef void (*print_backtrace_t)(void);
-	print_backtrace_t fn = (print_backtrace_t)dlsym(RTLD_DEFAULT, "__sanitizer_print_stack_trace");
-	if (fn != NULL) fn();
-}
-
-__attribute__((cold))
-static int l_panic(lua_State *L) {
-	if (cli_trylock_output_nosave()) cli_save_prompt_locked();
-	fprintf(stderr, "fatal error: %s\n", lua_tostring(L, -1));
-	lua_print_backtrace(L);
-	c_print_backtrace();
-	return 0;
-}
-__attribute__((cold))
+__attribute__((noreturn))
 static int l_fatal(lua_State *L) {
-	if (cli_trylock_output_nosave()) cli_save_prompt_locked();
-	const char *s = lua_tostring(L, 1);
-	if (s) fprintf(stderr, "fatal error: %s\n", s);
-	lua_print_backtrace(L);
-	c_print_backtrace();
-	abort();
-}
-
-int lua_do_nothing(lua_State *L) {
-	(void)L;
-	return 0;
+	lua_CFunction pfn = lua_atpanic(L, NULL);
+	if (pfn != NULL) {
+		lua_atpanic(L, pfn);
+		pfn(L);
+		abort();
+	} else {
+		eprintln("fatal error!");
+		eprintln("(panic function not set, skipping backtrace)");
+		abort();
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -273,13 +173,16 @@ static int l_eprint(lua_State *L) {
 
 // -----------------------------------------------------------------------------
 
-__attribute__((cold))
-bool lua_init(void) {
+int lua_do_nothing(void *L) {
+	(void)L;
+	return 0;
+}
 
-	lua_State *L = luaL_newstate();
-	luaL_openlibs(L);
+// -----------------------------------------------------------------------------
 
-	lua_atpanic(L, l_panic);
+void lua_define_builtins(void *L) {
+
+	assert(0 == lua_gettop(L));
 
 	 lua_pushcfunction(L, l_fatal);
 	lua_setglobal(L, "_fatal");
@@ -319,7 +222,7 @@ bool lua_init(void) {
 	 }
 	lua_pop(L, 1);
 
-	if (luaL_dostring(L, "\
+	if (LUA_OK != luaL_dostring(L, "\
 	for n, key in ipairs(num2key) do\
 		local down   = string.format('/cfgfs/keys/+%d.cfg', n)\
 		local up     = string.format('/cfgfs/keys/-%d.cfg', n)\
@@ -331,7 +234,7 @@ bool lua_init(void) {
 		bindfilenames[once]   = {name = key, type = 'once'}\
 		key2num[key] = n\
 	end\
-	") != LUA_OK) lua_error(L);
+	")) lua_error(L);
 
 	buffers_init_lua(L);
 	cfg_init_lua(L);
@@ -341,34 +244,6 @@ bool lua_init(void) {
 	_Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
 	lua_pushstring(L, AGPL_SOURCE_URL); lua_setglobal(L, "agpl_source_url");
 
-	if (luaL_loadfile(L, "./builtin.lua") != LUA_OK) {
-		eprintln("error: %s", lua_tostring(L, -1));
-		eprintln("failed to load builtin.lua!");
-		goto err;
-	}
-	 lua_call(L, 0, 1);
-	 if (!lua_toboolean(L, -1)) goto err;
-	lua_pop(L, 1);
-
-	 lua_getglobal(L, "_get_contents");
-D	 assert(lua_gettop(L) == GET_CONTENTS_IDX);
-D	 assert(lua_type(L, GET_CONTENTS_IDX) == LUA_TFUNCTION);
-	  lua_getglobal(L, "_game_console_output");
-D	  assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
-D	  assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
-
-	buffer_list_swap(&buffers, &init_cfg);
-
-	 lua_getglobal(L, "_fire_startup");
-	lua_call(L, 0, 0);
-
-	assert(stack_is_clean(L));
-
-	g_L = L;
-
-	return true;
-err:
-	lua_close(L);
-	return false;
+	assert(0 == lua_gettop(L));
 
 }

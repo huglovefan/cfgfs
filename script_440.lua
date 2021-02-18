@@ -106,14 +106,14 @@ add_listener('+tab', function ()
 			table.remove(xhs[class][slot], 1)
 			return xh_update(slot)
 		else
-			return cfg('slot6')
+			return cmd.play('common/wpn_denyselect.wav')
 		end
 	end
 end)
 
 local do_slot = function (n, is_mod, noskip)
 	if not (n and xhs[class][n] and (noskip or not xhs[class][n].skip)) then
-		return cfg('slot6')
+		return cmd.play('common/wpn_denyselect.wav')
 	end
 	if not is_mod then
 		slot = n
@@ -154,7 +154,9 @@ end
 
 mod_dn = function ()
 	local mod = xhs[class].mod
-	if not mod or mod == slot then return cfg('slot6') end
+	if not mod or mod == slot then
+		return cmd.play('common/wpn_denyselect.wav')
+	end
 	do_slot(mod, true)
 	mod_prev = slot
 end
@@ -371,11 +373,14 @@ cvar.tf_scoreboard_mouse_mode = 2
 cvar.tf_scoreboard_ping_as_text = 1
 cvar.tf_sniper_fullcharge_bell = 1
 cvar.viewmodel_fov = 75
-cvar.voice_overdrive = 1
+cvar.voice_overdrive = 1 -- don't duck game sounds when someone speaks
 
 cvar.mat_disable_lightwarp = 0
 cvar.r_lightaverage = 0
 cvar.r_rimlight = 1
+
+cvar.r_dynamic = 1
+cvar.r_maxdlights = 32
 
 local force_use_world_model = nil
 add_listener({'classchange', 'slotchange'}, function ()
@@ -410,7 +415,7 @@ cvar.tf_mm_custom_ping = 35
 -- things that need the key bound directly:
 -- * +reload for switching disguise team
 -- * say, say_team for using the chat
--- * +taunt to exit group taunts and use the normal one from the menu
+-- * +taunt to exit group taunts and use the normal taunt from the menu
 -- * lastinv to cancel the taunt menu
 
 cmd.unbindall()
@@ -465,13 +470,7 @@ bind('pgup',                            '')
 
 bind('tab',                             '+showscores;cl_showfps 2;cl_showpos 1',
                                         '-showscores;cl_showfps 0;cl_showpos 0')
-bind('q', function (...)
-	if is_pressed['alt'] then
-		cmd.bots(...)
-	else
-		cmd.kptadpb(...)
-	end
-end)
+bind('q',                               'kob')
 bind('w',                               nullcancel_pair('w', 's', 'forward', 'back'))
 bind('e',                               'voicemenu 0 0')
 cmd.bind('r',                           '+reload')
@@ -485,7 +484,6 @@ bind('t', function (_, key)
 		fire_event('slotchange', slot)
 		return
 	end
-	cmd('+use_action_slot_item')
 	repeat
 		cmd.extendfreeze()
 	until wait_for_event('-'..key, 1950)
@@ -594,6 +592,396 @@ add_listener('attention', function (active)
 		os.execute('kill -CONT $(pidof '..exes..') 2>/dev/null')
 	end
 end)
+
+--------------------------------------------------------------------------------
+
+local json = require 'json'
+
+local bad_steamids = {}
+
+listupdate = function ()
+	local p <close> = assert(io.popen('timeout 5 sh misc/get_bad_steamids.sh'))
+	local cnt = 0
+	for line in p:lines() do
+		local steamid, lists = assert(line:match('^(%S+)%s+(%S+)$'))
+		bad_steamids[steamid] = lists
+		cnt = cnt+1
+	end
+	println('listupdate: loaded %d steamids', cnt)
+end
+
+add_listener('startup', function ()
+	panic = fatal
+	listupdate()
+	panic = nil
+end)
+
+local bad_steamids_check_status_entry = function (name, steamid)
+	name = name:lower()
+	if name:find('nigger')
+	or name:find('steam')
+	or name:find('valve')
+	or name:find('\n') then
+		if bad_steamids[steamid] then
+			if not (','..bad_steamids[steamid]..','):find(',console%.log,') then
+				bad_steamids[steamid] = 'console.log,'..bad_steamids[steamid]
+			end
+		else
+			bad_steamids[steamid] = 'console.log'
+		end
+	end
+end
+
+--[[ get_playerlist ]] do
+
+local playerlist = {}
+
+local playerlist_updated = 0
+local playerlist_currently_updating = false
+
+local playerlist_cache_time <const> = 5*1000
+
+get_playerlist = function ()
+	if playerlist and _ms() <= playerlist_updated+playerlist_cache_time then
+		return playerlist
+	end
+
+	if playerlist_currently_updating then
+		wait_for_event('playerlist_updated')
+		assert(not playerlist_currently_updating)
+		return get_playerlist(steamid)
+	end
+	playerlist_currently_updating = true
+	local oldpanic = panic; panic = fatal
+
+	cmd.status()
+
+	local players = {}
+	local count = nil
+
+	for _, line in wait_for_events('game_console_output', 2000) do
+		local id, name, steamid = line:match('^# +([0-9]+) +"(.*)" +(%[U:1:[0-9]+%]) +[0-9:]+ +[0-9]+ +[0-9]+ [^ ]+$')
+		if id then
+			local accountid = steamid:match('^%[U:1:([0-9]+)%]$')
+			local id64 = tonumber(accountid)+76561197960265728
+			name = name:gsub('^%([0-9]+%)', '')
+			local t = {
+				id = tonumber(id),
+				name = name,
+				steamid = steamid,
+				steamid64 = id64,
+			}
+			table.insert(players, t)
+			players[tostring(id64)] = t
+		end
+
+		local cnt = line:match('^players : ([0-9]+) humans, [0-9]+ bots %([0-9]+ max%)$')
+		if cnt then
+			count = tonumber(cnt)
+		end
+
+		if count and #players == count then
+			break
+		end
+	end
+
+	playerlist = players
+	playerlist_updated = _ms()
+	playerlist_currently_updating = false
+
+	if not count then
+		cmd.echo('warning: failed to find the player count')
+	elseif #players ~= count then
+		cmd.echo('warning: failed to parse all the players')
+	end
+
+	panic = oldpanic
+	fire_event('playerlist_updated')
+
+	return players
+end
+
+end -- get_playerlist
+
+--[[ get_team ]] do
+
+local teamdata = {}
+
+local teamdata_updated = 0
+local teamdata_currently_updating = false
+
+local teamdata_cache_time <const> = 1000
+
+local teamnames = {
+	['TF_GC_TEAM_INVADERS'] = 'red',
+	['TF_GC_TEAM_DEFENDERS'] = 'blu',
+}
+get_team = function (steamid)
+	if _ms() <= teamdata_updated+teamdata_cache_time then
+		return teamdata[steamid]
+	end
+
+	if teamdata_currently_updating then
+		wait_for_event('teamdata_updated')
+		assert(not teamdata_currently_updating)
+		return get_team(steamid)
+	end
+	teamdata_currently_updating = true
+	local oldpanic = panic; panic = fatal
+
+	cmd.tf_lobby_debug()
+
+	local mcnt, pcnt
+	local players = {}
+	for _, line in wait_for_events('game_console_output', 2000) do
+		local mcnt_, pcnt_ = line:match('^CTFLobbyShared: ID:[0-9a-f]+  ([0-9]+) member%(s%), ([0-9]+) pending$')
+		if mcnt_ then
+			mcnt, pcnt = tonumber(mcnt_), tonumber(pcnt_)
+		end
+		local idstr, steamid, team = line:match('^  ([A-Z][a-z]+%[[0-9]+%]) (%[U:1:[0-9]+%])  team = ([A-Z_]+)  type = [A-Z_]+$')
+		if idstr and not players[idstr] then
+			table.insert(players, {
+				steamid = steamid,
+				team = team,
+			})
+			players[idstr] = true
+		end
+		if mcnt and (#players == mcnt+pcnt) then
+			break
+		end
+	end
+
+	if not (mcnt and (#players == mcnt+pcnt)) then
+		eprintln('get_team: couldn\'t parse entire player list!')
+	end
+
+	local t = {}
+	for _, p in ipairs(players) do
+		t[p.steamid] = (teamnames[p.team] or nil)
+		if not t[p.steamid] then
+			eprintln('get_team: player %s has unknown team %s',
+			    p.steamid, p.team)
+		end
+	end
+
+	teamdata = t
+	teamdata_updated = _ms()
+	teamdata_currently_updating = false
+
+	panic = oldpanic
+	fire_event('teamdata_updated')
+
+	return t[steamid]
+end
+
+end -- get_team
+
+local shellquote = function (s)
+	return '\'' .. s:gsub('\'', '\'\\\'\'') .. '\''
+end
+local get_json = function (url)
+	local p <close> = assert(io.popen('timeout 2 curl -s ' .. shellquote(url), 'r'))
+	local s = p:read('a')
+	return json.decode(s)
+end
+
+local summaries_url_fmt =
+    'http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/' ..
+    '?key=%s&steamids=%s'
+local get_summaries = function (players)
+	local id64s = {}
+	for _, t in ipairs(players) do
+		table.insert(id64s, t.steamid64)
+	end
+	local url = string.format(summaries_url_fmt,
+	    os.getenv('STEAM_APIKEY'),
+	    table.concat(id64s, ','))
+	return get_json(url)
+end
+
+cmd.echof = function (fmt, ...)
+	return cmd.echo(string.format(fmt, ...))
+end
+
+local printableish = function (name)
+	if not name:find('[ -~]') then
+		name = '(unprintable)'
+	end
+	return name
+end
+cmd.bots = function ()
+	panic = function (err)
+		cmd.echo('an error occurred: ' .. err)
+		cmd.voicemenu(2, 5)
+	end
+	if not os.getenv('STEAM_APIKEY') then
+		cmd.echo('STEAM_APIKEY not set!')
+		cmd.echo('get it from https://steamcommunity.com/dev/apikey')
+		return
+	end
+
+	local players = get_playerlist()
+	if #players == 0 then
+		return
+	end
+
+	local summaries = get_summaries(players)
+
+	cmd.echo('')
+	local found_any = false
+	for _, t in ipairs(summaries.response.players) do
+		local complain = function (fmt, ...)
+			found_any = true
+			cmd.echof('%s %s: ' .. fmt,
+			    printableish(players[t.steamid].name),
+			    players[t.steamid].steamid,
+			    ...)
+		end
+		local mangle_name_for_comparing = function (name)
+			name = name:gsub('%%', '')
+			name = name:gsub('~', '')
+			name = name:gsub('^#', '', 1)
+			-- maximum length on steam is 32, in-game it's 31
+			-- ignore the last 4 bytes in case it's a utf-8 character that got truncated
+			-- (not sure if this happens, haven't tested it)
+			name = name:sub(1, 32-4)
+			return name
+		end
+		if mangle_name_for_comparing(t.personaname)
+		   ~= mangle_name_for_comparing(players[t.steamid].name) then
+			complain('steam name differs: %s', printableish(t.personaname))
+		end
+		if bad_steamids[players[t.steamid].steamid] then
+			complain('on lists: %s', bad_steamids[players[t.steamid].steamid])
+		end
+		bad_steamids_check_status_entry(players[t.steamid].name, players[t.steamid].steamid)
+	end
+	if not found_any then
+		cmd.echo('no bots found?')
+	else
+		cmd.voicemenu(2, 5)
+	end
+	cmd.echo('')
+end
+
+local find_own_steamid do
+	local own_steamid = nil
+	find_own_steamid = function (playerlist) -- local
+		if own_steamid then
+			return own_steamid
+		end
+		local myname = cvar.name
+		for _, t in ipairs(playerlist) do
+			if t.name == myname then
+				own_steamid = t.steamid
+				return t.steamid
+			end
+		end
+		return nil
+	end
+end
+
+-- kick obvious bots
+cmd.kob = function (_, key)
+	local cmdv = cmdp
+
+	panic = function (err)
+		cmd.echof('kob: %s', err)
+		cmd.voicemenu(2, 5)
+	end
+	local bind_press_time = (type(key) == 'string' and rawget(is_pressed, key))
+
+	local playerlist = get_playerlist()
+	local mysteamid = assert(find_own_steamid(playerlist), 'failed to get own steamid')
+	local myteam = assert(get_team(mysteamid), 'failed to get own team')
+	local bots = {}
+	local myteam_humans = 0
+	local myteam_robots = 0
+
+	local check_lists = function (t)
+		return (nil ~= bad_steamids[t.steamid])
+	end
+
+	local check_impossible_names = function (t)
+		local name = t.name:lower()
+		-- steam rejects names with these words
+		if name:find('nigger')
+		or name:find('steam')
+		or name:find('valve')
+		or name:find('\n') then
+			return true
+		end
+		return false
+	end
+
+	local names = {}
+	for _, t in ipairs(playerlist) do
+		names[t.name] = true
+	end
+	local check_namestealer = function (t)
+		local name = t.name
+		name = name:gsub('\xe2\x80\x8f', '')
+		name = name:gsub('\xe0\xb9\x8a', '')
+		return (name ~= t.name and names[name])
+	end
+
+	for _, t in ipairs(playerlist) do
+		local team = get_team(t.steamid) --, 'failed to get team for '..t.steamid)
+		if (not team) or team == myteam then
+			local is_bot = check_lists(t)
+			            or check_impossible_names(t)
+			            or check_namestealer(t)
+			if is_bot then
+				table.insert(bots, t)
+				myteam_robots = (myteam_robots + 1)
+			else
+				myteam_humans = (myteam_humans + 1)
+			end
+		end
+		bad_steamids_check_status_entry(t.name, t.steamid)
+	end
+	-- is the vote doomed to fail?
+	-- this is to avoid wasting votes since there's a cooldown
+	local doomed = false
+	if #bots > 0 then
+		if myteam_humans < 5 then
+			-- votes need at least 6 participants to work
+			-- target automatically votes no for itself, so need to have at least 5 competent humans to vote yes
+			doomed = true
+			cmd.echof('kptadpb: vote won\'t pass (not enough participants)')
+			cmd.voicemenu(2, 5)
+		end
+		if not (myteam_humans > myteam_robots) then
+			-- need to have at least one more yes vote than no votes for the vote to pass
+			-- this vote will fail assuming all the bots vote no
+			doomed = true
+			cmd.echof('kptadpb: vote won\'t pass (bots outnumber humans)')
+			cmd.voicemenu(2, 5)
+		end
+	end
+	if #bots > 0 and not doomed then
+		for _, t in ipairs(bots) do
+			cmdv.callvote('kick', string.format('%d cheating', t.id))
+		end
+		if bind_press_time and bind_press_time == is_pressed[key] then
+			local i = 1
+			while not wait_for_event('-'..key, 30) do
+				if i == #bots+1 then i = 1 end
+				cmdv.callvote('kick', string.format('%d cheating', bots[i].id))
+				i = i + 1
+			end
+		end
+	else
+		if #bots == 0 then
+			cmd.voicemenu(2, 4)
+		end
+		if bind_press_time and bind_press_time == is_pressed[key] then
+			if not wait_for_event('-'..key, 100) then
+				return cmd.kptadpb(_, key)
+			end
+		end
+	end
+end
 
 --------------------------------------------------------------------------------
 

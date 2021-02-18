@@ -21,7 +21,7 @@ int rdselect_real(int count, ...);
  enum msg;
 #pragma GCC diagnostic pop
 
-// save and restore errno since this is called from signal handlers
+// note: must save and restore errno because this is called from signal handlers
 #define writech(fd, m) \
 	({ \
 		int errno_ = errno; \

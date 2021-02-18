@@ -1,0 +1,15 @@
+/.cache/
+/RESEARCH
+
+/.thinlto-cache/
+/test/rv
+/cfgfs
+*.d
+*.o
+
+/.cli_history
+/console.log
+/mnt
+
+/env.sh
+/misc/bots.list

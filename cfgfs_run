@@ -101,7 +101,11 @@ wait_cfgfs_ready() {
 wait_cfgfs_ready || exit
 
 if [ -f "$gamedir/console.log" -a ! -L "$gamedir/console.log" ]; then
-	mv -fv "$gamedir/console.log" "$gamedir/console.log.$(date +%s)"
+	newname=$gamedir/console.log.old
+	if [ -e "$newname" ]; then
+		newname=$gamedir/console.log.$(date +%s)
+	fi
+	mv -fv "$gamedir/console.log" "$newname"
 fi
 ln -sfv custom/!cfgfs/cfg/console.log "$gamedir/console.log"
 

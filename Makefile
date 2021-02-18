@@ -11,7 +11,7 @@ endif
 
 CFLAGS ?= -O2 -g
 
-STATIC_LIBFUSE := 1
+#STATIC_LIBFUSE := 1
 
 # ------------------------------------------------------------------------------
 
@@ -21,7 +21,8 @@ OBJS = \
        src/main.o \
        src/buffers.o \
        src/buffer_list.o \
-       src/lua.o \
+       src/lua/state.o \
+       src/lua/builtins.o \
        src/cli_output.o \
        src/cfg.o \
        src/click.o \
@@ -30,6 +31,7 @@ OBJS = \
        src/reloader.o \
        src/cli_input.o \
        src/keys.o \
+       src/lua/init.o \
 
 DEPS = $(OBJS:.o=.d)
 SRCS = $(OBJS:.o=.c)
@@ -250,4 +252,5 @@ start: $(EXE)
 	export GAMEDIR=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf; \
 	export GAMEROOT=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \
+	. ./env.sh; \
 	exec ./$(EXE) $(CFGFS_FLAGS) "$${GAMEDIR}/custom/!cfgfs/cfg"

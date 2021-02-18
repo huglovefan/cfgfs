@@ -1,30 +1,34 @@
 # *cfgfs - scriptable configs*
 
-`cfgfs` lets you write binds and aliases for Source games in straight-forward
-Lua code.
+<!-- marketing speech -->
 
-The "config" can use console commands, variables as well as external Lua
-libraries.
+For Source games - `cfgfs` allows writing configs in the
+[Lua scripting language].
 
-`cfgfs` works by creating a
-[virtual filesystem](https://en.wikipedia.org/wiki/Filesystem_in_Userspace) to
-generate configs "on the fly" as the game reads them. Keys are then bound
-in-game to execute configs from there, which will let `cfgfs` react and call
-your Lua function in response.
+Keybinds and aliases can be defined, with full access to game commands,
+variables and external Lua libraries.
 
-Using Lua features like metatables and coroutines underneath, `cfgfs` tries to
-make the syntax for using game commands and variables as simple and natural as
-possible.
+Some of the other features available for `cfgfs` configs are:
+
+- Reading messages written to the game console
+- Waiting independently of the `sv_allow_wait_command` setting
+
+No modifications to game files are needed: `cfgfs` works by creating a
+[virtual filesystem] to dynamically generate config files with contents derived
+from executing the Lua script.
+
+[Lua scripting language]: https://www.lua.org/
+[virtual filesystem]: https://en.wikipedia.org/wiki/Filesystem_in_Userspace
 
 ```lua
--- bind a key
+-- add a keybind
 bind('f5', function ()
 	cmd.say('Why did the chicken cross the road?')
 	wait(2000)
 	cmd.say('example test test 123 abc')
 end)
 
--- define an alias
+-- define an alias (can be called from the game console)
 cmd.greet = function ()
 	local name = cvar.name
 	cmd.echo('Hello ' .. name .. '!')
@@ -56,22 +60,22 @@ test with and I don't <del>want one</del> know if this will even work on it.
    If you already have something using `%command%` there, add only `cfgfs_run`.
 
 The cfgfs "config" will be loaded from `script_APPID.lua` where `APPID` is the
-Steam app id of the game.
+Steam App ID of the game.
 
-(the ones included contain my configs, you'll probably want to delete most of
-them)
+(the scripts included with cfgfs are my configs, you'll probably want to erase
+most of them)
 
 ## What else?
 
-If you're using this, I'd like to hear any feedback and thoughts you might
-have in the [discussions](https://github.com/huglovefan/cfgfs/discussions).
-Open a new thread and describe your experience there. Any kind of comments are
-appreciated, but I'm especially interested in hearing if there was anything you
-found [*confusing*](https://en.wikipedia.org/wiki/Horror_and_terror),
-[*excellent*](https://en.wikipedia.org/wiki/Ecstasy_(emotion)) or
-[*missing*](https://en.wikipedia.org/wiki/Disappointment).
+If you have any feedback/thoughts/questions/ideas/suggestions, I'd like to hear
+about them in the [discussions tab]. Feel free to [open a new thread] and spill
+your guts there.
 
-If you can't get it to work (or have some other problem), then please
-[open an issue](https://github.com/huglovefan/cfgfs/issues/new). Include at
-least a description of *what's wrong*, what game you were trying to play and
-what GNU/Linux distro you're using.
+[discussions tab]: https://github.com/huglovefan/cfgfs/discussions
+[open a new thread]: https://github.com/huglovefan/cfgfs/discussions/new
+
+If you can't get cfgfs to work (or have some other problem), then please
+[open an issue]. Include at least a description of *what's wrong*, what game you
+were trying to play and what GNU/Linux distro you're using.
+
+[open an issue]: https://github.com/huglovefan/cfgfs/issues/new

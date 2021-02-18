@@ -101,12 +101,15 @@ static inline void check_nojump(int *v) {
 // -----------------------------------------------------------------------------
 
 // a call to one_true_entry() must be followed by one_true_exit() before return
-// if a code path returns without calling one_true_exit(), a link error is generated
+// if a code path returns without calling one_true_exit(), a link error is
+//  generated
+// if exceptions are enabled, calling any external function that could
+//  potentially throw is also an error
 // intended for enforcing that a function only has one exit point
 
 extern void missing_call_to_one_true_exit(void);
 
-static inline void check_otx(int *v) {
+static inline void check_otx(const int *v) {
 	if (*v != 1) missing_call_to_one_true_exit();
 }
 
