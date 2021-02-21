@@ -13,12 +13,12 @@ Some of the other features available for `cfgfs` configs are:
 - Reading messages written to the game console
 - Waiting independently of the `sv_allow_wait_command` setting
 
-No modifications to game files are needed: `cfgfs` works by creating a
-[virtual filesystem] to dynamically generate config files with contents derived
-from executing the Lua script.
+No modifications to game files are needed: `cfgfs` is implemented using a
+[virtual filesystem]. <sup>[\(tell me more\)]</sup>
 
 [Lua scripting language]: https://www.lua.org/
 [virtual filesystem]: https://en.wikipedia.org/wiki/Filesystem_in_Userspace
+[\(tell me more\)]: #how-does-it-work
 
 ```lua
 -- add a keybind
@@ -34,6 +34,33 @@ cmd.greet = function ()
 	cmd.echo('Hello ' .. name .. '!')
 end
 ```
+
+## How does it work?
+
+As you might already know, binds and aliases in Source games can be made to
+execute config files from the disk.
+
+The epic trick is to combine this with a [virtual filesystem]. What this does is
+let cfgfs handle all filesystem operations like file reads in the
+*mount directory* <sup>[\(explain: mount point\)]</sup> that the virtual
+filesystem is set up in.
+
+By using `<game>/custom/!cfgfs/cfg/cfgfs` <sup>(`cfg/cfgfs` inside the
+*custom folder* `!cfgfs`)</sup> as the mount directory, cfgfs will be able to
+detect when the game tries to execute any config beginning with `cfgfs/`.
+
+When the cfgfs filesystem gets a *read request* for a config file like
+`cfgfs/aliases/greet.cfg`, it knows based on the path that it should look up the
+function assigned to the `greet` alias and call it. Any console commands called
+by the function are then returned to the game as the contents of the `greet.cfg`
+file.
+
+Aliases defined in the *cfgfs script* are automatically converted to ones like
+`alias greet "exec cfgfs/aliases/greet.cfg"` and sent to the game the next time
+it reads a config file from cfgfs.
+
+[virtual filesystem]: https://en.wikipedia.org/wiki/Filesystem_in_Userspace
+[\(explain: mount point\)]: http://www.linfo.org/mount_point.html
 
 ## Supported games
 
@@ -71,11 +98,10 @@ If you have any feedback/thoughts/questions/ideas/suggestions, I'd like to hear
 about them in the [discussions tab]. Feel free to [open a new thread] and spill
 your guts there.
 
-[discussions tab]: https://github.com/huglovefan/cfgfs/discussions
-[open a new thread]: https://github.com/huglovefan/cfgfs/discussions/new
-
 If you can't get cfgfs to work (or have some other problem), then please
 [open an issue]. Include at least a description of *what's wrong*, what game you
 were trying to play and what GNU/Linux distro you're using.
 
+[discussions tab]: https://github.com/huglovefan/cfgfs/discussions
+[open a new thread]: https://github.com/huglovefan/cfgfs/discussions/new
 [open an issue]: https://github.com/huglovefan/cfgfs/issues/new

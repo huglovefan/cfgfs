@@ -337,7 +337,7 @@ end)
 cvar.sensitivity = 2.6
 
 cvar.snd_musicvolume = 0
-cvar.voice_scale = 0.5
+cvar.voice_scale = 0.4
 cvar.volume = 1
 cvar.cl_autoreload = 1
 cvar.cl_customsounds = 1
@@ -470,7 +470,7 @@ bind('pgup',                            '')
 
 bind('tab',                             '+showscores;cl_showfps 2;cl_showpos 1',
                                         '-showscores;cl_showfps 0;cl_showpos 0')
-bind('q',                               'kob')
+bind('q',                               function (...) return cmd.kob(...) end)
 bind('w',                               nullcancel_pair('w', 's', 'forward', 'back'))
 bind('e',                               'voicemenu 0 0')
 cmd.bind('r',                           '+reload')
@@ -599,7 +599,9 @@ local json = require 'json'
 
 local bad_steamids = {}
 
+oldcnt = global('oldcnt', -1)
 listupdate = function ()
+	bad_steamids = {}
 	local p <close> = assert(io.popen('timeout 5 sh misc/get_bad_steamids.sh'))
 	local cnt = 0
 	for line in p:lines() do
@@ -607,7 +609,13 @@ listupdate = function ()
 		bad_steamids[steamid] = lists
 		cnt = cnt+1
 	end
-	println('listupdate: loaded %d steamids', cnt)
+	if oldcnt ~= -1 then
+		println('listupdate: loaded %d steamids (%d -> %d)',
+		    cnt, oldcnt, cnt)
+	else
+		println('listupdate: loaded %d steamids', cnt)
+	end
+	oldcnt = cnt
 end
 
 add_listener('startup', function ()
@@ -809,6 +817,39 @@ local printableish = function (name)
 	end
 	return name
 end
+
+-- playerlist: the list from get_playerlist()
+-- t: one entry from the playerlist
+local check_namestealer = function (playerlist, t)
+	local names = {}
+	for _, t in ipairs(playerlist) do
+		names[t.name] = t
+	end
+	-- for each character* in the name: if without that character, their
+	--  name would be equal to some other player's name, then assume they
+	--  may be a name stealer
+	-- (* all unicode characters and some known-invisible ascii ones)
+	-- this catches name stealers using invisible characters without having
+	--  to make a list of every possible invisible and hard-to-see character
+	-- lets hope they dont start using more than one invisible character or
+	--  replacing visible characters with different but similar looking ones
+	local name = t.name
+	for p, c in utf8.codes(name) do
+		if (c <= 0x1f and not c == 0x09) or c == 0x7f or c >= 0x80 then
+			local without = (name:sub(1, p-1) .. name:sub(p+#utf8.char(c)))
+			assert(without ~= name)
+			if without ~= '' and names[without] then
+				assert(names[without].steamid ~= t.steamid)
+				cmd.echof('player %s (%s) probably stole name from player %s (%s)',
+				    printableish(t.name), t.steamid,
+				    printableish(names[without].name), names[without].steamid)
+				return true
+			end
+		end
+	end
+	return false
+end
+
 cmd.bots = function ()
 	panic = function (err)
 		cmd.echo('an error occurred: ' .. err)
@@ -842,9 +883,9 @@ cmd.bots = function ()
 			name = name:gsub('~', '')
 			name = name:gsub('^#', '', 1)
 			-- maximum length on steam is 32, in-game it's 31
-			-- ignore the last 4 bytes in case it's a utf-8 character that got truncated
+			-- ignore the last 5 bytes in case it's a utf-8 character that got truncated
 			-- (not sure if this happens, haven't tested it)
-			name = name:sub(1, 32-4)
+			name = name:sub(1, 32-5)
 			return name
 		end
 		if mangle_name_for_comparing(t.personaname)
@@ -856,6 +897,13 @@ cmd.bots = function ()
 		end
 		bad_steamids_check_status_entry(players[t.steamid].name, players[t.steamid].steamid)
 	end
+
+	for _, t in ipairs(players) do
+		if check_namestealer(players, t) then
+			found_any = true
+		end
+	end
+
 	if not found_any then
 		cmd.echo('no bots found?')
 	else
@@ -881,22 +929,24 @@ local find_own_steamid do
 	end
 end
 
+positive_vocalization = function () cmd.voicemenu(2, 4) end
+negative_vocalization = function () cmd.voicemenu(2, 5) end
+
 -- kick obvious bots
 cmd.kob = function (_, key)
-	local cmdv = cmdp
-
 	panic = function (err)
 		cmd.echof('kob: %s', err)
-		cmd.voicemenu(2, 5)
+		negative_vocalization()
 	end
 	local bind_press_time = (type(key) == 'string' and rawget(is_pressed, key))
 
-	local playerlist = get_playerlist()
-	local mysteamid = assert(find_own_steamid(playerlist), 'failed to get own steamid')
-	local myteam = assert(get_team(mysteamid), 'failed to get own team')
+	local playerlist = assert(get_playerlist())
+	local mysteamid = assert(find_own_steamid(playerlist))
+	local myteam = assert(get_team(mysteamid))
 	local bots = {}
 	local myteam_humans = 0
 	local myteam_robots = 0
+	local their_robots = 0
 
 	local check_lists = function (t)
 		return (nil ~= bad_steamids[t.steamid])
@@ -914,28 +964,21 @@ cmd.kob = function (_, key)
 		return false
 	end
 
-	local names = {}
 	for _, t in ipairs(playerlist) do
-		names[t.name] = true
-	end
-	local check_namestealer = function (t)
-		local name = t.name
-		name = name:gsub('\xe2\x80\x8f', '')
-		name = name:gsub('\xe0\xb9\x8a', '')
-		return (name ~= t.name and names[name])
-	end
-
-	for _, t in ipairs(playerlist) do
-		local team = get_team(t.steamid) --, 'failed to get team for '..t.steamid)
-		if (not team) or team == myteam then
-			local is_bot = check_lists(t)
-			            or check_impossible_names(t)
-			            or check_namestealer(t)
+		local team = get_team(t.steamid)
+		local is_bot = check_lists(t)
+		            or check_impossible_names(t)
+		            or check_namestealer(playerlist, t)
+		if team == myteam then
 			if is_bot then
 				table.insert(bots, t)
-				myteam_robots = (myteam_robots + 1)
+				myteam_robots = myteam_robots+1
 			else
-				myteam_humans = (myteam_humans + 1)
+				myteam_humans = myteam_humans+1
+			end
+		else
+			if is_bot then
+				their_robots = their_robots+1
 			end
 		end
 		bad_steamids_check_status_entry(t.name, t.steamid)
@@ -948,15 +991,15 @@ cmd.kob = function (_, key)
 			-- votes need at least 6 participants to work
 			-- target automatically votes no for itself, so need to have at least 5 competent humans to vote yes
 			doomed = true
-			cmd.echof('kptadpb: vote won\'t pass (not enough participants)')
-			cmd.voicemenu(2, 5)
+			cmd.echo('kob: vote won\'t pass (not enough participants)')
+			negative_vocalization()
 		end
 		if not (myteam_humans > myteam_robots) then
 			-- need to have at least one more yes vote than no votes for the vote to pass
 			-- this vote will fail assuming all the bots vote no
 			doomed = true
-			cmd.echof('kptadpb: vote won\'t pass (bots outnumber humans)')
-			cmd.voicemenu(2, 5)
+			cmd.echo('kob: vote won\'t pass (bots outnumber humans)')
+			negative_vocalization()
 		end
 	end
 	if #bots > 0 and not doomed then
@@ -968,16 +1011,19 @@ cmd.kob = function (_, key)
 			while not wait_for_event('-'..key, 30) do
 				if i == #bots+1 then i = 1 end
 				cmdv.callvote('kick', string.format('%d cheating', bots[i].id))
-				i = i + 1
+				i = i+1
 			end
 		end
 	else
-		if #bots == 0 then
-			cmd.voicemenu(2, 4)
+		if doomed or their_robots > 0 then
+			negative_vocalization()
+		elseif #bots == 0 then
+			positive_vocalization()
+			return
 		end
 		if bind_press_time and bind_press_time == is_pressed[key] then
 			if not wait_for_event('-'..key, 100) then
-				return cmd.kptadpb(_, key)
+				return cmd.kob(_, key)
 			end
 		end
 	end

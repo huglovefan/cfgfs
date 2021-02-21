@@ -65,6 +65,7 @@ if [ -f "$gamedir/gameinfo.txt" ] && \
 fi
 
 if [ -z "$CFGFS_SCRIPT" ]; then
+	# note: SteamAppId is defined by steam
 	export CFGFS_SCRIPT=script_${SteamAppId}.lua
 	if [ ! -e "$CFGFS_SCRIPT" ]; then
 		{

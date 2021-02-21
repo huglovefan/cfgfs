@@ -11,5 +11,8 @@
 /console.log
 /mnt
 
+# i thought gitignore would work for these but apparently you need to do
+# % git update-index --skip-worktree env.sh misc/bots.list
+# to make git ignore any changes to them
 /env.sh
 /misc/bots.list
