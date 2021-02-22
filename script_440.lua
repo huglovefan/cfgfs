@@ -322,11 +322,35 @@ local on_mouse1_dn = function ()
 	cmd.play('common/wpn_denyselect.wav')
 end
 
+-- flare gun readiness bell
+
+local flare_charging = false
+local on_mouse1_dn_pyro = function ()
+	if slot ~= 2 or flare_charging then return end
+
+	while true do
+		flare_charging = true
+		wait(2000)
+		flare_charging = false
+		cmd.play('player/recharged.wav')
+		-- fixme: also break if holding mod key (slot global is wrong)
+		if not is_pressed['mouse1'] or slot ~= 2 then
+			break
+		end
+	end
+end
+
 add_listener('classchange', function (class)
 	if class == 'sniper' then
 		add_listener('+mouse1', on_mouse1_dn)
 	else
 		remove_listener('+mouse1', on_mouse1_dn)
+	end
+	if class == 'pyro' then
+		flare_charging = false
+		add_listener('+mouse1', on_mouse1_dn_pyro)
+	else
+		remove_listener('+mouse1', on_mouse1_dn_pyro)
 	end
 end)
 
@@ -587,9 +611,9 @@ bind('kp_del',                          '') -- ,
 add_listener('attention', function (active)
 	local exes = 'chrome'
 	if active then
-		os.execute('kill -STOP $(pidof '..exes..') 2>/dev/null')
+		os.execute('exec killall -q -STOP '..exes)
 	else
-		os.execute('kill -CONT $(pidof '..exes..') 2>/dev/null')
+		os.execute('exec killall -q -CONT '..exes)
 	end
 end)
 
@@ -647,7 +671,7 @@ local playerlist = {}
 local playerlist_updated = 0
 local playerlist_currently_updating = false
 
-local playerlist_cache_time <const> = 5*1000
+local playerlist_cache_time = 5*1000
 
 get_playerlist = function ()
 	if playerlist and _ms() <= playerlist_updated+playerlist_cache_time then
@@ -718,11 +742,11 @@ local teamdata = {}
 local teamdata_updated = 0
 local teamdata_currently_updating = false
 
-local teamdata_cache_time <const> = 1000
+local teamdata_cache_time = 1000
 
 local teamnames = {
-	['TF_GC_TEAM_INVADERS'] = 'red',
-	['TF_GC_TEAM_DEFENDERS'] = 'blu',
+	['TF_GC_TEAM_INVADERS'] = 'blu',
+	['TF_GC_TEAM_DEFENDERS'] = 'red',
 }
 get_team = function (steamid)
 	if _ms() <= teamdata_updated+teamdata_cache_time then
@@ -821,6 +845,17 @@ end
 -- playerlist: the list from get_playerlist()
 -- t: one entry from the playerlist
 local check_namestealer = function (playerlist, t)
+	local name = t.name
+	-- if the name contains invalid utf-8, give up because my epic algorithm
+	--  probably won't find anything in this case
+	-- legit player names can sometimes contain invalid utf-8 due to how tf2
+	--  naively truncates steam names from 32 bytes to 31
+	-- it is unknown how name stealers work in this case, but i think
+	--  handling it would take too much code for such an uncommon edge case
+	if not utf8.len(name) then
+		return false
+	end
+
 	local names = {}
 	for _, t in ipairs(playerlist) do
 		names[t.name] = t
@@ -833,19 +868,24 @@ local check_namestealer = function (playerlist, t)
 	--  to make a list of every possible invisible and hard-to-see character
 	-- lets hope they dont start using more than one invisible character or
 	--  replacing visible characters with different but similar looking ones
-	local name = t.name
 	for p, c in utf8.codes(name) do
 		if (c <= 0x1f and not c == 0x09) or c == 0x7f or c >= 0x80 then
 			local without = (name:sub(1, p-1) .. name:sub(p+#utf8.char(c)))
 			assert(without ~= name)
 			if without ~= '' and names[without] then
 				assert(names[without].steamid ~= t.steamid)
-				cmd.echof('player %s (%s) probably stole name from player %s (%s)',
+				cmd.echof('%s %s: name stolen from %s %s',
 				    printableish(t.name), t.steamid,
 				    printableish(names[without].name), names[without].steamid)
 				return true
 			end
 		end
+	end
+	-- common pattern for name stealers
+	-- (wasn't matched above, the original player might've disconnected)
+	if name:find('.\xe0\xb9\x8a$') then -- \u0e4a
+		cmd.echof('%s %s: looks like a name stealer', t.name, t.steamid)
+		return true
 	end
 	return false
 end
@@ -879,13 +919,17 @@ cmd.bots = function ()
 			    ...)
 		end
 		local mangle_name_for_comparing = function (name)
+			-- maximum length on steam is 32, in-game it's 31
+			-- if the steam name is 32 bytes and ends with unicode,
+			--  it's simply truncated (resulting in invalid utf-8)
+			-- the names are compared here as bytes so this way is
+			--  more convenient anyway
+			-- (i think this is done before the character
+			--  replacements?)
+			name = name:sub(1, 31)
 			name = name:gsub('%%', '')
 			name = name:gsub('~', '')
 			name = name:gsub('^#', '', 1)
-			-- maximum length on steam is 32, in-game it's 31
-			-- ignore the last 5 bytes in case it's a utf-8 character that got truncated
-			-- (not sure if this happens, haven't tested it)
-			name = name:sub(1, 32-5)
 			return name
 		end
 		if mangle_name_for_comparing(t.personaname)
