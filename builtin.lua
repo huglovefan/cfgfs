@@ -694,6 +694,21 @@ end
 
 --------------------------------------------------------------------------------
 
+local may_cancel_bind = false
+local did_cancel_bind = false
+cancel_bind = function ()
+	if may_cancel_bind then
+		if not did_cancel_bind then
+			did_cancel_bind = true
+			return true
+		else
+			return false
+		end
+	else
+		return error('cancel_bind called outside a key event or after yielding inside one', 2)
+	end
+end
+
 _get_contents = function (path)
 	-- keybind?
 	local t = bindfilenames[path]
@@ -702,46 +717,118 @@ _get_contents = function (path)
 		if t.type == 'down' then
 
 			is_pressed[name] = _ms()
+
+			local evname = '+'..name
+			if events[evname] then
+				may_cancel_bind = true
+				fire_event(evname, true, name)
+				may_cancel_bind = false
+				if did_cancel_bind then
+					did_cancel_bind = false
+					name = ''
+				end
+			end
+
 			local v = binds_down[name]
 			if v then
 				if type(v) == 'function' then
-					ev_call(v, true, name)
+					return ev_call(v, true, name)
 				else
-					cfg(v)
+					return cfg(v)
 				end
 			end
-			return fire_event('+'..name, true, name)
+
+			return
 
 		elseif t.type == 'up' then
 
 			is_pressed[name] = false
+
+			local evname = '-'..name
+			if events[evname] then
+				may_cancel_bind = true
+				fire_event(evname, false, name)
+				may_cancel_bind = false
+				if did_cancel_bind then
+					did_cancel_bind = false
+					name = ''
+				end
+			end
+
 			local v = binds_up[name]
 			if v then
 				if type(v) == 'function' then
-					ev_call(v, false, name)
+					return ev_call(v, false, name)
 				else
-					cfg(v)
+					return cfg(v)
 				end
 			end
-			return fire_event('-'..name, false, name)
+
+			return
 
 		elseif t.type == 'toggle' then
 			if is_pressed[name] then
-
 				is_pressed[name] = false
+
+				local evname = '-'..name
+				if events[evname] then
+					may_cancel_bind = true
+					fire_event(evname, false, name)
+					may_cancel_bind = false
+					if did_cancel_bind then
+						did_cancel_bind = false
+						name = ''
+					end
+				end
+
 				local v = binds_up[name]
 				if v then
 					if type(v) == 'function' then
-						ev_call(v, false, name)
+						return ev_call(v, false, name)
 					else
-						cfg(v)
+						return cfg(v)
 					end
 				end
-				return fire_event('-'..name, false, name)
-
 			else
-
 				is_pressed[name] = _ms()
+
+				local evname = '+'..name
+				if events[evname] then
+					may_cancel_bind = true
+					fire_event(evname, true, name)
+					may_cancel_bind = false
+					if did_cancel_bind then
+						did_cancel_bind = false
+						name = ''
+					end
+				end
+
+				local v = binds_down[name]
+				if v then
+					if type(v) == 'function' then
+						return ev_call(v, true, name)
+					else
+						return cfg(v)
+					end
+				end
+			end
+			return
+		elseif t.type == 'once' then
+			do
+				is_pressed[name] = _ms()
+
+				local evname = '+'..name
+				local name = name
+				if events[evname] then
+					may_cancel_bind = true
+					fire_event(evname, true, name)
+					may_cancel_bind = false
+					if did_cancel_bind then
+						did_cancel_bind = false
+						name = ''
+					end
+				end
+
 				local v = binds_down[name]
 				if v then
 					if type(v) == 'function' then
@@ -750,33 +837,32 @@ _get_contents = function (path)
 						cfg(v)
 					end
 				end
-				return fire_event('+'..name, true, name)
-
 			end
-		elseif t.type == 'once' then
+			do
+				is_pressed[name] = false
 
-			is_pressed[name] = _ms()
-			local v = binds_down[name]
-			if v then
-				if type(v) == 'function' then
-					ev_call(v, true, name)
-				else
-					cfg(v)
+				local evname = '-'..name
+				local name = name
+				if events[evname] then
+					may_cancel_bind = true
+					fire_event(evname, false, name)
+					may_cancel_bind = false
+					if did_cancel_bind then
+						did_cancel_bind = false
+						name = ''
+					end
+				end
+
+				local v = binds_up[name]
+				if v then
+					if type(v) == 'function' then
+						return ev_call(v, false, name)
+					else
+						return cfg(v)
+					end
 				end
 			end
-			fire_event('+'..name, true, name)
-
-			is_pressed[name] = false
-			local v = binds_up[name]
-			if v then
-				if type(v) == 'function' then
-					ev_call(v, false, name)
-				else
-					cfg(v)
-				end
-			end
-			return fire_event('-'..name, false, name)
-
+			return
 		else
 			return fatal('unknown bind type')
 		end
@@ -943,7 +1029,7 @@ _cli_input = function (line)
 	if line == 'cfgfs_license' then
 		local f = assert(io.open('LICENSE', 'r'))
 		for line in f:lines() do
-			println('%s', line)
+			printv(line)
 		end
 		f:close()
 		return
@@ -1000,7 +1086,16 @@ end
 
 --------------------------------------------------------------------------------
 
-local our_logfile = assert(io.open('console.log', 'a'))
+local our_logfile
+if os.getenv('CFGFS_STARTTIME') then
+	os.execute('mkdir -p logs')
+	logfilename = os.date('logs/console_%Y-%m-%d_%H:%M:%S.log', tonumber(os.getenv('CFGFS_STARTTIME')))
+	our_logfile = io.open(logfilename, 'a')
+end
+if not our_logfile then
+	logfilename = 'console.log'
+	our_logfile = assert(io.open(logfilename, 'a'))
+end
 our_logfile:setvbuf('line')
 
 _game_console_output = function (line)
@@ -1009,6 +1104,7 @@ _game_console_output = function (line)
 	if #line >= 19 then
 		local c = line:sub(1, 1)
 		if c == '#' and #line >= 55 and line:find('^##### CTexture::LoadTextureBitsFromFile couldn\'t find ') then goto match end
+		if c == '*' and #line >= 41 and line:find('^%*%*%* Invalid sample rate %([0-9]+%) for sound \'.*\'%.$') then goto match end
 		if c == '-' and #line >= 27 and line:find('^%-%-%- Missing Vgui material ') then goto match end
 		if c == 'A' and #line >= 48 and line:find('^Attemped to precache unknown particle system ".*"!$') then goto match end
 		if c == 'C' and #line >= 23 and line:find('^Could not find table ".*"$') then goto match end
@@ -1016,8 +1112,10 @@ _game_console_output = function (line)
 		if c == 'C' and #line >= 99 and line:find('^Convar .* has conflicting FCVAR_CHEAT flags %(child: FCVAR_CHEAT, parent: no FCVAR_CHEAT, parent wins%)$') then goto match end
 		if c == 'E' and #line >= 34 and line:find('^EmitSound: pitch out of bounds = %-?[0-9]+$') then goto match end
 		if c == 'E' and #line >= 41 and line:find('^Error: Material ".*" uses unknown shader ".*"$') then goto match end
+		if c == 'F' and #line >= 37 and line:find('^Failed to create decoder for MP3 %[ .* %]$') then goto match end
 		if c == 'F' and #line >= 72 and line:find('^For FCVAR_REPLICATED, ConVar must be defined in client and game .dlls %(.*%)$') then goto match end
 		if c == 'F' and #line >= 102 and line:find('^Failed to find attachment point specified for .* event%. Trying to spawn effect \'.*\' on attachment named \'.*\'$') then goto match end
+		if c == 'M' and #line >= 65 and line:find('^MP3 initialized with no sound cache, this may cause janking%. %[ .* %]$') then goto match end
 		if c == 'M' and #line >= 68 and line:find('^Model \'.*\' doesn\'t have attachment \'.*\' to attach particle system \'.*\' to%.$') then goto match end
 		if c == 'N' and #line >= 35 and line:find('^No such variable ".*" for material ".*"$') then goto match end
 		if c == 'P' and #line >= 40 and line:find('^Parent cvar in server.dll not allowed %(.*%)$') then goto match end
@@ -1049,20 +1147,93 @@ _game_console_output = function (line)
 				r, g, b = tonumber('0x'..r), tonumber('0x'..g), tonumber('0x'..b)
 				return string.format('\27[38;2;%d;%d;%dm%s\27[0m', r, g, b, s)
 			end)
+		else
+			-- more colorizing trash
+			-- i wanted this to colorize names according to team but
+			--  the "player was automatically assigned to team X"
+			--  messages aren't printed to the console so there's no
+			--  easy way for this to know what team players are on
+
+			local bright = function (s) return string.format('\27[1m%s\27[0m', s) end
+			do
+
+			-- kill (non-crit)
+			local killer, target, weapon = line:match('^(.+) killed (.+) with (.+)%.$')
+			if killer then
+				line = string.format('%s killed %s with %s.',
+				    bright(killer), bright(target), bright(weapon))
+				goto matched
+			end
+			-- kill (crit)
+			local killer, target, weapon = line:match('^(.+) killed (.+) with (.+)%. %(crit%)$')
+			if killer then
+				line = string.format('%s killed %s with %s. \27[1;5;37;41m(crit)\27[0m',
+				    bright(killer), bright(target), bright(weapon))
+				goto matched
+			end
+			-- s*icide
+			local target = line:match('^(.+) suicided%.$')
+			if target then
+				line = string.format('%s suicided.',
+				    bright(target))
+				goto matched
+			end
+
+			-- chat message
+			-- i think i know why the separator is " :  " with two
+			--  spaces now
+			-- normally you can't put two consecutive spaces in your
+			--  name so this way it's never ambiguous where the name
+			--  ends
+			local name, rest = line:match('^(.+)( :  .+)$')
+			if name then
+				local pre =
+				    line:match('^%(TEAM%) ') or
+				    line:match('^%*DEAD%*%(TEAM%) ') or
+				    line:match('^%*DEAD%* ')
+				if pre and #name-#pre >= 1 then
+					name = name:sub(#pre+1)
+				else
+					pre = ''
+				end
+				line = pre .. bright(name) .. rest
+				goto matched
+			end
+
+			-- connected
+			local name = line:match('^(.+) connected$')
+			if name then
+				line = string.format('%s connected',
+				    bright(name))
+				goto matched
+			end
+			-- autobalanced
+			local name = line:match('^(.+) was moved to the other team for game balance$')
+			if name then
+				line = string.format('%s was moved to the other team for game balance',
+				    bright(name))
+				goto matched
+			end
+
+			end
+			::matched::
 		end
 
 		-- clean up newline spam
 		if line:find('\n', 1, true) then
-			line = line:gsub('\n[\n ]*', '\n'):gsub('^\n+', '', 1):gsub('\n+$', '', 1)
+			line = line
+			    :gsub('\n[\n ]*', '\n')
+			    :gsub('^\n+', '', 1)
+			    :gsub('\n+$', '', 1)
 		end
 
 		-- make crit kills blink
-		line = line:gsub(' %(crit%)$', ' \27[1;5;37;41m(crit)\27[0m', 1)
+		--line = line:gsub(' %(crit%)$', ' \27[1;5;37;41m(crit)\27[0m', 1)
 
 		_println(line)
 	else
-		-- 2 = faint
-		println('\27[2m%s\27[0m', line)
+		-- 2 = dim
+		printv('\27[2m', line, '\27[0m')
 	end
 
 	our_logfile:write(line, '\n')
@@ -1085,13 +1256,13 @@ end
 
 local logpos = 0
 do
-	local f = assert(io.open('console.log', 'r'))
+	local f = assert(io.open(logfilename, 'r'))
 	logpos = assert(f:seek('end'))
 	f:close()
 end
 
 open_log = function ()
-	local f = assert(io.open('console.log', 'r'))
+	local f = assert(io.open(logfilename, 'r'))
 	assert(f:seek('set', logpos))
 	return f
 end
@@ -1100,7 +1271,7 @@ grep = function (pat)
 	local f = open_log()
 	for line in f:lines() do
 		if line:find(pat) then
-			println('%s', line)
+			printv(line)
 		end
 	end
 	f:close()

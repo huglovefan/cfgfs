@@ -153,22 +153,63 @@ static int l_ms(lua_State *L) {
 // printing
 
 static int l_print(lua_State *L) {
-	const char *s = lua_tostring(L, 1);
+	size_t sz;
+	const char *s = lua_tolstring(L, 1, &sz);
 	if (unlikely(s == NULL)) return 0;
 	cli_lock_output();
-	fputs_unlocked(s, stdout);
+	fwrite_unlocked(s, 1, sz, stdout);
 	fputc_unlocked('\n', stdout);
 	cli_unlock_output();
 	return 0;
 }
 static int l_eprint(lua_State *L) {
-	const char *s = lua_tostring(L, 1);
+	size_t sz;
+	const char *s = lua_tolstring(L, 1, &sz);
 	if (unlikely(s == NULL)) return 0;
 	cli_lock_output();
-	fputs_unlocked(s, stderr);
+	fwrite_unlocked(s, 1, sz, stderr);
 	fputc_unlocked('\n', stderr);
 	cli_unlock_output();
 	return 0;
+}
+
+// multiple argument versions
+// only does strings because converting other types may throw (which is
+//  unacceptable while the lock is held)
+
+static int l_printv(lua_State *L) {
+	cli_lock_output();
+	int i, top = lua_gettop(L);
+	for (i = 1; i <= top; i++) {
+		if (unlikely(lua_type(L, i) != LUA_TSTRING)) goto typeerr;
+		size_t sz;
+		const char *s = lua_tolstring(L, i, &sz);
+		fwrite_unlocked(s, 1, sz, stdout);
+	}
+	fputc_unlocked('\n', stdout);
+	cli_unlock_output();
+	return 0;
+typeerr:
+	fputc_unlocked('\n', stdout);
+	cli_unlock_output();
+	return luaL_error(L, "printv: argument %d is not a string", i);
+}
+static int l_eprintv(lua_State *L) {
+	cli_lock_output();
+	int i, top = lua_gettop(L);
+	for (i = 1; i <= top; i++) {
+		if (unlikely(lua_type(L, i) != LUA_TSTRING)) goto typeerr;
+		size_t sz;
+		const char *s = lua_tolstring(L, i, &sz);
+		fwrite_unlocked(s, 1, sz, stderr);
+	}
+	fputc_unlocked('\n', stderr);
+	cli_unlock_output();
+	return 0;
+typeerr:
+	fputc_unlocked('\n', stderr);
+	cli_unlock_output();
+	return luaL_error(L, "eprintv: argument %d is not a string", i);
 }
 
 // -----------------------------------------------------------------------------
@@ -191,6 +232,11 @@ void lua_define_builtins(void *L) {
 	lua_setglobal(L, "_print");
 	 lua_pushcfunction(L, l_eprint);
 	lua_setglobal(L, "_eprint");
+
+	 lua_pushcfunction(L, l_printv);
+	lua_setglobal(L, "printv");
+	 lua_pushcfunction(L, l_eprintv);
+	lua_setglobal(L, "eprintv");
 
 	 lua_pushcfunction(L, l_ms);
 	lua_setglobal(L, "_ms");

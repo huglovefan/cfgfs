@@ -299,6 +299,18 @@ end)
 cmd.mute = function () cvar.voice_enable = 0 end
 cmd.unmute = function () cvar.voice_enable = 1 end
 
+add_listener('+m', function ()
+	if not is_pressed['ctrl'] then return end
+	cancel_bind()
+	if 0 ~= tonumber(cvar.voice_enable) then
+		cmd.echo('muted')
+		cvar.voice_enable = 0
+	else
+		cmd.echo('unmuted')
+		cvar.voice_enable = 1
+	end
+end)
+
 --------------------------------------------------------------------------------
 
 -- huntsman charge bell
@@ -361,7 +373,7 @@ end)
 cvar.sensitivity = 2.6
 
 cvar.snd_musicvolume = 0
-cvar.voice_scale = 0.4
+cvar.voice_scale = 0.3
 cvar.volume = 1
 cvar.cl_autoreload = 1
 cvar.cl_customsounds = 1
@@ -846,6 +858,7 @@ end
 -- t: one entry from the playerlist
 local check_namestealer = function (playerlist, t)
 	local name = t.name
+
 	-- if the name contains invalid utf-8, give up because my epic algorithm
 	--  probably won't find anything in this case
 	-- legit player names can sometimes contain invalid utf-8 due to how tf2
@@ -860,6 +873,7 @@ local check_namestealer = function (playerlist, t)
 	for _, t in ipairs(playerlist) do
 		names[t.name] = t
 	end
+
 	-- for each character* in the name: if without that character, their
 	--  name would be equal to some other player's name, then assume they
 	--  may be a name stealer
@@ -881,12 +895,14 @@ local check_namestealer = function (playerlist, t)
 			end
 		end
 	end
+
 	-- common pattern for name stealers
 	-- (wasn't matched above, the original player might've disconnected)
 	if name:find('.\xe0\xb9\x8a$') then -- \u0e4a
 		cmd.echof('%s %s: looks like a name stealer', t.name, t.steamid)
 		return true
 	end
+
 	return false
 end
 
@@ -984,9 +1000,9 @@ cmd.kob = function (_, key)
 	end
 	local bind_press_time = (type(key) == 'string' and rawget(is_pressed, key))
 
-	local playerlist = assert(get_playerlist())
-	local mysteamid = assert(find_own_steamid(playerlist))
-	local myteam = assert(get_team(mysteamid))
+	local playerlist = get_playerlist()
+	local mysteamid = find_own_steamid(playerlist)
+	local myteam = get_team(mysteamid)
 	local bots = {}
 	local myteam_humans = 0
 	local myteam_robots = 0
@@ -1027,6 +1043,7 @@ cmd.kob = function (_, key)
 		end
 		bad_steamids_check_status_entry(t.name, t.steamid)
 	end
+
 	-- is the vote doomed to fail?
 	-- this is to avoid wasting votes since there's a cooldown
 	local doomed = false
@@ -1046,6 +1063,7 @@ cmd.kob = function (_, key)
 			negative_vocalization()
 		end
 	end
+
 	if #bots > 0 and not doomed then
 		for _, t in ipairs(bots) do
 			cmdv.callvote('kick', string.format('%d cheating', t.id))

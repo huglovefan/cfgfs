@@ -9,6 +9,7 @@
 
 /.cli_history
 /console.log
+/logs/
 /mnt
 
 # i thought gitignore would work for these but apparently you need to do

@@ -17,6 +17,8 @@ t=$(realpath -- "$0") || exit
 t=$(dirname -- "$t") || exit
 [ -e "$t/cfgfs" ] || exit
 
+export CFGFS_STARTTIME="$(date +%s)"
+
 cfgfs_dir=$t
 cfgfs_mountpoint=
 gamedir=
