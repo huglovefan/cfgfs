@@ -220,7 +220,7 @@ D		assert(argc >= 1);
 
 __attribute__((cold))
 __attribute__((noinline))
-static void cmd_replace_evil_chars(char *restrict buf,
+static void cmd_replace_evil_chars(unsigned char *restrict buf,
                                    size_t sz,
                                    enum quoting_mode mode) {
 	switch (mode) {
@@ -267,7 +267,7 @@ static size_t cmd_stringify(char *restrict buf,
 				if (i != argc-1 && words[i].flags&wf_needs_quotes) {
 					buf_ -= 1; // closing quote
 				}
-				cmd_replace_evil_chars(buf_, words[i].len, mode);
+				cmd_replace_evil_chars((unsigned char *)buf_, words[i].len, mode);
 			}
 		}
 		break;
@@ -277,7 +277,7 @@ static size_t cmd_stringify(char *restrict buf,
 		for (int i = 0; i < argc; i++) {
 			memcpy(buf, words[i].s, words[i].len);
 			if (unlikely(words[i].flags&wf_contains_evil_char)) {
-				cmd_replace_evil_chars(buf, words[i].len, mode);
+				cmd_replace_evil_chars((unsigned char *)buf, words[i].len, mode);
 			}
 			buf += words[i].len;
 			*buf++ = sep;

@@ -1112,6 +1112,7 @@ _game_console_output = function (line)
 		if c == 'C' and #line >= 99 and line:find('^Convar .* has conflicting FCVAR_CHEAT flags %(child: FCVAR_CHEAT, parent: no FCVAR_CHEAT, parent wins%)$') then goto match end
 		if c == 'E' and #line >= 34 and line:find('^EmitSound: pitch out of bounds = %-?[0-9]+$') then goto match end
 		if c == 'E' and #line >= 41 and line:find('^Error: Material ".*" uses unknown shader ".*"$') then goto match end
+		if c == 'E' and #line >= 54 and line:find('^Error! Variable ".*" is multiply defined in material ".*"!$') then goto match end
 		if c == 'F' and #line >= 37 and line:find('^Failed to create decoder for MP3 %[ .* %]$') then goto match end
 		if c == 'F' and #line >= 72 and line:find('^For FCVAR_REPLICATED, ConVar must be defined in client and game .dlls %(.*%)$') then goto match end
 		if c == 'F' and #line >= 102 and line:find('^Failed to find attachment point specified for .* event%. Trying to spawn effect \'.*\' on attachment named \'.*\'$') then goto match end
@@ -1190,7 +1191,8 @@ _game_console_output = function (line)
 				local pre =
 				    line:match('^%(TEAM%) ') or
 				    line:match('^%*DEAD%*%(TEAM%) ') or
-				    line:match('^%*DEAD%* ')
+				    line:match('^%*DEAD%* ') or
+				    line:match('^%*SPEC%* ')
 				if pre and #name-#pre >= 1 then
 					name = name:sub(#pre+1)
 				else
