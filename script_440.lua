@@ -677,8 +677,8 @@ local parse_status = function ()
 			if userid and not seen[userid] then
 				seen[userid] = true
 				table.insert(players, {
-					userid = tonumber(userid),
-					name = name,
+					userid  = tonumber(userid),
+					name    = name,
 					steamid = uniqueid,
 				})
 				players[uniqueid] = players[#players]
@@ -806,6 +806,11 @@ local get_playerlist = function ()
 	local players = {}
 	for _, t in ipairs(status) do
 		if lobby[t.steamid] then
+			if not teamnames[lobby[t.steamid].team] then
+				eprintln('\awarning: player %s has invalid team: %s',
+				    t.steamid, lobby[t.steamid].team)
+				goto next
+			end
 			table.insert(players, {
 				steamid = t.steamid,
 				name    = t.name,
@@ -813,6 +818,7 @@ local get_playerlist = function ()
 				team    = teamnames[lobby[t.steamid].team],
 			})
 			players[t.steamid] = players[#players]
+			::next::
 		end
 	end
 	return players
@@ -889,6 +895,8 @@ cmd.kob = function ()
 	for _, t in ipairs(players) do
 		local is_bot = check_bot(t, players)
 		if is_bot then
+			cmd.echo(string.format('%s: "%s" %s: %s',
+			    t.team, t.name, t.steamid, table.concat(is_bot, '; ')))
 			if t.team == myteam then
 				table.insert(our_bots, t)
 			else
@@ -939,7 +947,7 @@ local get_json = function (url)
 	local p = assert(io.popen('timeout 2 curl -s ' .. shellquote(url), 'r'))
 	local s = p:read('a')
 	p:close()
-	local json = require 'json'
+	local json = require 'json' -- https://github.com/rxi/json.lua
 	local ok, rv = pcall(json.decode, s)
 	return ok and rv or nil
 end
@@ -990,33 +998,44 @@ cmd.lob = function ()
 	local players = get_playerlist()
 	local lobby = do_lobby_debug()
 	add_steamnames(players)
-	local found_any = false
-	local teams = {red = 0, blu = 0}
+
+	local playing = {red = 0, blu = 0}
 	for _, t in ipairs(players) do
 		local reasons = check_bot(t, players, true)
 		if reasons then
-			cmd.echo(string.format('%s %s: %s',
-			    t.name, t.steamid, table.concat(reasons, '; ')))
-			teams[t.team] = teams[t.team]+1
-			found_any = true
+			cmd.echo(string.format('%s: "%s" %s: %s',
+			    t.team, t.name, t.steamid, table.concat(reasons, '; ')))
+			playing[t.team] = playing[t.team]+1
 		end
-	end
-	if found_any then
-		cmd.echo(string.format('total: blu %d red %d',
-		    teams.blu, teams.red))
-	else
-		cmd.echo('no bots found?')
 	end
 
-	local joining_cnt = {red = 0, blu = 0}
+	local joining = {red = 0, blu = 0}
 	for _, t in ipairs(lobby) do
 		if t.state == 'Pending' and bad_steamids[t.steamid] then
-			joining_cnt[t.team] = joining_cnt[t.team]+1
+			joining[t.team] = joining[t.team]+1
 		end
 	end
-	if joining_cnt.red > 0 or joining_cnt.blu > 0 then
-		cmd.echo(string.format('%d joining red, %d joining blu',
-		    joining_cnt.red, joining_cnt.blu))
+
+	local msg = {}
+	local total = 0
+	for _, t in ipairs({
+		{fmt='%d on red', cnt=playing.red},
+		{fmt='%d on blu', cnt=playing.blu},
+		{fmt='%d joining red', cnt=joining.red},
+		{fmt='%d joining blu', cnt=joining.blu},
+	}) do
+		if t.cnt > 0 then
+			table.insert(msg, string.format(t.fmt, t.cnt))
+			total = total+t.cnt
+		end
+	end
+
+	if #msg > 0 then
+		cmd.echo(string.format('bots: %s (%d total)',
+		    table.concat(msg, ', '),
+		    total))
+	else
+		cmd.echo('no bots found?')
 	end
 end
 
