@@ -461,6 +461,9 @@ local get_cvars = function (t)
 			if rv[mk] == false then
 				rv[mk] = mv
 				incnt = incnt+1
+				if mk == 'name' then -- hehe
+					own_name_known(mv)
+				end
 			end
 		end
 		local mk = line:match('help:  no cvar or command named (.*)$')
@@ -1098,12 +1101,74 @@ if not our_logfile then
 end
 our_logfile:setvbuf('line')
 
+--------------------------------------------------------------------------------
+
+-- terminal printing / coloring / etc
+
+local name2team = {}
+local myname = nil
+
+local team2color = {
+	['red'] = '34;38;2;184;56;59',
+	['blu'] = '34;38;2;88;133;162',
+	['unknown'] = '1',
+}
+local team2opposite = {
+	['red'] = 'blu',
+	['blu'] = 'red',
+}
+
+team_known = function (name, team)
+	if team2opposite[team] then
+		name2team[name] = team
+	else
+		error('team_known: invalid team ' .. team)
+	end
+end
+own_name_known = function (name)
+	myname = name
+end
+
+local register_kill = function (n1, n2)
+	if (not not name2team[n1]) == (not not name2team[n2]) then
+		-- both either known or not known -> nothing to do
+		if name2team[n1] and (name2team[n1] == name2team[n2]) then
+			-- both are on the same team, probably got confused somehow
+			name2team[n1] = nil
+			name2team[n2] = nil
+			return
+		end
+		return
+	end
+	if name2team[n1] then
+		name2team[n2] = team2opposite[name2team[n1]]
+	else
+		name2team[n1] = team2opposite[name2team[n2]]
+	end
+end
+local register_autobalance = function (name)
+	if name2team[name] then
+		name2team[name] = team2opposite[name2team[name]]
+	end
+end
+local register_self_autobalance = function ()
+	register_autobalance(myname)
+end
+local clear_name = function (name)
+	name2team[name] = nil
+end
+local colorize_team = function (name)
+	return string.format('\27[%sm%s\27[0m',
+	    team2color[name2team[name] or 'unknown'],
+	    name)
+end
+
 _game_console_output = function (line)
 	-- detect some useless error messages
 	local spam = false
 	if #line >= 19 then
 		local c = line:sub(1, 1)
-		if c == '#' and #line >= 55 and line:find('^##### CTexture::LoadTextureBitsFromFile couldn\'t find ') then goto match end
+		if c == '\n' and #line >= 57 and line:find('^\n ##### CTexture::LoadTextureBitsFromFile couldn\'t find ') then goto match end
 		if c == '*' and #line >= 41 and line:find('^%*%*%* Invalid sample rate %([0-9]+%) for sound \'.*\'%.$') then goto match end
 		if c == '-' and #line >= 27 and line:find('^%-%-%- Missing Vgui material ') then goto match end
 		if c == 'A' and #line >= 48 and line:find('^Attemped to precache unknown particle system ".*"!$') then goto match end
@@ -1150,10 +1215,6 @@ _game_console_output = function (line)
 			end)
 		else
 			-- more colorizing trash
-			-- i wanted this to colorize names according to team but
-			--  the "player was automatically assigned to team X"
-			--  messages aren't printed to the console so there's no
-			--  easy way for this to know what team players are on
 
 			local bright = function (s) return string.format('\27[1m%s\27[0m', s) end
 			do
@@ -1161,22 +1222,28 @@ _game_console_output = function (line)
 			-- kill (non-crit)
 			local killer, target, weapon = line:match('^(.+) killed (.+) with (.+)%.$')
 			if killer then
+				register_kill(killer, target)
 				line = string.format('%s killed %s with %s.',
-				    bright(killer), bright(target), bright(weapon))
+				    colorize_team(killer),
+				    colorize_team(target),
+				    bright(weapon))
 				goto matched
 			end
 			-- kill (crit)
 			local killer, target, weapon = line:match('^(.+) killed (.+) with (.+)%. %(crit%)$')
 			if killer then
+				register_kill(killer, target)
 				line = string.format('%s killed %s with %s. \27[1;5;37;41m(crit)\27[0m',
-				    bright(killer), bright(target), bright(weapon))
+				    colorize_team(killer),
+				    colorize_team(target),
+				    bright(weapon))
 				goto matched
 			end
 			-- s*icide
 			local target = line:match('^(.+) suicided%.$')
 			if target then
 				line = string.format('%s suicided.',
-				    bright(target))
+				    colorize_team(target))
 				goto matched
 			end
 
@@ -1198,22 +1265,36 @@ _game_console_output = function (line)
 				else
 					pre = ''
 				end
-				line = pre .. bright(name) .. rest
+				line = pre .. colorize_team(name) .. rest
 				goto matched
 			end
 
 			-- connected
 			local name = line:match('^(.+) connected$')
 			if name then
+				clear_name(name)
 				line = string.format('%s connected',
-				    bright(name))
+				    colorize_team(name))
 				goto matched
 			end
 			-- autobalanced
 			local name = line:match('^(.+) was moved to the other team for game balance$')
 			if name then
+				register_autobalance(name)
 				line = string.format('%s was moved to the other team for game balance',
-				    bright(name))
+				    colorize_team(name))
+				goto matched
+			end
+
+			-- self autobalanced
+			if #line >= 110 and line:find('^You have switched to team [BR][EL][DU] and will receive [0-9]+ experience points at the end of the round for changing teams%.$') then
+				register_self_autobalance()
+				goto matched
+			end
+
+			-- joining a server
+			if line:find('^\n.*\nMap: .*\nPlayers: .* / .*\nBuild: .*\nServer Number: .*\n$') then
+				name2team = {}
 				goto matched
 			end
 
@@ -1289,10 +1370,17 @@ end
 local after_script_exec = function ()
 	cmd.cfgfs_click = 'exec cfgfs/click'
 	cmd.cfgfs_init = 'exec cfgfs/init'
+
+	-- this is a risky operation. it works most of the time but has a chance of freezing the game
+	-- resetting con_logfile closes the file inside the game, and it's re-opened on the next console write
+	-- sometimes something goes wrong and the game deadlocks instead
+	-- note: the log is normally inited from launch options, this alias exists to do it on cfgfs startup if it had crashed
 	cmd.cfgfs_init_log = function ()
 		cvar.con_logfile = ''
 		cvar.con_logfile = 'console.log'
+		cmd.echo('cfgfs: log file has been reinited')
 	end
+
 	cmd.cfgfs_license = 'exec cfgfs/license'
 	cmd.cfgfs_restart = function ()
 		cvar.con_logfile = ''
@@ -1301,7 +1389,6 @@ local after_script_exec = function ()
 	end
 	cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
 	cmd.release_all_keys = assert(release_all_keys)
-	cfg('cfgfs_init_log')
 	if not click_key_bound then
 		eprintln('\awarning: no function key bound to "cfgfs_click" found!')
 		eprintln(' why: one of the f1-f12 keys must be bound to "cfgfs_click" for delayed command execution to work')
@@ -1355,9 +1442,9 @@ _reload_2 = function (ok)
 end
 
 _fire_startup = function ()
-	-- probably crashed. need to reopen the log file
+	-- probably crashed. need to init manually and reopen the log file
 	if os.getenv('CFGFS_RESTARTED') then
-		_init()
+		cfg('cfgfs_init; cfgfs_init_log')
 	end
 	return fire_event('startup')
 end

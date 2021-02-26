@@ -467,7 +467,7 @@ bind('mwheelup',                        invprev)
 bind('escape',                          'cancelselect')
 bind('f1',                              'incrementvar net_graph 0 6 6')
 bind('f2',                              'screenshot')
-bind('f3',                              '')
+bind('f3',                              '+use_action_slot_item')
 bind('f4',                              'player_ready_toggle')
 bind('f5',                              '')
 bind('f6',                              '')
@@ -723,6 +723,10 @@ local do_status = function ()
 	return last_status
 end
 
+local teamnames = {
+	['TF_GC_TEAM_INVADERS'] = 'blu',
+	['TF_GC_TEAM_DEFENDERS'] = 'red',
+}
 local parse_lobby_debug = function ()
 	local players = {}
 	local mexp, pexp
@@ -747,7 +751,7 @@ local parse_lobby_debug = function ()
 					state    = state:match('^[A-Z][a-z]+'),
 					statepos = tonumber(statepos),
 					steamid  = steamid,
-					team     = team,
+					team     = assert(teamnames[team], 'invalid team ' .. team),
 				})
 				players[steamid] = players[#players]
 				goto matched
@@ -796,26 +800,18 @@ local do_lobby_debug = function ()
 	return last_lobby_debug
 end
 
-local teamnames = {
-	['TF_GC_TEAM_INVADERS'] = 'blu',
-	['TF_GC_TEAM_DEFENDERS'] = 'red',
-}
 local get_playerlist = function ()
 	local lobby = do_lobby_debug()
 	local status = do_status()
 	local players = {}
 	for _, t in ipairs(status) do
 		if lobby[t.steamid] then
-			if not teamnames[lobby[t.steamid].team] then
-				eprintln('\awarning: player %s has invalid team: %s',
-				    t.steamid, lobby[t.steamid].team)
-				goto next
-			end
+			team_known(t.name, lobby[t.steamid].team)
 			table.insert(players, {
 				steamid = t.steamid,
 				name    = t.name,
 				userid  = t.userid,
-				team    = teamnames[lobby[t.steamid].team],
+				team    = lobby[t.steamid].team,
 			})
 			players[t.steamid] = players[#players]
 			::next::
@@ -823,6 +819,17 @@ local get_playerlist = function ()
 	end
 	return players
 end
+
+printableish = function (s)
+	if not s:find('[\x20-\x7e]') then
+		return '(unprintable)'
+	else
+		return s
+	end
+end
+
+positive_vocalization = function () cmd.voicemenu(2, 4) end
+negative_vocalization = function () cmd.voicemenu(2, 5) end
 
 local check_namestealer = function (t, playerlist)
 	local names = {}
@@ -862,6 +869,9 @@ end
 
 local check_bot = function (t, players, grasp_at_straws)
 	local reasons = {}
+	if t.name:gsub('^%([0-9]+%)', ''):frobnicate() == 'YBEZZSMMjNLID' then
+		table.insert(reasons, 'known bot name')
+	end
 	if check_namestealer(t, players) then
 		table.insert(reasons, 'name stealer')
 	end
@@ -870,7 +880,9 @@ local check_bot = function (t, players, grasp_at_straws)
 	end
 	if grasp_at_straws and t.steamname then
 		if mangle_name(t.steamname) ~= t.name then
-			table.insert(reasons, string.format('steam name differs: "%s"', t.steamname))
+			table.insert(reasons, string.format(
+			    'steam name differs: %s',
+			    printableish(t.steamname)))
 		end
 	end
 	if #reasons == 0 then return nil end
@@ -895,8 +907,9 @@ cmd.kob = function ()
 	for _, t in ipairs(players) do
 		local is_bot = check_bot(t, players)
 		if is_bot then
-			cmd.echo(string.format('%s: "%s" %s: %s',
-			    t.team, t.name, t.steamid, table.concat(is_bot, '; ')))
+			cmd.echo(string.format('%s: %s %s: %s',
+			    t.team, printableish(t.name), t.steamid,
+			    table.concat(is_bot, '; ')))
 			if t.team == myteam then
 				table.insert(our_bots, t)
 			else
@@ -1003,8 +1016,9 @@ cmd.lob = function ()
 	for _, t in ipairs(players) do
 		local reasons = check_bot(t, players, true)
 		if reasons then
-			cmd.echo(string.format('%s: "%s" %s: %s',
-			    t.team, t.name, t.steamid, table.concat(reasons, '; ')))
+			cmd.echo(string.format('%s: %s %s: %s',
+			    t.team, printableish(t.name), t.steamid,
+			    table.concat(reasons, '; ')))
 			playing[t.team] = playing[t.team]+1
 		end
 	end

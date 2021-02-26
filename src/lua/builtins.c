@@ -141,6 +141,21 @@ error:
 	return luaL_error(L, "string.trim: invalid argument");
 }
 
+// https://linux.die.net/man/3/memfrob
+static int l_string_frobnicate(lua_State *L) {
+	size_t sz;
+	const char *s = lua_tolstring(L, 1, &sz);
+	if (unlikely(s == NULL)) goto typeerr;
+	char *newstr = malloc(sz+1);
+	memcpy(newstr, s, sz+1);
+	memfrob(newstr, sz);
+	lua_pushstring(L, newstr);
+	free(newstr);
+	return 1;
+typeerr:
+	return luaL_error(L, "string.frobnicate: invalid argument");
+}
+
 // -----------------------------------------------------------------------------
 
 static int l_ms(lua_State *L) {
@@ -254,6 +269,8 @@ void lua_define_builtins(void *L) {
 	 lua_setfield(L, -2, "between");
 	  lua_pushcfunction(L, l_string_trim);
 	 lua_setfield(L, -2, "trim");
+	  lua_pushcfunction(L, l_string_frobnicate);
+	 lua_setfield(L, -2, "frobnicate");
 	lua_pop(L, 1);
 
 	lua_newtable(L); lua_setglobal(L, "num2key");
