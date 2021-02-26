@@ -1444,7 +1444,7 @@ end
 _fire_startup = function ()
 	-- probably crashed. need to init manually and reopen the log file
 	if os.getenv('CFGFS_RESTARTED') then
-		cfg('cfgfs_init; cfgfs_init_log')
+		cfg('cfgfs_init_log; cfgfs_init')
 	end
 	return fire_event('startup')
 end

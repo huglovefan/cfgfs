@@ -9,6 +9,10 @@ if [ -n "$GAMEDIR" -a -z "$GAMENAME" ]; then
 	>&2 echo "warning: failed to parse game name from gameinfo.txt!"
 fi
 
+if [ -n "$CFGFS_TERMINAL_CLOSED" ]; then
+	>&2 echo "warning: looks like the terminal window was closed. don't do that"
+fi
+
 sudo_or_doas() {
 	if command -v sudo >/dev/null; then
 		( set -x; sudo "$@" )
@@ -37,10 +41,19 @@ run() {
 
 	mkdir -p -- "$1" || return
 
-	( . ./env.sh; exec ./cfgfs "$1" )
+	trap '' INT
+	( trap - INT; . ./env.sh; exec ./cfgfs "$1" )
 	rv=$?
+	trap - INT
 
-	if [ $rv -ne 0 ]; then
+	if [ $rv -eq 0 ]; then
+		# is the game still running?
+		if [ -n "$CFGFS_RUN_PID" ] && \
+		   { pstree -aAclntT -p "$CFGFS_RUN_PID" | awk '/\+exec cfgfs\/init/{f=1}END{exit(!f)}'; }; then
+			rv=1
+			>&2 echo "warning: game is still running, restarting cfgfs..."
+		fi
+	else
 		echo "cfgfs exited with status $rv"
 	fi
 

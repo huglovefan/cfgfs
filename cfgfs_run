@@ -77,8 +77,15 @@ if [ -z "$CFGFS_SCRIPT" ]; then
 		} >>"$CFGFS_SCRIPT"
 	fi
 fi
-
-exec xterm -title cfgfs -e /bin/sh cfgfs_failsafe.sh "$cfgfs_mountpoint"
+export CFGFS_RUN_PID=$$
+while true; do
+	xterm -title "cfgfs (${GAMENAME:-App ID ${SteamAppId}})" -e /bin/sh cfgfs_failsafe.sh "$cfgfs_mountpoint"
+	if ! { pstree -aAclntT -p "$CFGFS_RUN_PID" | awk '/\+exec cfgfs\/init/{f=1}END{exit(!f)}'; }; then
+		break
+	fi
+	export CFGFS_RESTARTED=1
+	export CFGFS_TERMINAL_CLOSED=1
+done
 } &
 cfgfs_term_pid=$!
 
