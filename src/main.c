@@ -186,7 +186,13 @@ V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 	int rv = 0;
 
 	if (unlikely(offset != 0)) return 0;
-	assume(size >= reported_cfg_size);
+
+	if (unlikely(size < reported_cfg_size)) {
+		eprintln("\acfgfs_read: read size too small! expected at least %zu, got only %zu",
+		    reported_cfg_size, size);
+D		abort();
+		return -EOVERFLOW;
+	}
 
 	// /unmask_next/ must not return buffer contents (can mess up the order)
 	bool silent = starts_with(path, "/cfgfs/unmask_next/");
