@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <unistd.h>
 
 #include <X11/extensions/XTest.h>
@@ -32,8 +33,14 @@ static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 static Display *display;
 static KeyCode keycode;
 
-static bool thread_attr_inited = false;
 static pthread_attr_t thread_attr;
+
+__attribute__((constructor))
+static void _init_attr(void) {
+	pthread_attr_init(&thread_attr);
+	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
+	pthread_attr_setstacksize(&thread_attr, 0xffff); // glibc default: 8 MB
+}
 
 void do_click(void) {
 	if (game_window_is_active &&
@@ -51,13 +58,6 @@ static bool click_set_key(const char *name);
 
 __attribute__((cold))
 void click_init(void) {
-	if (!thread_attr_inited) {
-		pthread_attr_init(&thread_attr);
-		pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
-		pthread_attr_setstacksize(&thread_attr, 0xffff);
-		thread_attr_inited = true;
-	}
-
 	pthread_mutex_lock(&click_lock);
 
 	display = XOpenDisplay(NULL);
@@ -77,11 +77,6 @@ void click_deinit(void) {
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
 	keycode = 0;
 	pthread_mutex_unlock(&click_lock);
-
-	if (thread_attr_inited) {
-		pthread_attr_destroy(&thread_attr);
-		thread_attr_inited = false;
-	}
 }
 
 // -----------------------------------------------------------------------------
@@ -121,47 +116,76 @@ static void mono_ms_wait_until(double target) {
 }
 
 static void *click_thread(void *msp) {
+	set_thread_name("click");
+
 	double ms;
 	memcpy(&ms, &msp, sizeof(double));
+
 	mono_ms_wait_until(ms);
+
+	// the wait is over and we weren't cancelled during that time.
+	// now disable cancellation for non-cancellation-safe do_click()
+	check_errcode(
+	    pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL),
+	    "click: pthread_setcancelstate",
+	    goto end);
+
 	do_click();
+end:
 	return NULL;
 }
 
 // ~
 
-static void click_at(double ms) {
+static bool click_at(double ms, pthread_t *thread) {
+	pthread_t nothread;
+	if (thread == NULL) thread = &nothread;
+
 	void *msp;
 	_Static_assert(sizeof(msp) >= sizeof(ms), "double doesn't fit in pointer");
 	memcpy(&msp, &ms, sizeof(double));
 
-D	assert(thread_attr_inited);
-	pthread_t thread;
-	int err = pthread_create(&thread, &thread_attr, click_thread, msp);
-	if (unlikely(err != 0)) {
-V		eprintln("click_at: pthread_create: %s", strerror(err));
-	}
-}
+	check_errcode(
+	    pthread_create(thread, &thread_attr, click_thread, msp),
+	    "click: pthread_create",
+	    return false);
 
-static void click_after(double ms) {
-	click_at(mono_ms()+ms);
+	return true;
 }
 
 // -----------------------------------------------------------------------------
 
-static int l_click_after(lua_State *L) {
-	click_after(lua_tonumber(L, 1));
-	return 0;
-}
-static int l_click_at(lua_State *L) {
-	click_at(lua_tonumber(L, 1));
-	return 0;
-}
 static int l_click(lua_State *L) {
-	(void)L;
-	if (!pending_click++) do_click();
+	double ms = lua_tonumber(L, 1);
+	if (ms > 0) {
+		pthread_t thread;
+		if (click_at(mono_ms()+ms, &thread)) {
+			lua_pushlightuserdata(L, (void *)thread);
+			return 1;
+		} else {
+			return 0;
+		}
+	} else {
+		if (!pending_click++) do_click();
+		return 0;
+	}
+	unreachable_strong();
+}
+
+static int l_cancel_click(lua_State *L) {
+	if (lua_islightuserdata(L, 1)) {
+		pthread_t thread = (pthread_t)(lua_touserdata(L, 1));
+		check_errcode(
+		    pthread_cancel(thread),
+		    "cancel_click: pthread_cancel",
+		    goto out);
+	}
+out:
+	// return nothing. it's hard to know accurately if it was really
+	//  cancelled anyway
 	return 0;
 }
+
 static int l_click_received(lua_State *L) {
 	(void)L;
 	pending_click = false;
@@ -184,10 +208,8 @@ __attribute__((cold))
 void click_init_lua(void *L) {
 	 lua_pushcfunction(L, l_click);
 	lua_setglobal(L, "_click");
-	 lua_pushcfunction(L, l_click_after);
-	lua_setglobal(L, "_click_after");
-	 lua_pushcfunction(L, l_click_at);
-	lua_setglobal(L, "_click_at");
+	 lua_pushcfunction(L, l_cancel_click);
+	lua_setglobal(L, "_click_cancel");
 	 lua_pushcfunction(L, l_click_set_key);
 	lua_setglobal(L, "_click_set_key");
 	 lua_pushcfunction(L, l_click_received);

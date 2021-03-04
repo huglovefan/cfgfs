@@ -159,7 +159,19 @@ end
 --  creating a new coroutine each time for that
 -- if the function yields, ev_loop_co gets replaced with a new coroutine
 
+-- list of timeout objects with properties:
+--   co: the coroutine
+--   target: timestamp of when it should be resumed
+--   gen: value of ev_generation_counter when it was added
 local ev_timeouts = make_resetable_table()
+
+-- counter for ev_do_timeouts() to know if a timeout was added during the same event loop iteration (-> should not resume it)
+-- timeouts added to the ev_timeouts table have a "gen" property set to whatever this was when the timeout was added
+local ev_generation_counter = 1
+add_reset_callback(function ()
+	-- note: all timeouts (= references to past values) are removed on reset so this is safe to reset too
+	ev_generation_counter = 1
+end)
 
 -- coroutine -> function(error value)
 -- callbacks here are called when the coroutine makes an error
@@ -200,7 +212,7 @@ do
 		end
 	end
 	local ev_loop_fn_catch = function (err)
-		-- this is a table because only one value can be returned from here
+		-- note: the two return values are in a table because this function can only return one value
 		return {err, debug.traceback(err, 2)}
 	end
 	ev_loop_fn = function (...)
@@ -251,46 +263,125 @@ local ev_resume = function (co, ...)
 	return ev_handle_return(co, coroutine.resume(co, ...))
 end
 
-wait = function (ms)
-	local target = 0
-	if ms > 0 then
-		target = _ms()+ms
-		_click_at(target)
-	else
-		_click()
+-- canceldata: optionally set to an empty table if the wait should be cancellable.
+-- cancellation is done by calling cancel_wait() with that table from a different coroutine.
+-- if the wait is cancelled, the waiting coroutine will be woken up early and get a return value of false from wait()
+
+wait = function (ms, canceldata)
+	local target = _ms()+ms
+	local click_id = (_click(ms) or true)
+	local check_cancel = false
+	local this_co = assert(coroutine.running())
+
+	-- click_id is the "id" of the click. it's either userdata for
+	--  pthread_t, or true if the click didn't spawn a thread ("ms" was 0
+	--  and do_click() was called directly)
+
+	if type(canceldata) == 'table' then
+		assert(nil == next(canceldata), 'wait: canceldata is not empty')
+		canceldata.co = this_co
+		canceldata.id = click_id
+		check_cancel = true
 	end
+
 	table.insert(ev_timeouts, {
+		gen    = ev_generation_counter,
 		target = target,
-		co = coroutine.running(),
+		co     = this_co,
 	})
-	return coroutine.yield(sym_wait)
+
+	coroutine.yield(sym_wait)
+
+	if check_cancel then
+		local stored_id = canceldata.id
+		-- same type (userdata/pthread_t or true)
+		if type(stored_id) == type(click_id) then
+			if stored_id == click_id then
+				-- ok: wait was NOT cancelled
+				canceldata.co = nil
+				canceldata.id = nil
+				return true
+			else
+				-- error: reused the table for a different wait. don't do this
+				return error('wait: illegal reuse of canceldata', 2)
+			end
+		elseif stored_id == nil then
+			-- ok: the wait was cancelled
+			assert(canceldata.co == nil, 'wait: cancelled without clearing canceldata.co')
+			return false
+		else
+			return error('wait: canceldata.id has wrong type ' .. type(stored_id), 2)
+		end
+	end
+
+	return true
+end
+
+local ev_delete_timeout_for_co = function (co)
+	local ts = ev_timeouts
+	for i = 1, #ts do
+		if ts[i].co == co then
+			table.remove(ts, i)
+			return true
+		end
+	end
+	return false
+end
+
+cancel_wait = function (canceldata)
+	if type(canceldata) == 'table' then
+		local id = canceldata.id
+		if id == true or type(id) == 'userdata' then
+			-- ok: in these cases, the coroutine is still waiting to be resumed
+			-- if id is userdata, then there's a thread we might be able to cancel to save a useless click()
+
+			local co = canceldata.co
+
+			if type(id) == 'userdata' then
+				-- cancel the thread to potentially avoid a useless click
+				_click_cancel(id)
+			end
+
+			-- remove the coroutine from the timeouts list
+			assert(ev_delete_timeout_for_co(co))
+
+			-- clear canceldata and resume the coroutine
+			canceldata.co = nil
+			canceldata.id = nil
+			ev_resume(co)
+
+			return
+		elseif id == nil then
+			-- ok: click had already been cancelled or it had expired
+			return
+		else
+			return error('cancel_wait: canceldata.id has wrong type ' .. type(id), 2)
+		end
+	end
+	return error('cancel_wait: canceldata has wrong type ' .. type(canceldata), 2)
 end
 
 local ev_do_timeouts = function ()
-	local ts = ev_timeouts
-	if #ts == 0 then return end
+	if #ev_timeouts == 0 then return end
 
-	local newts = {}
-	ev_timeouts = {}
+	local cur_gen = ev_generation_counter
+	ev_generation_counter = cur_gen+1
 
-	local now = nil
-	for i = 1, #ts do
-		now = now or _ms()
-		local t = ts[i]
-		if now >= t.target then
+	-- do all timeouts that are both
+	-- * expired (now >= t.target)
+	-- * added before this call to ev_do_timeouts() (t.gen <= cur_gen)
+	-- note: the loop is restarted after each timeout because they can
+	--  modify the list (adding and removing entries from any position)
+	-- the generation counter exists so this can be done without ending up
+	--  in an infinite loop calling newly added timeouts
+::again::
+	local now = _ms()
+	for i, t in ipairs(ev_timeouts) do
+		if now >= t.target and t.gen <= cur_gen then
+			table.remove(ev_timeouts, i)
 			ev_resume(t.co)
-			now = nil
-		else
-			table.insert(newts, t)
+			goto again
 		end
-	end
-	if #newts > 0 then
-		if #ev_timeouts > 0 then -- new ones were added
-			for _, t in ipairs(ev_timeouts) do
-				table.insert(newts, t)
-			end
-		end
-		ev_timeouts = newts
 	end
 end
 
@@ -635,13 +726,12 @@ fire_event = function (name, ...)
 	end
 end
 
-wait_for_event = function (name, timeout)
+wait_for_event = function (name, timeout_opt)
 	local this_co = coroutine.running()
-	local done = false
-	if timeout then
+	local canceldata = {}
+	if timeout_opt then
 		spinoff(function ()
-			wait(timeout)
-			if not done then
+			if wait(timeout_opt, canceldata) then
 				last_event_name = nil
 				return ev_resume(this_co)
 			end
@@ -649,49 +739,15 @@ wait_for_event = function (name, timeout)
 	end
 	add_listener(name, this_co)
 	local t = {coroutine.yield()}
-	done = true
 	remove_listener(name, this_co)
+	cancel_wait(canceldata)
 	return last_event_name, table.unpack(t)
 end
 
 -- like wait_for_event() but usable in a for-in loop
--- the timeout is for the whole thing rather than one event
--- ^ unless timeout_per_event is true
-wait_for_events = function (name, timeout, timeout_per_event)
-	if timeout then
-		if not timeout_per_event then
-			local this_co = coroutine.running()
-			local timeout_done = false
-			local want_resume = false
-			spinoff(function ()
-				wait(timeout)
-				timeout_done = true
-				if want_resume then
-					last_event_name = nil
-					return ev_resume(this_co)
-				end
-			end)
-			return function ()
-				if not timeout_done then
-					add_listener(name, this_co)
-					want_resume = true
-					local rv = coroutine.yield()
-					want_resume = false
-					remove_listener(name, this_co)
-					return last_event_name, rv
-				else
-					return nil
-				end
-			end
-		else
-			return function ()
-				return wait_for_event(name, timeout)
-			end
-		end
-	else
-		return function ()
-			return wait_for_event(name)
-		end
+wait_for_events = function (name, timeout_opt)
+	return function ()
+		return wait_for_event(name, timeout_opt)
 	end
 end
 
