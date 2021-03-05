@@ -54,7 +54,10 @@ enum special_file_type {
 	sft_none = 0,
 	sft_console_log = 1,
 	sft_control = 2,
+	sft_message = 3,
 };
+
+#define MESSAGE_DIR_PREFIX "/message/"
 
 static int l_lookup_path(const char *restrict path);
 
@@ -96,6 +99,10 @@ D	assert(*slashdot == '/');
 		}
 		if (unlikely(equals(path, "/.control"))) {
 			if (type) *type = sft_control;
+			return 0xf;
+		}
+		if (unlikely(starts_with(path, MESSAGE_DIR_PREFIX))) {
+			if (type) *type = sft_message;
 			return 0xf;
 		}
 		return -ENOENT;
@@ -316,6 +323,17 @@ D		pthread_mutex_unlock(&logcatcher_lock);
 	}
 	case sft_control:
 		return cfgfs_write_control(data, size);
+	case sft_message: {
+		lua_State *L;
+		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
+		if (!(L = lua_get_state())) return -EIO;
+		 lua_getglobal(L, "_message");
+		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));
+		   lua_pushlstring(L, data, size);
+		lua_call(L, 2, 0);
+		lua_release_state(L);
+		return (int)size;
+	}
 	case sft_none:
 		return -ENOTSUP;
 	}
@@ -357,6 +375,30 @@ V	eprintln("control_do_line: line=[%.*s]", (int)size, line);
 
 // ~
 
+static int cfgfs_release(const char *path, struct fuse_file_info *fi) {
+	enum special_file_type sft;
+	memcpy(&sft, &fi->fh, sizeof(enum special_file_type));
+	switch (sft) {
+	case sft_message: {
+		lua_State *L;
+		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
+		if (!(L = lua_get_state())) return -EIO;
+		 lua_getglobal(L, "_message");
+		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));
+		   lua_pushnil(L);
+		lua_call(L, 2, 0);
+		lua_release_state(L);
+		return 0;
+	}
+	case sft_none:
+	case sft_console_log:
+	case sft_control:
+		return 0;
+	}
+}
+
+// ~
+
 __attribute__((cold))
 static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	// https://github.com/libfuse/libfuse/blob/0105e06/include/fuse_common.h#L421
@@ -373,6 +415,13 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	cfg->attr_timeout = DBL_MAX;
 
 	cfg->direct_io = true;
+
+	lua_State *L = lua_get_state();
+	if (L != NULL) {
+		 lua_getglobal(L, "_fire_startup");
+		lua_call(L, 0, 0);
+		lua_release_state(exchange(L, NULL));
+	}
 
 	return NULL;
 }
@@ -394,6 +443,7 @@ static const struct fuse_operations cfgfs_oper = {
 	.open = cfgfs_open,
 	.read = cfgfs_read,
 	.write = cfgfs_write,
+	.release = cfgfs_release,
 	.init = cfgfs_init,
 };
 
@@ -416,6 +466,7 @@ static void check_env(void) {
 	static const struct var {
 		const char *name, *what;
 	} vars[] = {
+		{"CFGFS_MOUNTPOINT", "path to the directory cfgfs was mounted in"},
 		{"CFGFS_SCRIPT", "path to the script to load"},
 		{"GAMEDIR", "path to mod directory containing gameinfo.txt"},
 		{"GAMEROOT", "path to parent directory of GAMEDIR"},

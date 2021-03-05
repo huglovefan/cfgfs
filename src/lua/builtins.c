@@ -156,6 +156,22 @@ typeerr:
 	return luaL_error(L, "string.frobnicate: invalid argument");
 }
 
+// https://perldoc.perl.org/functions/chomp
+// (this does just the newline thing)
+static int l_string_chomp(lua_State *L) {
+	size_t sz;
+	const char *s = lua_tolstring(L, 1, &sz);
+	if (unlikely(s == NULL)) goto typeerr;
+	if (likely(sz != 0 && s[sz-1] == '\n')) {
+		lua_pushlstring(L, s, sz-1);
+	} else {
+		lua_settop(L, 1); // ignore excess arguments
+	}
+	return 1;
+typeerr:
+	return luaL_error(L, "string.chomp: invalid argument");
+}
+
 // -----------------------------------------------------------------------------
 
 static int l_ms(lua_State *L) {
@@ -271,6 +287,8 @@ void lua_define_builtins(void *L) {
 	 lua_setfield(L, -2, "trim");
 	  lua_pushcfunction(L, l_string_frobnicate);
 	 lua_setfield(L, -2, "frobnicate");
+	  lua_pushcfunction(L, l_string_chomp);
+	 lua_setfield(L, -2, "chomp");
 	lua_pop(L, 1);
 
 	lua_newtable(L); lua_setglobal(L, "num2key");

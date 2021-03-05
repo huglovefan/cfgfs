@@ -45,6 +45,7 @@ CPPFLAGS += -D_GNU_SOURCE
 ifneq (,$(findstring clang,$(CC)))
 CFLAGS += \
           -Weverything \
+          -Werror=conditional-uninitialized \
           -Werror=format \
           -Werror=fortify-source \
           -Werror=implicit-function-declaration \
@@ -248,6 +249,7 @@ start: $(EXE)
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
 	ln -fs $(TF2MNT) $(MNTLNK); \
+	export CFGFS_MOUNTPOINT=mnt; \
 	export CFGFS_SCRIPT=script_440.lua; \
 	export GAMEDIR=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf; \
 	export GAMEROOT=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2; \

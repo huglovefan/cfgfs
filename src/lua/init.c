@@ -37,6 +37,7 @@ static struct reqval {
 	{"_game_console_output", LUA_TFUNCTION},
 	{"_get_contents", LUA_TFUNCTION},
 	{"_lookup_path", LUA_TFUNCTION},
+	{"_message", LUA_TFUNCTION},
 
 	// reloader.c
 	{"_reload_1", LUA_TFUNCTION},
@@ -139,9 +140,6 @@ D	  assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
 D	  assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
 
 	buffer_list_swap(&buffers, &init_cfg);
-
-	 lua_getglobal(L, "_fire_startup");
-	lua_call(L, 0, 0);
 
 	assert(stack_is_clean(L));
 

@@ -23,11 +23,7 @@
 #include "lua.h"
 #include "macros.h"
 
-// used to combine clicks for "wait(0)" calls
-// set when lua clicks without a delay
-// if set, further clicks without a delay do nothing
-// cleared when we get a click
-static bool pending_click;
+static double pending_click;
 
 static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 static Display *display;
@@ -43,8 +39,11 @@ static void _init_attr(void) {
 }
 
 void do_click(void) {
+	double now = mono_ms();
 	if (game_window_is_active &&
+	    (pending_click == 0.0 || (now-pending_click >= 50.0)) &&
 	    (0 == pthread_mutex_trylock(&click_lock))) {
+		pending_click = now;
 		if (display != NULL && keycode != 0) {
 			XTestFakeKeyEvent(display, keycode, True, CurrentTime);
 			XTestFakeKeyEvent(display, keycode, False, CurrentTime);
@@ -166,7 +165,7 @@ static int l_click(lua_State *L) {
 			return 0;
 		}
 	} else {
-		if (!pending_click++) do_click();
+		do_click();
 		return 0;
 	}
 	unreachable_strong();
@@ -188,7 +187,7 @@ out:
 
 static int l_click_received(lua_State *L) {
 	(void)L;
-	pending_click = false;
+	pending_click = 0.0;
 	return 0;
 }
 

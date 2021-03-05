@@ -627,6 +627,8 @@ bind = function (key, cmd, cmd2)
 	if not n then
 		return error(string.format('tried to bind unknown key "%s"', key), 2)
 	end
+
+	-- setting the click key?
 	if cmd == 'cfgfs_click' and key:find('^f[0-9]+$') then
 		local cmd = _G.cmd
 		click_key_bound = true
@@ -634,6 +636,8 @@ bind = function (key, cmd, cmd2)
 		_click_set_key(key)
 		return
 	end
+
+	-- set the bind and create the alias
 	if not cfgfs.compat_noalias then
 		if not binds_down[key] then
 			local cmd = _G.cmd
@@ -653,6 +657,7 @@ bind = function (key, cmd, cmd2)
 		-- +jlook is there because it does nothing and starts with +
 		-- "//" at the end starts a comment to ignore excess arguments
 	end
+
 	-- add -release command for +toggles
 	if not cmd2 and type(cmd) ~= 'function' then
 		cmd = (tostring(cmd) or '')
@@ -660,6 +665,7 @@ bind = function (key, cmd, cmd2)
 			cmd2 = ('-' .. cmd:sub(2))
 		end
 	end
+
 	binds_down[key] = cmd
 	binds_up[key] = cmd2
 end
@@ -1167,7 +1173,7 @@ local myname = nil
 local team2color = {
 	['red'] = '34;38;2;184;56;59',
 	['blu'] = '34;38;2;88;133;162',
-	['unknown'] = '1',
+	['unknown'] = '34;38;2;251;236;203',
 }
 local team2opposite = {
 	['red'] = 'blu',
@@ -1272,7 +1278,7 @@ _game_console_output = function (line)
 		else
 			-- more colorizing trash
 
-			local bright = function (s) return string.format('\27[1m%s\27[0m', s) end
+			local bright = function (s) return string.format('\27[34;38;2;251;236;203m%s\27[0m', s) end
 			do
 
 			-- kill (non-crit)
@@ -1318,6 +1324,7 @@ _game_console_output = function (line)
 				    line:match('^%*SPEC%* ')
 				if pre and #name-#pre >= 1 then
 					name = name:sub(#pre+1)
+					pre = bright(pre)
 				else
 					pre = ''
 				end
@@ -1387,8 +1394,245 @@ end
 
 --------------------------------------------------------------------------------
 
+local startup_fired = false
+add_listener('startup', function ()
+	startup_fired = true
+end)
+
+local wait_cfgfs_mounted = function ()
+	if not startup_fired then
+		wait_for_event('startup')
+	end
+end
+
+--------------------------------------------------------------------------------
+
 _control = function (line)
 	return fire_event('control', line)
+end
+
+--------------------------------------------------------------------------------
+
+-- non-blocking child processes
+
+local linereader = function (got_line)
+	local data = {}
+	return function (s)
+		if s then
+			local i = 1
+			while i <= #s do
+				local nlpos = s:find('\n', i, true)
+				if nlpos then
+					got_line(table.concat(data, '') .. s:sub(i, nlpos-1))
+					data = {}
+					i = nlpos+1
+				else
+					table.insert(data, s:sub(i))
+					break
+				end
+			end
+		else
+			if #data ~= 0 then
+				got_line(table.concat(data, ''))
+				data = {}
+			end
+			got_line(nil)
+		end
+	end
+end
+
+local allreader = function (got_line)
+	local data = {}
+	return function (s)
+		if s then
+			table.insert(data, s)
+		else
+			got_line(table.concat(data, ''))
+			data = {}
+		end
+	end
+end
+
+_message = function (name, data)
+	return fire_event(name, data)
+end
+
+local get_channel = function (purpose)
+	return string.format('%s.%08x',
+	    purpose,
+	    math.random(0x10000000, 0xffffffff))
+end
+
+local shellquote = function (s)
+	return '\'' .. s:gsub('\'', '\'\\\'\'') .. '\''
+end
+
+sh = function (cmd, mode)
+	wait_cfgfs_mounted()
+
+	local chan = get_channel('cmd')
+
+	mode = mode or 'r'
+	local readable = not not mode:find('r')
+	local writable = not not mode:find('w')
+
+	local p = io.popen([[
+
+	chan=]]..shellquote(chan)..'\n'..[[
+
+	# redirect this early so that the close is always received
+	exec >"${CFGFS_MOUNTPOINT}/message/${chan}.rv"
+
+	(
+		set -e
+		if ]]..tostring(readable)..[[; then
+			exec >"${CFGFS_MOUNTPOINT}/message/${chan}"
+		else
+			exec >&2
+		fi
+		if ! ]]..tostring(writable)..[[; then
+			exec 0<>/dev/null
+		fi
+		sh -c 'echo $PPID' >"${CFGFS_MOUNTPOINT}/message/${chan}.pid"
+		exec sh -c ]]..shellquote(cmd)..'\n'..[[
+	)
+
+	echo $?
+
+	]], (writable and 'w' or 'r'))
+
+	local lr = nil
+	local ar = nil
+
+	local init_linereader = function ()
+		if lr then return end
+		lr = linereader(function (line)
+			return fire_event(chan..'.line', line)
+		end)
+		spinoff(function ()
+			for _, buf in wait_for_events(chan) do
+				lr(buf)
+				if buf == nil then break end
+			end
+			lr = nil
+		end)
+	end
+	local init_allreader = function ()
+		if ar then return end
+		ar = allreader(function (data)
+			return fire_event(chan..'.alldata', data)
+		end)
+		spinoff(function ()
+			for _, buf in wait_for_events(chan) do
+				ar(buf)
+				if buf == nil then break end
+			end
+			ar = nil
+		end)
+	end
+
+	local readall = function (chan)
+		local rv = nil
+		local ar = allreader(function (data)
+			rv = data
+		end)
+		for _, buf in wait_for_events(chan) do
+			ar(buf)
+			if buf == nil then break end
+		end
+		return rv
+	end
+
+	local pid = nil
+	local rv = nil
+
+	spinoff(function ()
+		pid = tonumber(readall(chan..'.pid'))
+		if not pid then
+			eprintln('sh(): failed to parse pid!')
+			return
+		end
+		return fire_event(chan..'.started', pid)
+	end)
+	spinoff(function ()
+		local rv = (tonumber(readall(chan..'.rv')) or -1)
+		p:close()
+		return fire_event(chan..'.exited', rv)
+	end)
+
+	local evname = wait_for_event({chan..'.started', chan..'.exited'})
+	if evname == chan..'.exited' then
+		return nil, rv
+	end
+
+	return {
+		kill = function ()
+			if not rv then
+				os.execute('kill -TERM '..pid)
+			end
+		end,
+		lines = function (self)
+			if readable then
+				if not rv then
+					init_linereader()
+					return function ()
+						local evname, line = wait_for_event(chan..'.line')
+						assert(evname)
+						return line
+					end
+				else
+					return error('already exited', 2)
+				end
+			else
+				return error('not readable', 2)
+			end
+		end,
+		read = function (self, what)
+			if readable then
+				if not rv then
+					if what == 'a' then
+						init_allreader()
+						local evname, data = wait_for_event(chan..'.alldata')
+						assert(evname)
+						return data
+					elseif what == 'l' then
+						init_linereader()
+						local evname, line = wait_for_event(chan..'.line')
+						assert(evname)
+						return line
+					elseif what == 'n' then
+						init_allreader()
+						local evname, data = wait_for_event(chan..'.alldata')
+						assert(evname)
+						return tonumber(data)
+					else
+						return error('unsupported read', 2)
+					end
+				else
+					return error('already exited', 2)
+				end
+			else
+				return error('not readable', 2)
+			end
+		end,
+		wait = function (self)
+			if not rv then
+				wait_for_event(chan..'.exited')
+			end
+			return rv
+		end,
+		write = function (self, data)
+			if writable then
+				if not rv then
+					p:write(data)
+				else
+					return error('already exited', 2)
+				end
+			else
+				return error('not writable', 2)
+			end
+		end,
+	}
 end
 
 --------------------------------------------------------------------------------

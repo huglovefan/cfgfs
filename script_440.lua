@@ -276,9 +276,9 @@ end
 
 cmd.qqq = 'quit'
 
-local wrap = function (sh)
+local wrap = function (terminal_command)
 	return function ()
-		for line in io.popen(sh):lines() do
+		for line in sh(terminal_command):lines() do
 			cmd.echo(line)
 		end
 	end
@@ -636,9 +636,8 @@ local bad_steamids = {}
 oldcnt = global('oldcnt', -1)
 listupdate = function ()
 	bad_steamids = {}
-	local p <close> = assert(io.popen('timeout 5 sh misc/get_bad_steamids.sh'))
 	local cnt = 0
-	for line in p:lines() do
+	for line in sh('timeout 5 sh misc/get_bad_steamids.sh'):lines() do
 		local steamid, lists = assert(line:match('^(%S+)%s+(%S+)$'))
 		bad_steamids[steamid] = lists
 		cnt = cnt+1
@@ -957,9 +956,7 @@ local shellquote = function (s)
 	return '\'' .. s:gsub('\'', '\'\\\'\'') .. '\''
 end
 local get_json = function (url)
-	local p = assert(io.popen('timeout 2 curl -s ' .. shellquote(url), 'r'))
-	local s = p:read('a')
-	p:close()
+	local s = sh('timeout 2 curl -s ' .. shellquote(url)):read('a')
 	local json = require 'json' -- https://github.com/rxi/json.lua
 	local ok, rv = pcall(json.decode, s)
 	return ok and rv or nil
