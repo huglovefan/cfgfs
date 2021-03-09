@@ -44,7 +44,7 @@ static bool wait_for_event(int conn) {
 		case msg_exit:
 			return false;
 		}
-		unreachable_weak();
+		assert_unreachable();
 	case 0:
 		perror("attention: rdselect");
 		return false;
@@ -69,7 +69,7 @@ VV	eprintln("attention: title=\"%s\"", title);
 		game_window_is_active = newattn;
 V		eprintln("attention: game_window_is_active=%d", newattn);
 
-		lua_State *L = lua_get_state();
+		lua_State *L = lua_get_state("attention");
 		if (L == NULL) goto lua_done;
 		 lua_getglobal(L, "_attention");
 		  lua_pushboolean(L, newattn);

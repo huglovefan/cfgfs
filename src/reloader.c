@@ -60,7 +60,7 @@ static bool wait_for_event(void) {
 		case msg_exit:
 			goto out;
 		}
-		unreachable_weak();
+		assert_unreachable();
 	case 0:
 		perror("reloader: rdselect");
 		break;
@@ -74,26 +74,20 @@ out:
 }
 
 static void do_reload(void) {
-	lua_State *L = lua_get_state();
-	if (L == NULL) return;
+	lua_State *L = lua_get_state("reloader");
+	if (L == NULL) {
+		perror("reloader: failed to lock lua state");
+		return;
+	}
 
 	buffer_list_reset(&buffers);
 	buffer_list_reset(&init_cfg);
 
-#if LUA_VERSION_NUM >= 503
-	lua_getglobal(L, "_reload_1");
-	 lua_call(L, 0, 1);
-	  buffer_list_swap(&buffers, &init_cfg);
-	  lua_getglobal(L, "_reload_2");
-	  lua_rotate(L, -2, 1);
-	lua_call(L, 1, 0);
-#else
 	 lua_getglobal(L, "_reload_2");
 	  lua_getglobal(L, "_reload_1");
 	 lua_call(L, 1, 1);
 	 buffer_list_swap(&buffers, &init_cfg);
 	lua_call(L, 1, 0);
-#endif
 
 	lua_release_state(L);
 }

@@ -79,7 +79,7 @@ static struct worddata g_words[max_argc];
 static char stringify_outbuf[max_line_length+1];
 
 static int l_cmd(lua_State *L) {
-	int argc = lua_gettop(L)-1; // first arg is the cmd table
+	int argc = lua_gettop(L)-1; // ignore first arg (it's the cmd table)
 	if (unlikely(argc <= 0)) return 0;
 	if (unlikely(argc > max_argc)) goto err_toomany;
 	struct worddata *words = g_words;
@@ -95,11 +95,11 @@ static int l_cmd(lua_State *L) {
 	buffer_list_commit_write(&buffers, wrote);
 	return 0;
 err_toomany:
-	return luaL_error(L, "too many arguments");
+	return luaL_error(L, "cmd: too many arguments");
 err_invalid:
-	return luaL_error(L, "argument is not a string");
+	return luaL_error(L, "cmd: argument is not a string or number");
 err_toolong:
-	return luaL_error(L, "command too long");
+	return luaL_error(L, "cmd: command too long");
 }
 
 __attribute__((minsize))
@@ -126,7 +126,7 @@ err_toomany:
 	errmsg = "too many arguments";
 	goto error;
 err_invalid:
-	errmsg = "argument is not a string";
+	errmsg = "argument is not a string or number";
 	goto error;
 err_toolong:
 	errmsg = "command too long";
@@ -243,7 +243,7 @@ static size_t cmd_stringify(char *restrict buf,
                             int argc,
                             const struct worddata *restrict words,
                             enum quoting_mode mode) {
-	assume(argc >= 1);
+	unsafe_optimization_hint(argc >= 1);
 	char *bufstart = buf;
 	switch (mode) {
 	case qm_default:
@@ -299,8 +299,8 @@ static void cfg(lua_State *L, const char *s, size_t sz) {
 	buffer_list_write_line(&buffers, s, sz);
 	return;
 toolong:
-	luaL_error(L, "line too long");
-	__builtin_unreachable();
+	luaL_error(L, "cfg: line too long");
+	__builtin_unreachable(); // luaL_error() is documented to never return
 }
 
 static int l_cfg(lua_State *L) {
@@ -320,9 +320,9 @@ static int l_cfg(lua_State *L) {
 		}
 		return 0;
 	}
-	unreachable_strong();
+	compiler_enforced_unreachable();
 typeerr:
-	return luaL_error(L, "argument is not a string");
+	return luaL_error(L, "cfg: argument is not a string");
 }
 
 // -----------------------------------------------------------------------------

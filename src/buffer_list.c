@@ -12,16 +12,6 @@
 
 #define cfg_exec_next_cmd "exec cfgfs/buffer"
 
-size_t buffer_get_size(const struct buffer *self) {
-	return self->size;
-}
-void buffer_memcpy_to(const struct buffer *self, char *buf, size_t sz) {
-	memcpy(buf, self->data, sz);
-}
-void buffer_free(struct buffer *self) {
-	free(self);
-}
-
 static size_t buffer_space(const struct buffer *self) {
 	return reported_cfg_size - self->size;
 }
@@ -104,7 +94,7 @@ D			assert(self->nonfull != ent);
 #define buffer_new() \
 	({ \
 		struct buffer *_new_ent = malloc((sizeof(struct buffer) + reported_cfg_size)); \
-		assume(_new_ent != NULL); \
+		unsafe_optimization_hint(_new_ent != NULL); \
 		memset(_new_ent, 0, sizeof(struct buffer)); \
 		_new_ent->data = ((char *)_new_ent + sizeof(struct buffer)); \
 		_new_ent; \
@@ -209,12 +199,6 @@ void buffer_list_append_from_that_to_this(struct buffer_list *self,
 		self->nonfull = nonfull->next;
 		nonfull = buffer_list_get_next_for(self, nonfull);
 	}
-}
-
-bool buffer_list_is_empty(const struct buffer_list *self) {
-	return (self->first == NULL || self->first->size == 0);
-	// note: the only time we have a first one with size == 0 is when
-	//  cfgfs_read() uses buffer_list_maybe_unshift_fake_buf()
 }
 
 // -----------------------------------------------------------------------------

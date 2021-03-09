@@ -52,7 +52,7 @@ static void linehandler(char *line) {
 
 	if (line != NULL) {
 		if (*line != '\0') {
-			lua_State *L = lua_get_state();
+			lua_State *L = lua_get_state("cli_input");
 			if (L == NULL) goto lua_done;
 			 lua_getglobal(L, "_cli_input");
 			  lua_pushstring(L, line);
@@ -157,7 +157,7 @@ out:
 	 rl_callback_handler_remove();
 	cli_unlock_output_norestore();
 
-	// this saves any modified history items
+	// save any modified history items
 	write_history(HISTORY_FILE);
 
 	// tell main to quit if it isn't already

@@ -370,7 +370,7 @@ end)
 
 -- cvars
 
-cvar.sensitivity = 2.6
+cvar.sensitivity = 2.6*2 -- https://github.com/ValveSoftware/Source-1-Games/issues/1834
 
 cvar.snd_musicvolume = 0
 cvar.voice_scale = 0.3
@@ -506,7 +506,7 @@ bind('pgup',                            '')
 
 bind('tab',                             '+showscores;cl_showfps 2;cl_showpos 1',
                                         '-showscores;cl_showfps 0;cl_showpos 0')
-bind('q',                               'kob')
+bind('q',                               function (...) return cmd.kob(...) end)
 bind('w',                               nullcancel_pair('w', 's', 'forward', 'back'))
 bind('e',                               'voicemenu 0 0')
 cmd.bind('r',                           '+reload')
@@ -623,10 +623,25 @@ bind('kp_del',                          '') -- ,
 add_listener('attention', function (active)
 	local exes = 'chrome'
 	if active then
-		os.execute('exec killall -q -STOP '..exes)
+		sh('exec killall -q -STOP '..exes)
 	else
-		os.execute('exec killall -q -CONT '..exes)
+		sh('exec killall -q -CONT '..exes)
 	end
+end)
+
+spinoff(function ()
+	wait_for_event('classchange')
+
+	-- set threads' cpu affinities now that we're pretty sure they've all
+	--  been created
+	-- putting MatQueue0 and the mesa threads on the same core makes the
+	--  mastercomfig benchmark demo run 5% faster (100fps -> 105)
+	sh([[
+	exec >/dev/null 2>&1
+	threads $(pidof hl2_linux) | awk '{print $2}' | xargs -rn1 taskset -c -p 0,1
+	threads $(pidof hl2_linux) | awk '$3=="MatQueue0"||/:/{print $2}' | xargs -rn1 taskset -c -p 2,3
+	threads $(pidof cfgfs)     | awk '{print $2}' | xargs -rn1 taskset -c -p 0,1
+	]])
 end)
 
 --------------------------------------------------------------------------------
@@ -637,7 +652,7 @@ oldcnt = global('oldcnt', -1)
 listupdate = function ()
 	bad_steamids = {}
 	local cnt = 0
-	for line in sh('timeout 5 sh misc/get_bad_steamids.sh'):lines() do
+	for line in sh('timeout 10 sh misc/get_bad_steamids.sh'):lines() do
 		local steamid, lists = assert(line:match('^(%S+)%s+(%S+)$'))
 		bad_steamids[steamid] = lists
 		cnt = cnt+1
@@ -819,13 +834,49 @@ local get_playerlist = function ()
 	return players
 end
 
-printableish = function (s)
-	if not s:find('[\x20-\x7e]') then
-		return '(unprintable)'
-	else
-		return s
+local escape_str = function (s)
+	local t = {}
+	local i = 1
+	while i <= #s do
+		-- 5c = backslash
+		local m = s:match('^[\x5d-\x7e\x20-\x5b]+', i)
+		if m then
+			t[#t+1] = m
+			i = i+#m
+			goto next
+		end
+		local m = s:match('^\\+', i)
+		if m then
+			t[#t+1] = m..m
+			i = i+#m
+			goto next
+		end
+		local m = s:match('^'..utf8.charpattern, i)
+		if m then
+			if utf8.len(m) then
+				local p = utf8.codepoint(m)
+				if p <= 0xffff
+				then t[#t+1] = string.format('\\u{%04x}', p)
+				else t[#t+1] = string.format('\\U{%06x}', p)
+				end
+			else
+				for i = 1, #m do
+					t[#t+1] = string.format('\\x%02x', m:byte(i))
+				end
+			end
+			i = i+#m
+			goto next
+		end
+		if s:find('^\t', i) then t[#t+1]='\\t' i=i+1 goto next end
+		if s:find('^\r', i) then t[#t+1]='\\r' i=i+1 goto next end
+		if s:find('^\n', i) then t[#t+1]='\\n' i=i+1 goto next end
+		t[#t+1] = string.format('\\x%02x', s:byte(i))
+		i = i+1
+		::next::
 	end
+	return table.concat(t, '')
 end
+printableish = escape_str
 
 positive_vocalization = function () cmd.voicemenu(2, 4) end
 negative_vocalization = function () cmd.voicemenu(2, 5) end
@@ -851,7 +902,7 @@ local check_namestealer = function (t, playerlist)
 		end
 	end
 
-	if name:find('.\xe0\xb9\x8a$') then -- \u0e4a
+	if name:find('.\u{0e4a}$') then
 		return true
 	end
 
@@ -888,7 +939,9 @@ local check_bot = function (t, players, grasp_at_straws)
 	return reasons
 end
 
-cmd.kob = function ()
+cmd.kob = function (_, keyname)
+	local key_press_time = (keyname and rawget(is_pressed, keyname))
+
 	local players = get_playerlist()
 	local myname = cvar.name
 	local myteam = nil
@@ -944,10 +997,23 @@ cmd.kob = function ()
 		return
 	end
 
-	for i, t in ipairs(our_bots) do
-		cmdv.callvote('kick', string.format('%d cheating', t.userid))
-		if i < #our_bots then
+	while true do
+		for i, t in ipairs(our_bots) do
+			cmd.callvote('kick', string.format('%d cheating', t.userid))
+			if i < #our_bots then
+				wait(100)
+			end
+		end
+		if key_press_time then
+			if is_pressed[keyname] ~= key_press_time then
+				break
+			end
 			wait(100)
+			if is_pressed[keyname] ~= key_press_time then
+				break
+			end
+		else
+			break
 		end
 	end
 end
@@ -956,7 +1022,7 @@ local shellquote = function (s)
 	return '\'' .. s:gsub('\'', '\'\\\'\'') .. '\''
 end
 local get_json = function (url)
-	local s = sh('timeout 2 curl -s ' .. shellquote(url)):read('a')
+	local s = sh('timeout 5 curl -s ' .. shellquote(url)):read('a')
 	local json = require 'json' -- https://github.com/rxi/json.lua
 	local ok, rv = pcall(json.decode, s)
 	return ok and rv or nil

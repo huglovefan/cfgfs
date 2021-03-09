@@ -13,14 +13,6 @@
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
-#define assume(v) \
-	({ \
-		__auto_type _assume_v = (v); \
-		D assert(_assume_v, "bad assume()"); \
-		if (!_assume_v) __builtin_unreachable(); \
-		_assume_v; \
-	})
-
 // https://en.cppreference.com/w/cpp/utility/exchange
 #define exchange(var, newval) \
 	({ \
@@ -37,12 +29,15 @@
 		prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
 	})
 
+// get milliseconds since the start of the program
 #define mono_ms() \
 	({ \
 		struct timespec _mono_ms_ts; \
 		clock_gettime(CLOCK_MONOTONIC, &_mono_ms_ts); \
 		ts2ms(_mono_ms_ts); \
 	})
+
+// get milliseconds from a virtual wall clock
 #define wall_ms() \
 	({ \
 		struct timespec _wall_ms_ts; \
@@ -61,57 +56,63 @@
 
 // -----------------------------------------------------------------------------
 
-#define unreachable_weak() \
+// heavy duty optimization hints
+// danger zone: these can cause wrong code to be generated if used incorrectly
+// for example, a switch statement can execute a random branch for an unhandled
+//  value if the default case was marked as unreachable using unsafe_unreachable()
+// the conditions are checked when cfgfs is built with D=1 but not otherwise
+
+// optimizer may assume that this condition is always true
+// do not use
+#define unsafe_optimization_hint(v) \
 	({ \
-		D cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Unreachable code hit\n", __func__); \
+		__auto_type _assume_v = (v); \
+		if (unlikely(!_assume_v)) { \
+			D cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Wrong unsafe_optimization_hint(): %s\n", __func__, #v); \
+			__builtin_unreachable(); \
+		} \
+		_assume_v; \
+	})
+
+// optimizer may assume that this code path is never reached
+// do not use
+#define unsafe_unreachable() \
+	({ \
+		D cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Wrong unsafe_unreachable()\n", __func__); \
 		__builtin_unreachable(); \
 	})
 
 // -----------------------------------------------------------------------------
 
-extern void assert_known_failed(void);
-
-#define assert_known(cond) \
+// assert that the compiler knows "cond" will always evaluate to true
+// if it does, then the call to the nonexistent function will be optimized away
+//  and won't cause a link error
+// note: using weird compiler flags like -fexceptions can make this always fail
+#define assert_compiler_knows(cond) \
 	({ \
-		if (!(cond)) assert_known_failed(); \
+		if (!(cond)) ERROR_this_call_to_AssertCompilerKnows_could_not_be_proven_true(); \
 	})
+
 __attribute__((noreturn))
-
-extern void unreachable_strong_failed(void);
-
-#define unreachable_strong() unreachable_strong_failed()
+extern void ERROR_this_call_to_AssertCompilerKnows_could_not_be_proven_true(void);
 
 // -----------------------------------------------------------------------------
 
-// prevent code from unnaturally jumping out of a block (return, goto)
+// assert that the compiler knows this line of code will never be executed
+// uses the same trick as assert_compiler_knows() above
+#define compiler_enforced_unreachable() \
+	ERROR_this_call_to_CompilerEnforcedUnreachable_may_be_reachable()
 
-extern void nojump_violated(void);
-
-static inline void check_nojump(int *v) {
-	if (*v != 1) nojump_violated();
-}
-
-#define NOJUMP \
-	for ( \
-	int nojump_##__COUNTER__ __attribute__((cleanup(check_nojump))) = 0; \
-	nojump_##__COUNTER__ == 0; \
-	++nojump_##__COUNTER__ \
-	)
+__attribute__((noreturn))
+extern void ERROR_this_call_to_CompilerEnforcedUnreachable_may_be_reachable(void);
 
 // -----------------------------------------------------------------------------
 
-// a call to one_true_entry() must be followed by one_true_exit() before return
-// if a code path returns without calling one_true_exit(), a link error is
-//  generated
-// if exceptions are enabled, calling any external function that could
-//  potentially throw is also an error
-// intended for enforcing that a function only has one exit point
-
-extern void missing_call_to_one_true_exit(void);
-
-static inline void check_otx(const int *v) {
-	if (*v != 1) missing_call_to_one_true_exit();
-}
+// tool for assuring control flow
+// if a function uses one_true_entry(), then from that point on, all paths out
+//  of the function must pass through a one_true_exit()
+// this way you can be sure there are no hidden returns or unexpected jumps
+//  hiding in that code
 
 #define one_true_entry() \
 	__attribute__((cleanup(check_otx))) \
@@ -119,6 +120,18 @@ static inline void check_otx(const int *v) {
 
 #define one_true_exit() \
 	otx++
+
+__attribute__((noreturn))
+extern void missing_call_to_one_true_exit(void);
+
+static inline void check_otx(const int *v) {
+	if (*v != 1) missing_call_to_one_true_exit();
+}
+
+// -----------------------------------------------------------------------------
+
+#define assert_unreachable() \
+	cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Unreachable code hit\n", __func__)
 
 // -----------------------------------------------------------------------------
 
@@ -138,7 +151,7 @@ void cfgfs_assert_fail(const char *fmt, ...);
 	({ \
 		if (unlikely(!(v))) { \
 			cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __func__, (s)); \
-			unreachable_strong(); \
+			compiler_enforced_unreachable(); \
 		} \
 	})
 
@@ -151,8 +164,8 @@ void cfgfs_assert_fail(const char *fmt, ...);
 #ifdef NDEBUG
  #undef assert1
  #undef assert2
- #define assert1(x) assume(x)
- #define assert2(x, s) assume(x)
+ #define assert1(x) unsafe_optimization_hint(x)
+ #define assert2(x, s) unsafe_optimization_hint(x)
 #endif
 
 // -----------------------------------------------------------------------------
@@ -167,7 +180,7 @@ void cfgfs_assert_fail(const char *fmt, ...);
 		if (unlikely(_check_v == -1)) { \
 			perror(what); \
 			orelse; \
-			unreachable_strong(); \
+			compiler_enforced_unreachable(); \
 		} \
 		_check_v; \
 	})
@@ -179,7 +192,7 @@ void cfgfs_assert_fail(const char *fmt, ...);
 		if (unlikely(_check_v != 0)) { \
 			eprintln(what ": %s", strerror(_check_v)); \
 			orelse; \
-			unreachable_strong(); \
+			compiler_enforced_unreachable(); \
 		} \
 	})
 
@@ -189,7 +202,7 @@ void cfgfs_assert_fail(const char *fmt, ...);
 		if (unlikely(_check_v == NULL)) { \
 			perror(what); \
 			orelse; \
-			unreachable_strong(); \
+			compiler_enforced_unreachable(); \
 		} \
 		_check_v; \
 	})

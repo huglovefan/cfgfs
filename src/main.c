@@ -86,13 +86,20 @@ D	assert(*slashdot == '/');
 	}
 	size_t length = (size_t)(p-path);
 
+	// party trick:
+	// if the filename part doesn't contain a dot, we can guess that the
+	//  path is probably meant to be a directory
 	if (unlikely(*slashdot == '/')) {
 		return 0xd;
 	}
-//	if (unlikely(length < strlen("/.cfg"))) {
-//		return -ENOENT;
-//	}
+
+	// not a config? (source won't load configs not ending with .cfg)
 	if (unlikely(!ends_with(path, ".cfg"))) {
+		if (unlikely(length > strlen(MESSAGE_DIR_PREFIX) &&
+		             starts_with(path, MESSAGE_DIR_PREFIX))) {
+			if (type) *type = sft_message;
+			return 0xf;
+		}
 		if (unlikely(equals(path, "/console.log"))) {
 			if (type) *type = sft_console_log;
 			return 0xf;
@@ -101,17 +108,18 @@ D	assert(*slashdot == '/');
 			if (type) *type = sft_control;
 			return 0xf;
 		}
-		if (unlikely(starts_with(path, MESSAGE_DIR_PREFIX))) {
-			if (type) *type = sft_message;
-			return 0xf;
-		}
 		return -ENOENT;
 	}
 
+	// (checked so far: it's a file whose name ends with .cfg)
+
+	// is it in the cfgfs directory?
 	if (likely(starts_with(path, "/cfgfs/"))) {
 		return 0xf;
 	}
 
+	// it's probably a real config
+	// check with the lua function if we should intercept it or not
 	return l_lookup_path(path);
 }
 
@@ -121,7 +129,7 @@ D	assert(*slashdot == '/');
 
 __attribute__((noinline))
 static int l_lookup_path(const char *restrict path) {
-	lua_State *L = lua_get_state();
+	lua_State *L = lua_get_state("lookup_path()");
 	if (unlikely(L == NULL)) return -errno;
 	 lua_getglobal(L, "_lookup_path");
 	  lua_pushstring(L, path+1); // skip "/"
@@ -194,6 +202,14 @@ V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 
 	if (unlikely(offset != 0)) return 0;
 
+	// check that it's not some special file. we only support reading configs here
+	enum special_file_type sft;
+	memcpy(&sft, &fi->fh, sizeof(enum special_file_type));
+	if (unlikely(sft != sft_none)) {
+V		eprintln("cfgfs_read: can't read this type of file!");
+		return -EOPNOTSUPP;
+	}
+
 	if (unlikely(size < reported_cfg_size)) {
 		eprintln("\acfgfs_read: read size too small! expected at least %zu, got only %zu",
 		    reported_cfg_size, size);
@@ -204,7 +220,7 @@ D		abort();
 	// /unmask_next/ must not return buffer contents (can mess up the order)
 	bool silent = starts_with(path, "/cfgfs/unmask_next/");
 
-	lua_State *L = lua_get_state();
+	lua_State *L = lua_get_state("cfgfs_read()");
 	if (unlikely(L == NULL)) {
 		return -errno;
 	}
@@ -220,7 +236,7 @@ D		abort();
 
 	if (likely(!silent)) {
 		struct buffer *ent = buffer_list_grab_first(&buffers);
-D		assert(ent != NULL); // nothing should've removed it
+D		assert(ent != NULL); // should be fakebuf or a real one
 		size_t outsize = buffer_get_size(ent);
 		rv = (int)outsize;
 		if (unlikely(ent != &fakebuf)) {
@@ -248,7 +264,7 @@ static int cfgfs_write_control(const char *data, size_t size);
 #define log_catcher_got_line(p, sz) \
 	({ \
 		if (likely(!lua_locked)) { \
-			if (unlikely(!lua_lock_state())) { \
+			if (unlikely(!lua_lock_state("cfgfs_write()->sft_console_log"))) { \
 				rv = -errno; \
 				goto out; \
 			} \
@@ -324,9 +340,9 @@ D		pthread_mutex_unlock(&logcatcher_lock);
 	case sft_control:
 		return cfgfs_write_control(data, size);
 	case sft_message: {
-		lua_State *L;
 		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
-		if (!(L = lua_get_state())) return -EIO;
+		lua_State *L = lua_get_state("cfgfs_write()->sft_message");
+		if (unlikely(L == NULL)) return -errno;
 		 lua_getglobal(L, "_message");
 		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));
 		   lua_pushlstring(L, data, size);
@@ -337,7 +353,7 @@ D		pthread_mutex_unlock(&logcatcher_lock);
 	case sft_none:
 		return -ENOTSUP;
 	}
-	unreachable_weak();
+	assert_unreachable();
 }
 
 #undef log_catcher_got_line
@@ -348,10 +364,9 @@ static void control_do_line(const char *line, size_t size);
 
 __attribute__((cold))
 __attribute__((noinline))
-static int cfgfs_write_control(const char *data,
-                               size_t size) {
+static int cfgfs_write_control(const char *data, size_t size) {
 	if (size == 8192) return -EMSGSIZE; // might be truncated
-	if (!lua_lock_state()) return -errno;
+	if (!lua_lock_state("cfgfs_write()->sft_control")) return -errno;
 
 	const char *p = data;
 	for (;;) {
@@ -376,13 +391,16 @@ V	eprintln("control_do_line: line=[%.*s]", (int)size, line);
 // ~
 
 static int cfgfs_release(const char *path, struct fuse_file_info *fi) {
+V	eprintln("cfgfs_release: %s", path);
 	enum special_file_type sft;
 	memcpy(&sft, &fi->fh, sizeof(enum special_file_type));
 	switch (sft) {
+	case sft_none:
+		return 0;
 	case sft_message: {
 		lua_State *L;
 		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
-		if (!(L = lua_get_state())) return -EIO;
+		if (!(L = lua_get_state("cfgfs_release()->sft_message"))) return -errno;
 		 lua_getglobal(L, "_message");
 		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));
 		   lua_pushnil(L);
@@ -390,11 +408,11 @@ static int cfgfs_release(const char *path, struct fuse_file_info *fi) {
 		lua_release_state(L);
 		return 0;
 	}
-	case sft_none:
 	case sft_console_log:
 	case sft_control:
 		return 0;
 	}
+	assert_unreachable();
 }
 
 // ~
@@ -416,7 +434,7 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 
 	cfg->direct_io = true;
 
-	lua_State *L = lua_get_state();
+	lua_State *L = lua_get_state("cfgfs_init()");
 	if (L != NULL) {
 		 lua_getglobal(L, "_fire_startup");
 		lua_call(L, 0, 0);

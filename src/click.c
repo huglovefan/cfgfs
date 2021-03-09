@@ -168,7 +168,7 @@ static int l_click(lua_State *L) {
 		do_click();
 		return 0;
 	}
-	unreachable_strong();
+	compiler_enforced_unreachable();
 }
 
 static int l_cancel_click(lua_State *L) {

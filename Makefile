@@ -185,7 +185,7 @@ CPPFLAGS += -I/usr/include/fuse3 -DFUSE_USE_VERSION=35
 ifeq ($(STATIC_LIBFUSE),)
  LDLIBS += -lfuse3
 else
- LDLIBS += /usr/lib64/libfuse3.a
+ LDLIBS += -l:libfuse3.a
 endif
 
 # ------------------------------------------------------------------------------
@@ -193,7 +193,14 @@ endif
 ## make targets
 
 $(EXE): $(OBJS)
-	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+	@set -e;\
+	echo $(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS);\
+	     $(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+
+buildinfo:
+	@objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{if(p=$$0!~/@plt/)fns++;next}/^$$|^Disa/{next}p&&$$1!="int3"{isns++}END{printf("|   fns: %d\n|  isns: %d\n", fns, isns);}'
+	@printf '| crc32: %8x (function names and instructions without their operands)\n' "$$(objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{p=$$0!~/@plt/;print;next}/^$$|^Disa/{next}p{print$$1}' | cksum | cut -d' ' -f1)"
+	@llvm-readelf -S $(EXE) | awk '$$8~/X/{sz+=int("0x"$$6)}END{printf("|  code: %db\n",sz)}'
 
 -include $(DEPS)
 .c.o:
@@ -206,7 +213,7 @@ clean:
 	@$(CFGFS_RM) -f -- $(EXE) $(OBJS) $(DEPS)
 
 watch:
-	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >.cfgfs_reexec;pkill -INT cfgfs||rm .cfgfs_reexec'; do\
+	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >.cfgfs_reexec;pkill -INT cfgfs||rm .cfgfs_reexec;make -s buildinfo'; do\
 		continue;\
 	done
 

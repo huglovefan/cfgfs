@@ -1,14 +1,17 @@
 #include "pipe_io.h"
 
+#include <errno.h>
 #include <poll.h>
 #include <stdarg.h>
-#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
+#include "cli_output.h"
 #include "macros.h"
 
 int rdselect_real(int count, ...) {
-	assume(count >= 1);
-	assume(count <= RDSELECT_MAX_FD);
+	assert(count >= 1 && count <= RDSELECT_MAX_FD);
 	struct pollfd fds[RDSELECT_MAX_FD];
 
 	va_list args;
@@ -37,6 +40,49 @@ D		assert(rv != 0);
 				return i+1;
 			}
 		}
-		unreachable_weak();
+		assert_unreachable();
+	}
+}
+
+// note: this saves and restores errno because it's called from signal handlers
+// (the error handling isnt signal-safe but lets hope it doesn't fail)
+void writech_real(int fd, char c) {
+	int olderrno = errno;
+	ssize_t rv;
+again:
+	rv = write(fd, &c, 1);
+	switch (rv) {
+	case -1:
+		if (likely(errno == EINTR)) goto again;
+		perror("writech");
+		abort();
+	case 0:
+		eprintln("writech: write error");
+		abort();
+	case 1:
+		errno = olderrno;
+		return;
+	default:
+		assert_unreachable();
+	}
+}
+
+char readch_real(int fd) {
+	char c;
+	ssize_t rv;
+again:
+	rv = read(fd, &c, 1);
+	switch (rv) {
+	case -1:
+		if (likely(errno == EINTR)) goto again;
+		perror("readch");
+		abort();
+	case 0:
+		eprintln("readch: read error");
+		abort();
+	case 1:
+		return c;
+	default:
+		assert_unreachable();
 	}
 }

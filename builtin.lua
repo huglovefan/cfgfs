@@ -155,10 +155,6 @@ end
 
 -- crappy event loop thing
 
--- ev_loop_co is used for calling functions in a coroutine context without
---  creating a new coroutine each time for that
--- if the function yields, ev_loop_co gets replaced with a new coroutine
-
 -- list of timeout objects with properties:
 --   co: the coroutine
 --   target: timestamp of when it should be resumed
@@ -186,6 +182,9 @@ local ev_return_handlers = setmetatable({}, {__mode = 'k'})
 local sym_ready = {}
 local sym_wait = {}
 
+-- ev_loop_co: used for calling functions in a coroutine context without
+--  creating a new coroutine each time for that
+-- if the function yields, ev_loop_co gets replaced with a new coroutine
 local ev_loop_co
 local ev_loop_fn
 
@@ -370,10 +369,10 @@ local ev_do_timeouts = function ()
 	-- do all timeouts that are both
 	-- * expired (now >= t.target)
 	-- * added before this call to ev_do_timeouts() (t.gen <= cur_gen)
-	-- note: the loop is restarted after each timeout because they can
+	-- note: the loop is restarted after each timeout because they can also
 	--  modify the list (adding and removing entries from any position)
 	-- the generation counter exists so this can be done without ending up
-	--  in an infinite loop calling newly added timeouts
+	--  in an infinite loop calling new timeouts that are already expired
 ::again::
 	local now = _ms()
 	for i, t in ipairs(ev_timeouts) do
@@ -390,6 +389,7 @@ spinoff = ev_call
 local resume_cos = {}
 local resume_id = 0
 
+-- i forgot what was the point of this
 reexec = function ()
 	local id = tostring(resume_id)
 	resume_id = resume_id+1
@@ -1043,8 +1043,9 @@ do
 local is_active = false
 
 _attention = function (new_is_active)
-	fire_event('attention', new_is_active)
 	is_active = new_is_active
+	fire_event('attention', new_is_active)
+	collectgarbage()
 end
 
 is_game_window_active = function ()
@@ -1146,6 +1147,8 @@ _cli_input = function (line)
 		println('note: commands won\'t be executed until the game window is activated')
 		attention_message_shown = true
 	end
+
+	collectgarbage()
 
 end
 
@@ -1664,22 +1667,22 @@ end
 
 -- local click_key_bound: declared near bind() where it's set
 
+-- this is a risky operation. it works most of the time but has a chance of freezing the game
+-- resetting con_logfile closes the file inside the game, and it's re-opened on the next console write
+-- sometimes something goes wrong and the game deadlocks instead
+-- note: the log is normally inited from launch options, this alias exists to do it on cfgfs startup if it had crashed
+local reinit_log = function ()
+	cvar.con_logfile = ''
+	cvar.con_logfile = 'console.log'
+	cmd.echo('cfgfs: log file has been reinited')
+end
+
 local before_script_exec = function ()
 	click_key_bound = false
-end
-local after_script_exec = function ()
+
 	cmd.cfgfs_click = 'exec cfgfs/click'
 	cmd.cfgfs_init = 'exec cfgfs/init'
-
-	-- this is a risky operation. it works most of the time but has a chance of freezing the game
-	-- resetting con_logfile closes the file inside the game, and it's re-opened on the next console write
-	-- sometimes something goes wrong and the game deadlocks instead
-	-- note: the log is normally inited from launch options, this alias exists to do it on cfgfs startup if it had crashed
-	cmd.cfgfs_init_log = function ()
-		cvar.con_logfile = ''
-		cvar.con_logfile = 'console.log'
-		cmd.echo('cfgfs: log file has been reinited')
-	end
+	cmd.cfgfs_init_log = reinit_log
 
 	cmd.cfgfs_license = 'exec cfgfs/license'
 	cmd.cfgfs_restart = function ()
@@ -1689,6 +1692,8 @@ local after_script_exec = function ()
 	end
 	cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
 	cmd.release_all_keys = assert(release_all_keys)
+end
+local after_script_exec = function ()
 	if not click_key_bound then
 		eprintln('\awarning: no function key bound to "cfgfs_click" found!')
 		eprintln(' why: one of the f1-f12 keys must be bound to "cfgfs_click" for delayed command execution to work')
@@ -1721,8 +1726,6 @@ _reload_1 = function ()
 
 	println('script.lua reloaded successfully')
 
-	collectgarbage()
-
 	return true
 end
 
@@ -1738,13 +1741,16 @@ _reload_2 = function (ok)
 		end
 	end
 
-	return fire_event('reload')
+	fire_event('reload')
+
+	collectgarbage()
 end
 
 _fire_startup = function ()
-	-- probably crashed. need to init manually and reopen the log file
+	-- probably crashed. need to reopen the log file and spit out init.cfg
 	if os.getenv('CFGFS_RESTARTED') then
-		cfg('cfgfs_init_log; cfgfs_init')
+		reinit_log()
+		_init()
 	end
 	return fire_event('startup')
 end

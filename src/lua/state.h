@@ -12,11 +12,15 @@ typedef struct lua_State lua_State;
                            lua_type(L, GET_CONTENTS_IDX)        == LUA_TFUNCTION && \
                            lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION)
 
-lua_State *lua_get_state(void);
-void lua_release_state(lua_State *);
-bool lua_lock_state(void);
-void lua_unlock_state(void);
+
+lua_State *lua_get_state(const char *who);
 lua_State *lua_get_state_already_locked(void);
+
+void lua_release_state(lua_State *);
+
+bool lua_lock_state(const char *who);
+void lua_unlock_state(void);
+
 void lua_unlock_state_no_click(void);
 void lua_unlock_state_and_click(void);
 

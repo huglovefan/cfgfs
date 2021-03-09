@@ -205,8 +205,8 @@ static int l_eprint(lua_State *L) {
 }
 
 // multiple argument versions
-// only does strings because converting other types may throw (which is
-//  unacceptable while the lock is held)
+// only supports strings because converting other types may throw
+// (can't allow that while holding the cli_output lock)
 
 static int l_printv(lua_State *L) {
 	cli_lock_output();
@@ -241,13 +241,6 @@ typeerr:
 	fputc_unlocked('\n', stderr);
 	cli_unlock_output();
 	return luaL_error(L, "eprintv: argument %d is not a string", i);
-}
-
-// -----------------------------------------------------------------------------
-
-int lua_do_nothing(void *L) {
-	(void)L;
-	return 0;
 }
 
 // -----------------------------------------------------------------------------
