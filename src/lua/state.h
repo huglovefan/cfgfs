@@ -11,7 +11,7 @@ typedef struct lua_State lua_State;
 #define stack_is_clean(L) (lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX && \
                            lua_type(L, GET_CONTENTS_IDX)        == LUA_TFUNCTION && \
                            lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION)
-
+#define stack_is_clean_quick(L) (lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX)
 
 lua_State *lua_get_state(const char *who);
 lua_State *lua_get_state_already_locked(void);

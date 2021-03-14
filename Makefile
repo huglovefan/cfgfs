@@ -32,6 +32,7 @@ OBJS = \
        src/cli_input.o \
        src/keys.o \
        src/lua/init.o \
+       src/error.o \
 
 DEPS = $(OBJS:.o=.d)
 SRCS = $(OBJS:.o=.c)
@@ -50,6 +51,7 @@ CFLAGS += \
           -Werror=fortify-source \
           -Werror=implicit-function-declaration \
           -Werror=incompatible-function-pointer-types \
+          -Werror=incompatible-pointer-types \
           -Werror=int-conversion \
           -Werror=return-type \
           -Werror=sometimes-uninitialized \
@@ -94,7 +96,7 @@ endif
 # verbosity/debug enablings
 
 ifeq ($(VV),1)
- CPPFLAGS += -DVV="if(1)"
+ CPPFLAGS += -DVV="if(1)" -DWITH_VV
  # enable D and V if they're unset
  ifeq ($(D),)
   D := 1
@@ -105,7 +107,7 @@ ifeq ($(VV),1)
 endif
 
 ifeq ($(V),1)
- CPPFLAGS += -DV="if(1)"
+ CPPFLAGS += -DV="if(1)" -DWITH_V
  # enable D if it's unset
  ifeq ($(D),)
   D := 1
@@ -113,7 +115,7 @@ ifeq ($(V),1)
 endif
 
 ifeq ($(D),1)
- CPPFLAGS += -DD="if(1)"
+ CPPFLAGS += -DD="if(1)" -DWITH_D
 endif
 
 ifeq ($(A),1)

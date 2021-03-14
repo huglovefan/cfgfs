@@ -673,63 +673,91 @@ end
 --------------------------------------------------------------------------------
 
 add_listener = function (name, cb)
-	if type(name) == 'table' then
+	if type(name) == 'string' then
+		local t = events[name]
+		if t then
+			table.insert(t, cb)
+			t[cb] = true
+		else
+			events[name] = {[1] = cb, [cb] = true}
+		end
+	elseif type(name) == 'table' then
 		for _, name in ipairs(name) do
 			add_listener(name, cb)
 		end
-		return
-	end
-	local t = events[name]
-	if t then
-		table.insert(t, cb)
-		t[cb] = true
 	else
-		events[name] = {[1] = cb, [cb] = true}
+		return error('add_listener: name must be a string or list of strings', 2)
 	end
 end
 
 remove_listener = function (name, cb)
-	if type(name) == 'table' then
+	if type(name) == 'string' then
+		local t = events[name]
+		if t and t[cb] then
+			if #t > 1 then
+				for i = 1, #t do
+					if t[i] == cb then
+						table.remove(t, i)
+						t[cb] = nil
+						break
+					end
+				end
+			else
+				assert(#t == 1)
+				t[cb] = nil
+				events[name] = nil
+			end
+		end
+	elseif type(name) == 'table' then
 		for _, name in ipairs(name) do
 			remove_listener(name, cb)
 		end
-		return
-	end
-	local t = events[name]
-	if t and t[cb] then
-		if #t > 1 then
-			for i = 1, #t do
-				if t[i] == cb then
-					table.remove(t, i)
-					t[cb] = nil
-					break
-				end
-			end
-		else
-			assert(#t == 1)
-			t[cb] = nil
-			events[name] = nil
-		end
+	else
+		return error('remove_listener: name must be a string or list of strings', 2)
 	end
 end
 
 local last_event_name = nil
+local event_was_cancelled = false
+local may_cancel_event = false
 
 fire_event = function (name, ...)
+	local rv = 0
+	local cancelled = false
 	local t = events[name]
 	if t then
 		local copy = {table.unpack(t)}
 		for _, cb in ipairs(copy) do
 			if t[cb] then
 				last_event_name = name
+				may_cancel_event = true
+
 				if type(cb) == 'function' then
 					ev_call(cb, ...)
 				elseif type(cb) == 'thread' then
 					ev_resume(cb, ...)
 				end
+
+				rv = rv+1
+				may_cancel_event = false
+
+				if event_was_cancelled then
+					cancelled = true
+					event_was_cancelled = false
+					break
+				end
 			end
 		end
 	end
+	if cancelled then
+		rv = -rv
+	end
+	return rv
+end
+
+cancel_event = function ()
+	assert(may_cancel_event, 'tried to cancel_event() outside an event handler')
+	event_was_cancelled = true
 end
 
 wait_for_event = function (name, timeout_opt)
@@ -759,21 +787,6 @@ end
 
 --------------------------------------------------------------------------------
 
-local may_cancel_bind = false
-local did_cancel_bind = false
-cancel_bind = function ()
-	if may_cancel_bind then
-		if not did_cancel_bind then
-			did_cancel_bind = true
-			return true
-		else
-			return false
-		end
-	else
-		return error('cancel_bind called outside a key event or after yielding inside one', 2)
-	end
-end
-
 _get_contents = function (path)
 	-- keybind?
 	local t = bindfilenames[path]
@@ -785,12 +798,8 @@ _get_contents = function (path)
 
 			local evname = '+'..name
 			if events[evname] then
-				may_cancel_bind = true
-				fire_event(evname, true, name)
-				may_cancel_bind = false
-				if did_cancel_bind then
-					did_cancel_bind = false
-					name = ''
+				if fire_event(evname, true, name) < 0 then
+					return
 				end
 			end
 
@@ -811,12 +820,8 @@ _get_contents = function (path)
 
 			local evname = '-'..name
 			if events[evname] then
-				may_cancel_bind = true
-				fire_event(evname, false, name)
-				may_cancel_bind = false
-				if did_cancel_bind then
-					did_cancel_bind = false
-					name = ''
+				if fire_event(evname, false, name) < 0 then
+					return
 				end
 			end
 
@@ -837,12 +842,8 @@ _get_contents = function (path)
 
 				local evname = '-'..name
 				if events[evname] then
-					may_cancel_bind = true
-					fire_event(evname, false, name)
-					may_cancel_bind = false
-					if did_cancel_bind then
-						did_cancel_bind = false
-						name = ''
+					if fire_event(evname, false, name) < 0 then
+						return
 					end
 				end
 
@@ -859,12 +860,8 @@ _get_contents = function (path)
 
 				local evname = '+'..name
 				if events[evname] then
-					may_cancel_bind = true
-					fire_event(evname, true, name)
-					may_cancel_bind = false
-					if did_cancel_bind then
-						did_cancel_bind = false
-						name = ''
+					if fire_event(evname, true, name) < 0 then
+						return
 					end
 				end
 
@@ -885,11 +882,7 @@ _get_contents = function (path)
 				local evname = '+'..name
 				local name = name
 				if events[evname] then
-					may_cancel_bind = true
-					fire_event(evname, true, name)
-					may_cancel_bind = false
-					if did_cancel_bind then
-						did_cancel_bind = false
+					if fire_event(evname, true, name) < 0 then
 						name = ''
 					end
 				end
@@ -909,11 +902,7 @@ _get_contents = function (path)
 				local evname = '-'..name
 				local name = name
 				if events[evname] then
-					may_cancel_bind = true
-					fire_event(evname, false, name)
-					may_cancel_bind = false
-					if did_cancel_bind then
-						did_cancel_bind = false
+					if fire_event(evname, false, name) < 0 then
 						name = ''
 					end
 				end
@@ -1181,6 +1170,7 @@ local team2color = {
 local team2opposite = {
 	['red'] = 'blu',
 	['blu'] = 'red',
+	['unknown'] = 'unknown',
 }
 
 team_known = function (name, team)
@@ -1194,18 +1184,24 @@ own_name_known = function (name)
 	myname = name
 end
 
+local is_team_known = function (n)
+	return (not not name2team[n]) and ('unknown' ~= name2team[n])
+end
+local get_real_team = function (n)
+	return (is_team_known(n)) and name2team[n] or nil
+end
 local register_kill = function (n1, n2)
-	if (not not name2team[n1]) == (not not name2team[n2]) then
+	if is_team_known(n1) == is_team_known(n2) then
 		-- both either known or not known -> nothing to do
-		if name2team[n1] and (name2team[n1] == name2team[n2]) then
-			-- both are on the same team, probably got confused somehow
+		if get_real_team(n1) and (get_real_team(n1) == get_real_team(n2)) then
+			-- both are on the same team, probably got confused somewhere
 			name2team[n1] = nil
 			name2team[n2] = nil
 			return
 		end
 		return
 	end
-	if name2team[n1] then
+	if get_real_team(n1) then
 		name2team[n2] = team2opposite[name2team[n1]]
 	else
 		name2team[n1] = team2opposite[name2team[n2]]
@@ -1227,172 +1223,344 @@ local colorize_team = function (name)
 	    team2color[name2team[name] or 'unknown'],
 	    name)
 end
+local colorize_by_team_of = function (name, text)
+	return string.format('\27[%sm%s\27[0m',
+	    team2color[name2team[name] or 'unknown'],
+	    text)
+end
+local colorize_by_opposite_of = function (name, text)
+	return string.format('\27[%sm%s\27[0m',
+	    team2color[team2opposite[name2team[name] or 'unknown']],
+	    text)
+end
+local colorize_by_team = function (team, text)
+	return string.format('\27[%sm%s\27[0m',
+	    team2color[team or 'unknown'],
+	    text)
+end
 
-_game_console_output = function (line)
-	-- detect some useless error messages
-	local spam = false
-	if #line >= 19 then
+local split_known_names = function (s, sep, names)
+	local found_names = {}
+
+	local parts = {}
+	local i = 1
+	while i <= #s do
+		local stp, edp = s:find(sep, i, true)
+		if stp then
+			table.insert(parts, s:sub(i, stp-1))
+			i = edp+1
+		else
+			table.insert(parts, s:sub(i))
+			break
+		end
+	end
+
+::again::
+	if #parts > 0 then
+		for i = #parts, 1, -1 do
+			local n = table.concat(parts, sep, 1, i)
+			if (names[n] and not found_names[n]) or i == 1 then
+				table.insert(found_names, n)
+				found_names[n] = true
+				for _ = 1, i do
+					table.remove(parts, 1)
+				end
+				goto again
+			end
+			-- ^ "or i == 1": just use the first part if there's no known name
+			-- this isn't perfect but it may be good enough
+		end
+		error('unreachable')
+	end
+
+	return found_names
+end
+
+local is_spam = function (line)
+	if #line >= 18 then
 		local c = line:sub(1, 1)
-		if c == '\n' and #line >= 57 and line:find('^\n ##### CTexture::LoadTextureBitsFromFile couldn\'t find ') then goto match end
-		if c == '*' and #line >= 41 and line:find('^%*%*%* Invalid sample rate %([0-9]+%) for sound \'.*\'%.$') then goto match end
-		if c == '-' and #line >= 27 and line:find('^%-%-%- Missing Vgui material ') then goto match end
+		if c == '\n' and #line >= 56 and line:find('^\n ##### CTexture::LoadTextureBitsFromFile couldn\'t find .*$') then goto match end
+		if c == '*' and #line >= 41 and line:find('^%*%*%* Invalid sample rate %(%-?[0-9]+%) for sound \'.*\'%.$') then goto match end
+		if c == '-' and #line >= 26 and line:find('^%-%-%- Missing Vgui material .*$') then goto match end
 		if c == 'A' and #line >= 48 and line:find('^Attemped to precache unknown particle system ".*"!$') then goto match end
+		if c == 'A' and #line >= 65 and line:find('^Attempt to set particle collection .* to invalid orientation matrix$') then goto match end
 		if c == 'C' and #line >= 23 and line:find('^Could not find table ".*"$') then goto match end
-		if c == 'C' and #line >= 44 and line:find('^Cannot update control point [0-9]+ for effect \'.*\'%.$') then goto match end
-		if c == 'C' and #line >= 99 and line:find('^Convar .* has conflicting FCVAR_CHEAT flags %(child: FCVAR_CHEAT, parent: no FCVAR_CHEAT, parent wins%)$') then goto match end
+		if c == 'C' and #line >= 44 and line:find('^Cannot update control point %-?[0-9]+ for effect \'.*\'%.$') then goto match end
+		if c == 'C' and #line >= 74 and line:find('^Convar .* has conflicting FCVAR_CHEAT flags %(child: .*, parent: .*, parent wins%)$') then goto match end
 		if c == 'E' and #line >= 34 and line:find('^EmitSound: pitch out of bounds = %-?[0-9]+$') then goto match end
 		if c == 'E' and #line >= 41 and line:find('^Error: Material ".*" uses unknown shader ".*"$') then goto match end
+		if c == 'E' and #line >= 51 and line:find('^Error: Material ".*" : proxy ".*" unable to initialize!$') then goto match end
 		if c == 'E' and #line >= 54 and line:find('^Error! Variable ".*" is multiply defined in material ".*"!$') then goto match end
 		if c == 'F' and #line >= 37 and line:find('^Failed to create decoder for MP3 %[ .* %]$') then goto match end
-		if c == 'F' and #line >= 72 and line:find('^For FCVAR_REPLICATED, ConVar must be defined in client and game .dlls %(.*%)$') then goto match end
-		if c == 'F' and #line >= 102 and line:find('^Failed to find attachment point specified for .* event%. Trying to spawn effect \'.*\' on attachment named \'.*\'$') then goto match end
+		if c == 'F' and #line >= 72 and line:find('^For FCVAR_REPLICATED, ConVar must be defined in client and game %.dlls %(.*%)$') then goto match end
+		if c == 'F' and #line >= 130 and line:find('^Failed to find attachment point specified for AE_CL_CREATE_PARTICLE_EFFECT event%. Trying to spawn effect \'.*\' on attachment named \'.*\'$') then goto match end
+		if c == 'M' and #line >= 25 and line:find('^Missing RecvProp for .* %- .*/.*$') then goto match end
 		if c == 'M' and #line >= 65 and line:find('^MP3 initialized with no sound cache, this may cause janking%. %[ .* %]$') then goto match end
 		if c == 'M' and #line >= 68 and line:find('^Model \'.*\' doesn\'t have attachment \'.*\' to attach particle system \'.*\' to%.$') then goto match end
 		if c == 'N' and #line >= 35 and line:find('^No such variable ".*" for material ".*"$') then goto match end
-		if c == 'P' and #line >= 40 and line:find('^Parent cvar in server.dll not allowed %(.*%)$') then goto match end
+		if c == 'P' and #line >= 40 and line:find('^Parent cvar in server%.dll not allowed %(.*%)$') then goto match end
 		if c == 'R' and #line >= 78 and line:find('^Requesting texture value from var ".*" which is not a texture value %(material: .*%)$') then goto match end
-		if c == 'S' and #line >= 36 and line:find('^Shutdown function [A-Za-z0-9_]+%(%) not in list!!!$') then goto match end
-		if c == 'S' and #line >= 49 and line:find('^SetupBones: invalid bone array size %([0-9]+ %- needs [0-9]+%)$') then goto match end
-		if c == 'U' and #line >= 19 and line:find('^Unable to remove .+!$') then goto match end
-		if c == 'U' and #line >= 55 and line:find('^Unable to bind a key for command ".*" after [0-9]+ attempt%(s%)%.$') then goto match end
-		if c == 'm' and #line >= 42 and line:find('^m_face%->glyph%->bitmap%.width is [0-9]+ for ch:[0-9]+ ') then goto match end
+		if c == 'S' and #line >= 33 and line:find('^Shutdown function .* not in list!!!$') then goto match end
+		if c == 'S' and #line >= 49 and line:find('^SetupBones: invalid bone array size %(%-?[0-9]+ %- needs %-?[0-9]+%)$') then goto match end
+		if c == 'S' and #line >= 53 and line:find('^SOLID_VPHYSICS static prop with no vphysics model! %(.*%)$') then goto match end
+		if c == 'U' and #line >= 18 and line:find('^Unable to remove .*!$') then goto match end
+		if c == 'U' and #line >= 55 and line:find('^Unable to bind a key for command ".*" after %-?[0-9]+ attempt%(s%)%.$') then goto match end
+		if c == 'm' and #line >= 42 and line:find('^m_face%->glyph%->bitmap%.width is 0 for ch:%-?[0-9]+ .*$') then goto match end
 		if line == 'Unknown command "dimmer_clicked"' then goto match end
+		if line == 'hit surface has no samples' then goto match end
 		goto nomatch
 		::match::
-		spam = true
-		::nomatch::
+		return true
 	end
+	::nomatch::
+	return false
+end
 
-	-- print the line to the terminal
-	-- color codes: /usr/share/doc/xterm-*/ctlseqs.txt (ctrl+f "Character Attributes")
-	if not spam then
-		-- copy the line so we can modify it (and write the original to the log)
-		local line = line
+local bright = function (s) return string.format('\27[34;38;2;251;236;203m%s\27[0m', s) end
 
-		-- colorize color codes so the \7 doesn't cause the terminal to blink
-		-- line="\7FFD700[RTD]\1 Rolled \00732CD32Lucky Sandvich\1."
-		if line:byte(1) == 7 then
-			--line = line:gsub('\0[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
-			-- ^ where did this come from? i thought it couldn't print null bytes
-			line = line:gsub('\7([0-9A-F][0-9A-F])([0-9A-F][0-9A-F])([0-9A-F][0-9A-F])([^\1]*)\1', function (r, g, b, s)
-				r, g, b = tonumber('0x'..r), tonumber('0x'..g), tonumber('0x'..b)
-				return string.format('\27[38;2;%d;%d;%dm%s\27[0m', r, g, b, s)
-			end)
-		else
-			-- more colorizing trash
+local colorize_game_message = function (line)
+	-- chat message
+	local name, message = line:match('^(.+) :  (.+)$')
+	if name then
+		local pre = ''
 
-			local bright = function (s) return string.format('\27[34;38;2;251;236;203m%s\27[0m', s) end
-			do
-
-			-- kill (non-crit)
-			local killer, target, weapon = line:match('^(.+) killed (.+) with (.+)%.$')
-			if killer then
-				register_kill(killer, target)
-				line = string.format('%s killed %s with %s.',
-				    colorize_team(killer),
-				    colorize_team(target),
-				    bright(weapon))
-				goto matched
-			end
-			-- kill (crit)
-			local killer, target, weapon = line:match('^(.+) killed (.+) with (.+)%. %(crit%)$')
-			if killer then
-				register_kill(killer, target)
-				line = string.format('%s killed %s with %s. \27[1;5;37;41m(crit)\27[0m',
-				    colorize_team(killer),
-				    colorize_team(target),
-				    bright(weapon))
-				goto matched
-			end
-			-- s*icide
-			local target = line:match('^(.+) suicided%.$')
-			if target then
-				line = string.format('%s suicided.',
-				    colorize_team(target))
-				goto matched
-			end
-
-			-- chat message
-			-- i think i know why the separator is " :  " with two
-			--  spaces now
-			-- normally you can't put two consecutive spaces in your
-			--  name so this way it's never ambiguous where the name
-			--  ends
-			local name, rest = line:match('^(.+)( :  .+)$')
-			if name then
-				local pre =
-				    line:match('^%(TEAM%) ') or
-				    line:match('^%*DEAD%*%(TEAM%) ') or
-				    line:match('^%*DEAD%* ') or
-				    line:match('^%*SPEC%* ')
-				if pre and #name-#pre >= 1 then
-					name = name:sub(#pre+1)
-					pre = bright(pre)
-				else
-					pre = ''
+		local dead = false
+		local team = false
+		if not name2team[name] then
+			for _, t in ipairs({
+				{pat='^%(TEAM%) ',         dead=false, team=true},
+				{pat='^%*DEAD%*%(TEAM%) ', dead=true,  team=true},
+				{pat='^%*DEAD%* ',         dead=true,  team=false},
+				{pat='^%*SPEC%* ',         dead=false, team=false, spec=true},
+			}) do
+				local m = name:match(t.pat)
+				if m then
+					name = name:sub(#m+1)
+					pre = m
+					dead = t.dead
+					team = t.team
+					if t.spec then
+						name2team[name] = nil
+					end
+					break
 				end
-				line = pre .. colorize_team(name) .. rest
-				goto matched
 			end
-
-			-- connected
-			local name = line:match('^(.+) connected$')
-			if name then
-				clear_name(name)
-				line = string.format('%s connected',
-				    colorize_team(name))
-				goto matched
-			end
-			-- autobalanced
-			local name = line:match('^(.+) was moved to the other team for game balance$')
-			if name then
-				register_autobalance(name)
-				line = string.format('%s was moved to the other team for game balance',
-				    colorize_team(name))
-				goto matched
-			end
-
-			-- self autobalanced
-			if #line >= 110 and line:find('^You have switched to team [BR][EL][DU] and will receive [0-9]+ experience points at the end of the round for changing teams%.$') then
-				register_self_autobalance()
-				goto matched
-			end
-
-			-- joining a server
-			if line:find('^\n.*\nMap: .*\nPlayers: .* / .*\nBuild: .*\nServer Number: .*\n$') then
-				name2team = {}
-				goto matched
-			end
-
-			end
-			::matched::
 		end
 
-		-- clean up newline spam
-		if line:find('\n', 1, true) then
-			line = line
-			    :gsub('\n[\n ]*', '\n')
-			    :gsub('^\n+', '', 1)
-			    :gsub('\n+$', '', 1)
+		fire_event('chat_message', {
+			name = name,
+			text = message,
+		})
+
+		-- agpl backdoor (https://www.gnu.org/licenses/gpl-howto.en.html)
+		if message:find('^[\t ]*!cfgfs_agpl_source[\t ]*$') then
+			cmd.say(agpl_source_url)
 		end
 
-		-- make crit kills blink
-		--line = line:gsub(' %(crit%)$', ' \27[1;5;37;41m(crit)\27[0m', 1)
+		message = message
+		    :gsub('^\n\n*', '')
+		    :gsub('\n\n*', '\n')
+		    :gsub('\n$', '', 1)
 
-		_println(line)
-	else
-		-- 2 = dim
-		printv('\27[2m', line, '\27[0m')
+		line = ((#pre > 0) and bright(pre) or '')
+		    .. colorize_team(name)
+		    .. ' :  '
+		    .. bright(message)
+
+		return line
 	end
 
+	-- kill (non-crit)
+	local killer, target, weapon = line:match('^(.+) killed (.+) with (.+)%.$')
+	if killer then
+		register_kill(killer, target)
+		fire_event('player_killed', {
+			killer = killer,
+			killer_team = name2team[killer],
+			target = target,
+			target_team = name2team[target],
+			weapon = weapon,
+			crit = false,
+		})
+		line = string.format('%s killed %s with %s.',
+		    colorize_team(killer),
+		    colorize_team(target),
+		    bright(weapon))
+		return line
+	end
+
+	-- kill (crit)
+	local killer, target, weapon = line:match('^(.+) killed (.+) with (.+)%. %(crit%)$')
+	if killer then
+		register_kill(killer, target)
+		fire_event('player_killed', {
+			killer = killer,
+			killer_team = name2team[killer],
+			target = target,
+			target_team = name2team[target],
+			weapon = weapon,
+			crit = true,
+		})
+		line = string.format('%s killed %s with %s. \27[1;5;37;41m(crit)\27[0m',
+		    colorize_team(killer),
+		    colorize_team(target),
+		    bright(weapon))
+		return line
+	end
+
+	-- s*icide
+	local name = line:match('^(.+) suicided%.$')
+	if name then
+		if not name2team[name] then
+			name2team[name] = 'unknown'
+		end
+		line = string.format('%s suicided.',
+		    colorize_team(name))
+		return line
+	end
+
+	-- probably dr*wned or something
+	local name = line:match('^(.+) died%.$')
+	if name then
+		if not name2team[name] then
+			name2team[name] = 'unknown'
+		end
+		line = string.format('%s died.',
+		    colorize_team(name))
+		return line
+	end
+
+	-- connected
+	local name = line:match('^(.+) connected$')
+	if name then
+		name2team[name] = 'unknown'
+		line = string.format('%s connected',
+		    colorize_team(name))
+		return line
+	end
+
+	-- autobalanced
+	local name = line:match('^(.+) was moved to the other team for game balance$')
+	if name then
+		if not name2team[name] then
+			name2team[name] = 'unknown'
+		end
+		line = string.format('%s was moved to %s for game balance',
+		    colorize_team(name),
+		    colorize_by_opposite_of(name, 'the other team'))
+		register_autobalance(name)
+		return line
+	end
+
+	-- kicked
+	local name = line:match('^(.+) has been idle for too long and has been kicked$')
+	if name then
+		line = string.format('%s has been idle for too long and has been kicked',
+		    colorize_team(name))
+		name2team[name] = nil
+		return line
+	end
+
+	-- self autobalanced
+	if #line >= 110 and line:find('^You have switched to team [BR][EL][DU] and will receive [0-9]+ experience points at the end of the round for changing teams%.$') then
+		register_self_autobalance()
+		return line
+	end
+
+	-- joining a server
+	if line:find('^\n.*\nMap: .*\nPlayers: %-?[0-9]+ / %-?[0-9]+\nBuild: %-?[0-9]+\nServer Number: %-?[0-9]+\n$') then
+		name2team = {}
+		return line
+	end
+
+	-- name change (rare)
+	local oldname, newname = line:match('^(.+) has changed name to (.+)$')
+	if oldname then
+		if name2team[oldname] then
+			name2team[newname] = name2team[oldname]
+			name2team[oldname] = nil
+		else
+			name2team[newname] = 'unknown'
+		end
+		line = string.format('%s has changed name to %s',
+		    colorize_team(oldname),
+		    colorize_team(newname))
+		return line
+	end
+
+	-- defended a point
+	local name, pointname, teamnum = line:match('^(.+) defended (.*) for team #(%-?[0-9]+)$')
+	if name then
+		local teamname = 'unknown'
+		if teamnum == '2' then teamname = 'red' end
+		if teamnum == '3' then teamname = 'blu' end
+		name2team[name] = teamname
+		line = string.format('%s defended %s for %s',
+		    colorize_team(name),
+		    colorize_by_team(team2opposite[teamname], pointname),
+		    colorize_by_team(teamname, string.format('team #%d', teamnum)))
+		return line
+	end
+
+	-- captured a point
+	-- note: this contains multiple names separated by ", "
+	-- lets hope we can split them right
+	local names, pointname, teamnum = line:match('^(.+) captured (.*) for team #(%-?[0-9]+)$')
+	if names then
+		local teamname = 'unknown'
+		if teamnum == '2' then teamname = 'red' end
+		if teamnum == '3' then teamname = 'blu' end
+		names = split_known_names(names, ', ', name2team)
+		for i, n in ipairs(names) do
+			if name2team[n] then
+				name2team[n] = teamname
+			end
+			names[i] = colorize_by_team(teamname, n)
+		end
+		line = string.format('%s captured %s for %s',
+		    table.concat(names, ', '),
+		    colorize_by_team(team2opposite[teamname], pointname),
+		    colorize_by_team(teamname, string.format('team #%d', teamnum)))
+		return line
+	end
+
+	return false
+end
+
+local colorize_sourcemod_thing = function (line)
+	-- colorize color codes so the \7 doesn't cause the terminal to blink
+	-- line="\7FFD700[RTD]\1 Rolled \00732CD32Lucky Sandvich\1."
+	if line:byte(1) == 7 then
+		--line = line:gsub('\0[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]([^\1]*)\1', '%1')
+		-- ^ where did this come from? i thought it couldn't print null bytes
+		line = line:gsub('\7([0-9A-F][0-9A-F])([0-9A-F][0-9A-F])([0-9A-F][0-9A-F])([^\1]*)\1', function (r, g, b, s)
+			r, g, b = tonumber('0x'..r), tonumber('0x'..g), tonumber('0x'..b)
+			return string.format('\27[38;2;%d;%d;%dm%s\27[0m', r, g, b, s)
+		end)
+		return line
+	end
+	return false
+end
+
+_game_console_output = function (line)
 	our_logfile:write(line, '\n')
-	fire_event('game_console_output', line)
 
-	-- agpl backdoor (https://www.gnu.org/licenses/gpl-howto.en.html)
-	-- it doesn't work if you say it yourself
-	if line:find(':[\t ]*!cfgfs_agpl_source[\t ]*$') then
-		cmd.say(agpl_source_url)
+	if fire_event('game_console_output', line) < 0 then
+		-- cancelled
+		return
 	end
+
+	if is_spam(line) then
+		-- 2 = dim
+		--printv('\27[2m', line, '\27[0m')
+		return
+	end
+
+	line = colorize_game_message(line)
+	    or colorize_sourcemod_thing(line)
+	    or line
+
+	return _println(line)
 end
 
 --------------------------------------------------------------------------------

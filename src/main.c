@@ -56,6 +56,10 @@ enum special_file_type {
 	sft_control = 2,
 	sft_message = 3,
 };
+union sft_ptr {
+	uint64_t fh; // fuse_file_info::fh
+	enum special_file_type sft;
+};
 
 #define MESSAGE_DIR_PREFIX "/message/"
 
@@ -72,7 +76,7 @@ static int l_lookup_path(const char *restrict path);
 	 0 == memcmp(self, other, length))
 
 __attribute__((always_inline))
-static int lookup_path(const char *restrict path, enum special_file_type *type) {
+static int lookup_path(const char *restrict path, union sft_ptr *type) {
 	const char *slashdot = path;
 D	assert(*slashdot == '/');
 	const char *p = path;
@@ -97,15 +101,15 @@ D	assert(*slashdot == '/');
 	if (unlikely(!ends_with(path, ".cfg"))) {
 		if (unlikely(length > strlen(MESSAGE_DIR_PREFIX) &&
 		             starts_with(path, MESSAGE_DIR_PREFIX))) {
-			if (type) *type = sft_message;
+			if (type) type->sft = sft_message;
 			return 0xf;
 		}
 		if (unlikely(equals(path, "/console.log"))) {
-			if (type) *type = sft_console_log;
+			if (type) type->sft = sft_console_log;
 			return 0xf;
 		}
 		if (unlikely(equals(path, "/.control"))) {
-			if (type) *type = sft_control;
+			if (type) type->sft = sft_control;
 			return 0xf;
 		}
 		return -ENOENT;
@@ -174,7 +178,7 @@ static int cfgfs_open(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_open: %s", path);
 
-	int rv = lookup_path(path, (enum special_file_type *)&fi->fh);
+	int rv = lookup_path(path, (union sft_ptr *)&fi->fh);
 
 	if (rv == 0xf) {
 		return 0;
@@ -261,18 +265,39 @@ D		assert(ent != NULL); // should be fakebuf or a real one
 
 static int cfgfs_write_control(const char *data, size_t size);
 
-#define log_catcher_got_line(p, sz) \
+// locking for the static buffer in cfgfs_write() -> case sft_console_log
+#define BUFFER_LOCK() ({ if (!buffer_locked) { buffer_locked = true; pthread_mutex_lock(&logcatcher_lock); } })
+#define BUFFER_RESET() ({ if (buffer_locked) p = logbuffer; })
+#define BUFFER_UNLOCK() ({ if (buffer_locked) { buffer_locked = false; pthread_mutex_unlock(&logcatcher_lock); } })
+
+// size check before a memcpy to that buffer
+#define SIZE_CHECK(size, errlabel) \
+	({ \
+		assert(buffer_locked); \
+		size_t buffer_used = (size_t)(p-logbuffer); \
+		size_t buffer_left = sizeof(logbuffer)-buffer_used; \
+		if (unlikely((size) > buffer_left)) { \
+D			eprintln("cfgfs_write: memcpy won't fit! buffer_used=%zu buffer_left=%zu size=%zu", \
+			    buffer_used, buffer_left, (size_t)(size)); \
+			rv = -E2BIG; \
+			goto errlabel; \
+		} \
+	})
+
+#define log_catcher_got_line(p, sz, errlabel) \
 	({ \
 		if (likely(!lua_locked)) { \
 			if (unlikely(!lua_lock_state("cfgfs_write()->sft_console_log"))) { \
 				rv = -errno; \
-				goto out; \
+				goto errlabel; \
 			} \
 			lua_locked = true; \
 		} \
 		lua_State *L = lua_get_state_already_locked(); \
 		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX); \
 		  lua_pushlstring(L, (p), (sz)); \
+		BUFFER_RESET(); \
+		BUFFER_UNLOCK(); \
 		lua_call(L, 1, 0); \
 	})
 
@@ -285,56 +310,55 @@ static int cfgfs_write(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
-	enum special_file_type sft;
-	memcpy(&sft, &fi->fh, sizeof(enum special_file_type));
-	switch (sft) {
+	switch (((union sft_ptr){.fh = fi->fh}).sft) {
 	case sft_console_log: {
 		static pthread_mutex_t logcatcher_lock = PTHREAD_MUTEX_INITIALIZER;
 		static char logbuffer[8192];
 		static char *p = logbuffer;
 		bool lua_locked = false;
+		bool buffer_locked = false;
 		size_t insize = size;
 		int rv = (int)insize;
-
-		// tf2 only writes one thing at a time so this doesn't really need a lock
-D		assert(0 == pthread_mutex_trylock(&logcatcher_lock));
 
 		one_true_entry();
 		if (likely(size >= 2 && data[size-1] == '\n')) {
 			// writing a full line in one go
 			// may contain embedded newlines
-			log_catcher_got_line(data, size-1);
-		} else do {
+			log_catcher_got_line(data, size-1, out_full_write);
+		} else {
 			// idiot writing a line in multiple parts
+			BUFFER_LOCK();
+			do {
+				char *nl = memchr(data, '\n', size);
+				if (likely(nl == NULL)) {
+					// incoming data doesn't complete a line. add it to the buffer and get out
+					SIZE_CHECK(size, out_partial_write);
+					memcpy(p, data, size);
+					p += exchange(size, 0);
+				} else {
+					// incoming data completes a line
 
-			// size check
-			size_t buffer_used = (size_t)(p-logbuffer);
-			size_t buffer_left = sizeof(logbuffer)-buffer_used;
-			if (unlikely(size > buffer_left)) {
-				rv = -E2BIG;
-				goto out;
-			}
+					size_t partlen = (size_t)(nl-data);
+					SIZE_CHECK(partlen, out_partial_write);
+					memcpy(p, data, partlen);
 
-			char *nl = memchr(data, '\n', size);
-			if (likely(nl == NULL)) {
-				// incoming data doesn't complete a line. add it to the buffer and get out
-				memcpy(p, data, size);
-				p += size;
-				size = 0;
-			} else {
-				// incoming data completes a line
-				size_t partlen = (size_t)(nl-data);
-				memcpy(p, data, partlen);
-				log_catcher_got_line(logbuffer, (size_t)(p-logbuffer)+partlen);
-				p = logbuffer;
-				data += partlen+1;
-				size -= partlen+1;
-			}
-		} while (unlikely(size != 0));
-out:
+					size_t totallen = (size_t)(p-logbuffer)+partlen;
+					p = logbuffer;
+					data += partlen+1;
+					size -= partlen+1;
+
+					log_catcher_got_line(
+					    logbuffer,
+					    totallen,
+					    out_partial_write);
+				}
+			} while (unlikely(size != 0));
+out_partial_write:
+			BUFFER_UNLOCK();
+		}
+out_full_write:
 		one_true_exit();
 		if (lua_locked) lua_unlock_state();
-D		pthread_mutex_unlock(&logcatcher_lock);
 		return rv;
 	}
 	case sft_control:
@@ -392,9 +416,7 @@ V	eprintln("control_do_line: line=[%.*s]", (int)size, line);
 
 static int cfgfs_release(const char *path, struct fuse_file_info *fi) {
 V	eprintln("cfgfs_release: %s", path);
-	enum special_file_type sft;
-	memcpy(&sft, &fi->fh, sizeof(enum special_file_type));
-	switch (sft) {
+	switch (((union sft_ptr){.fh = fi->fh}).sft) {
 	case sft_none:
 		return 0;
 	case sft_message: {

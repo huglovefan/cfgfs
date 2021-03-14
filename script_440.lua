@@ -311,6 +311,16 @@ add_listener('+m', function ()
 	end
 end)
 
+cmd.antiafk = function ()
+	cfg('+moveleft')
+	wait(100)
+	cfg('-moveleft; +moveright')
+	wait(200)
+	cfg('-moveright; +moveleft')
+	wait(100)
+	cfg('-moveleft')
+end
+
 --------------------------------------------------------------------------------
 
 -- huntsman charge bell
@@ -365,6 +375,20 @@ add_listener('classchange', function (class)
 		remove_listener('+mouse1', on_mouse1_dn_pyro)
 	end
 end)
+
+do
+	local myname = nil
+	spinoff(function ()
+		wait_for_event('classchange')
+		myname = cvar.name
+	end)
+	add_listener('player_killed', function (t)
+		if t.killer == myname and t.weapon:find('deflect') then
+			wait(300)
+			cmd.voicemenu(2, 6) -- nice shot!
+		end
+	end)
+end
 
 --------------------------------------------------------------------------------
 
@@ -646,9 +670,9 @@ end)
 
 --------------------------------------------------------------------------------
 
-local bad_steamids = {}
-
+bad_steamids = global('bad_steamids', {})
 oldcnt = global('oldcnt', -1)
+
 listupdate = function ()
 	bad_steamids = {}
 	local cnt = 0
@@ -675,38 +699,58 @@ end)
 local parse_status = function ()
 	local players = {}
 	local expcnt = nil
-	local seen = {}
-	for _, line in wait_for_events('game_console_output', 2000) do
+	for _, line in wait_for_events('game_console_output', 1000) do
 		if not expcnt then
 			local                      humans =
 			    line:match('^players : ([0-9]+) humans, [0-9]+ bots %([0-9]+ max%)$')
 			if humans then
 				expcnt = tonumber(humans)
+				cancel_event()
 				goto matched
 			end
 		end
 		do
 			local               userid,    name,  uniqueid,         connected, ping,     loss,     state =
 			    line:match('^# +([0-9]+) +"(.+)" +(%[U:1:[0-9]+%]) +([0-9:]+) +([0-9]+) +([0-9]+) +([a-z]+)$')
-			if userid and not seen[userid] then
-				seen[userid] = true
+			if userid and not players[uniqueid] then
 				table.insert(players, {
 					userid  = tonumber(userid),
 					name    = name,
 					steamid = uniqueid,
 				})
 				players[uniqueid] = players[#players]
+				cancel_event()
 				goto matched
 			end
-			goto next
 		end
+		if (
+			line == '# userid name                uniqueid            connected ping loss state' or
+			line:find('^hostname: .*$') or
+			line:find('^version : .*/%-?[0-9]+ %-?[0-9]+ .*$') or
+			line:find('^udp/ip  : .*:%-?[0-9]+.*$') or
+			line:find('^steamid : .* %([0-9]+%)$') or
+			line:find('^steamid : not logged in$') or
+			line:find('^account : logged in.*$') or
+			line:find('^account : not logged in.*$') or
+			line:find('^map     : .* at: %-?[0-9]+ x, %-?[0-9]+ y, %-?[0-9]+ z$') or
+			line:find('^tags    : .*$') or
+			line:find('^sourcetv:  port %-?[0-9]+, delay %-?[0-9]+%.[0-9]+s$') or
+			line:find('^replay  :  .*$') or
+			line:find('^players : %-?[0-9]+ humans, %-?[0-9]+ bots %(%-?[0-9]+ max%)$') or
+			line:find('^edicts  : %-?[0-9]+ used of %-?[0-9]+ max$')
+		) then
+			cancel_event()
+		end
+		goto next
 		::matched::
 		if expcnt and #players == expcnt then
 			break
 		end
 		::next::
 	end
-	if not expcnt then
+	if #players == 0 and not expcnt then
+		cmd.echo('parse_status: couldn\'t parse anything!')
+	elseif not expcnt then
 		cmd.echo('parse_status: couldn\'t find expected player count')
 	elseif #players ~= expcnt then
 		cmd.echo(string.format('parse_status: could only parse %d of %d players', #players, expcnt))
@@ -717,12 +761,26 @@ local parse_status = function ()
 	return players
 end
 
+local copy_steamnames = function (oldstatus, newstatus)
+	if oldstatus then
+		for _, t in ipairs(oldstatus) do
+			if newstatus[t.steamid] then
+				newstatus[t.steamid].steamname = t.steamname
+			end
+		end
+	end
+	return newstatus
+end
+
 local last_status = nil
 local last_status_time = 0
 local status_updating = false
-local do_status = function ()
-	if last_status and _ms()-last_status_time <= 5000 then
-		return last_status
+local do_status = function (cached_only)
+	if (
+		(last_status and _ms()-last_status_time <= 5000) or
+		cached_only
+	) then
+		return (last_status or {})
 	end
 	if status_updating then
 		local _, rv = wait_for_event('status_updated')
@@ -730,7 +788,7 @@ local do_status = function ()
 	end
 	status_updating = true
 	cmd.status()
-	last_status = parse_status()
+	last_status = copy_steamnames(last_status, parse_status())
 	last_status_time = _ms()
 	status_updating = false
 	fire_event('status_updated', last_status)
@@ -738,25 +796,31 @@ local do_status = function ()
 end
 
 local teamnames = {
-	['TF_GC_TEAM_INVADERS'] = 'blu',
 	['TF_GC_TEAM_DEFENDERS'] = 'red',
+	['TF_GC_TEAM_INVADERS']  = 'blu',
 }
 local parse_lobby_debug = function ()
 	local players = {}
 	local mexp, pexp
 	local mcnt, pcnt = 0, 0
-	for _, line in wait_for_events('game_console_output', 2000) do
-		if not mexp then
+	for _, line in wait_for_events('game_console_output', 1000) do
+		if not mexp and #players == 0 then
+			if line == 'Failed to find lobby shared object' then
+				break
+			end
+		end
+		if not mexp and #line >= 59 then
 			local                                          mexp_,              pexp_ =
 			    line:match('^CTFLobbyShared: ID:[0-9a-f]+  ([0-9]+) member%(s%), ([0-9]+) pending$')
 			if mexp_ then
 				mexp, pexp = tonumber(mexp_), tonumber(pexp_)
+				cancel_event()
 				goto matched
 			end
 		end
-		do
+		if #line >= 57 then
 			local              state,        statepos,   steamid,                 team,             type =
-			    line:match('^  ([A-Z][a-z]+%[([0-9]+)%]) (%[U:1:[0-9]+%])  team = ([A-Z_]+)  type = ([A-Z_]+)$')
+			    line:match('^  ([A-Z][a-z]+%[([0-9]+)%]) (%[U:1:[0-9]+%])  team = (TF_GC_TEAM_[A-Z_]+)  type = ([A-Z_]+_PLAYER)$')
 			if state and not players[steamid] then
 				if state:find('^Member%[') then mcnt = mcnt+1
 				elseif state:find('^Pending%[') then pcnt = pcnt+1
@@ -768,6 +832,7 @@ local parse_lobby_debug = function ()
 					team     = assert(teamnames[team], 'invalid team ' .. team),
 				})
 				players[steamid] = players[#players]
+				cancel_event()
 				goto matched
 			end
 			goto next
@@ -778,7 +843,9 @@ local parse_lobby_debug = function ()
 		end
 		::next::
 	end
-	if not (mexp and pexp) then
+	if #players == 0 and not (mexp and pexp) then
+		cmd.echo('parse_lobby_debug: couldn\'t parse anything!')
+	elseif not (mexp and pexp) then
 		cmd.echo('parse_lobby_debug: couldn\'t find expected player counts')
 	elseif not (mcnt == mexp and pcnt == pexp) then
 		cmd.echo(string.format('parse_lobby_debug: could only parse %d of %d members, %d of %d pending',
@@ -797,9 +864,12 @@ end
 local last_lobby_debug = nil
 local last_lobby_debug_time = 0
 local lobby_debug_updating = false
-local do_lobby_debug = function ()
-	if last_lobby_debug and _ms()-last_lobby_debug_time <= 1000 then
-		return last_lobby_debug
+local do_lobby_debug = function (cached_only)
+	if (
+		(last_lobby_debug and _ms()-last_lobby_debug_time <= 1000) or
+		cached_only
+	) then
+		return (last_lobby_debug or {})
 	end
 	if lobby_debug_updating then
 		local _, rv = wait_for_event('lobby_debug_updated')
@@ -814,50 +884,55 @@ local do_lobby_debug = function ()
 	return last_lobby_debug
 end
 
-local get_playerlist = function ()
-	local lobby = do_lobby_debug()
-	local status = do_status()
+local get_playerlist = function (cached_only)
+	if cached_only == nil and not game_window_is_active() then
+		cached_only = true
+	end
 	local players = {}
-	for _, t in ipairs(status) do
-		if lobby[t.steamid] then
-			team_known(t.name, lobby[t.steamid].team)
-			table.insert(players, {
-				steamid = t.steamid,
-				name    = t.name,
-				userid  = t.userid,
-				team    = lobby[t.steamid].team,
-			})
-			players[t.steamid] = players[#players]
-			::next::
+	local lobby = do_lobby_debug(cached_only)
+	if #lobby > 0 then
+		local status = do_status(cached_only)
+		for _, t in ipairs(status) do
+			if lobby[t.steamid] then
+				team_known(t.name, lobby[t.steamid].team)
+				table.insert(players, {
+					steamid = t.steamid,
+					name    = t.name,
+					userid  = t.userid,
+					team    = lobby[t.steamid].team,
+				})
+				players[t.steamid] = players[#players]
+			end
 		end
 	end
 	return players
 end
 
-local escape_str = function (s)
+string.escape = function (s)
 	local t = {}
 	local i = 1
+	local other_escapes = {
+		[0x09] = '\\t',
+		[0x0a] = '\\n',
+		[0x0d] = '\\r',
+		[0x5c] = '\\\\',
+	}
 	while i <= #s do
-		-- 5c = backslash
+		-- note: the range is \x20-\x7e excluding backslash (\x5c)
 		local m = s:match('^[\x5d-\x7e\x20-\x5b]+', i)
 		if m then
 			t[#t+1] = m
 			i = i+#m
 			goto next
 		end
-		local m = s:match('^\\+', i)
-		if m then
-			t[#t+1] = m..m
-			i = i+#m
-			goto next
-		end
-		local m = s:match('^'..utf8.charpattern, i)
+		-- note: this one is utf8.charpattern without ascii chars
+		local m = s:match('^[\xc2-\xfd][\x80-\xbf]*', i)
 		if m then
 			if utf8.len(m) then
 				local p = utf8.codepoint(m)
 				if p <= 0xffff
 				then t[#t+1] = string.format('\\u{%04x}', p)
-				else t[#t+1] = string.format('\\U{%06x}', p)
+				else t[#t+1] = string.format('\\u{%06x}', p)
 				end
 			else
 				for i = 1, #m do
@@ -867,16 +942,15 @@ local escape_str = function (s)
 			i = i+#m
 			goto next
 		end
-		if s:find('^\t', i) then t[#t+1]='\\t' i=i+1 goto next end
-		if s:find('^\r', i) then t[#t+1]='\\r' i=i+1 goto next end
-		if s:find('^\n', i) then t[#t+1]='\\n' i=i+1 goto next end
-		t[#t+1] = string.format('\\x%02x', s:byte(i))
-		i = i+1
+		do
+			local b = s:byte(i)
+			t[#t+1] = other_escapes[b] or string.format('\\x%02x', b)
+			i = i+1
+		end
 		::next::
 	end
 	return table.concat(t, '')
 end
-printableish = escape_str
 
 positive_vocalization = function () cmd.voicemenu(2, 4) end
 negative_vocalization = function () cmd.voicemenu(2, 5) end
@@ -891,7 +965,7 @@ local check_namestealer = function (t, playerlist)
 
 	if utf8.len(name) then
 		for p, c in utf8.codes(name) do
-			if (c <= 0x1f and not c == 0x09) or c == 0x7f or c >= 0x80 then
+			if (c <= 0x1f and not (c == 0x09)) or c == 0x7f or c >= 0x80 then
 				local without = (name:sub(1, p-1) .. name:sub(p+#utf8.char(c)))
 				assert(without ~= name)
 				if without ~= '' and names[without] then
@@ -902,7 +976,11 @@ local check_namestealer = function (t, playerlist)
 		end
 	end
 
-	if name:find('.\u{0e4a}$') then
+	if (
+		name:find('.\u{200f}$') or
+		name:find('.\u{202d}$') or
+		name:find('.\u{0e4a}$')
+	) then
 		return true
 	end
 
@@ -919,8 +997,27 @@ end
 
 local check_bot = function (t, players, grasp_at_straws)
 	local reasons = {}
-	if t.name:gsub('^%([0-9]+%)', ''):frobnicate() == 'YBEZZSMMjNLID' then
-		table.insert(reasons, 'known bot name')
+	do
+		local clean = t.name:lower():frobnicate()
+		if (
+			clean:find(' ', 1, true) or
+			clean:find('DCMMOX', 1, true) or
+			clean:find('\\KF\\O', 1, true)
+		) then
+			table.insert(reasons, 'impossible name')
+		end
+	end
+	do
+		local clean = t.name
+		    :gsub('^%([0-9]+%)', '', 1)
+		    :gsub('[\u{200f}\u{202d}\u{0e4a}]', '')
+		    :frobnicate()
+		if (
+			clean == 'YBEZZS\x04MM\x05jN\x19LI\x1aD\x1c' or
+			clean == '~]CFCMB^\nyZKXAFO\nR\n\x1e\x18'
+		) then
+			table.insert(reasons, 'known bot name')
+		end
 	end
 	if check_namestealer(t, players) then
 		table.insert(reasons, 'name stealer')
@@ -932,7 +1029,7 @@ local check_bot = function (t, players, grasp_at_straws)
 		if mangle_name(t.steamname) ~= t.name then
 			table.insert(reasons, string.format(
 			    'steam name differs: %s',
-			    printableish(t.steamname)))
+			    string.escape(t.steamname)))
 		end
 	end
 	if #reasons == 0 then return nil end
@@ -943,6 +1040,11 @@ cmd.kob = function (_, keyname)
 	local key_press_time = (keyname and rawget(is_pressed, keyname))
 
 	local players = get_playerlist()
+	if #players == 0 then
+		cmd.echo('kob: failed to get playerlist!')
+		return
+	end
+
 	local myname = cvar.name
 	local myteam = nil
 	for _, t in ipairs(players) do
@@ -960,7 +1062,7 @@ cmd.kob = function (_, keyname)
 		local is_bot = check_bot(t, players)
 		if is_bot then
 			cmd.echo(string.format('%s: %s %s: %s',
-			    t.team, printableish(t.name), t.steamid,
+			    t.team, string.escape(t.name), t.steamid,
 			    table.concat(is_bot, '; ')))
 			if t.team == myteam then
 				table.insert(our_bots, t)
@@ -1048,15 +1150,20 @@ local add_steamnames = function (players)
 
 	local id64s = {}
 	for _, t in ipairs(players) do
-		local accountid = tonumber(t.steamid:match('^%[U:1:([0-9]+)%]$'))
-		local id64 = accountid+76561197960265728
-		id64s[tostring(id64)] = t
-		table.insert(id64s, id64)
+		if not t.steamname then
+			local accountid = tonumber(t.steamid:match('^%[U:1:([0-9]+)%]$'))
+			local id64 = accountid+76561197960265728
+			id64s[tostring(id64)] = t
+			table.insert(id64s, id64)
+		end
 	end
+
 	local url = string.format(summaries_url_fmt,
 	    os.getenv('STEAM_APIKEY'),
 	    table.concat(id64s, ','))
+
 	local data = get_json(url)
+
 	if type(data) == 'table'
 	and type(data.response) == 'table'
 	and type(data.response.players) == 'table' then
@@ -1071,8 +1178,13 @@ local add_steamnames = function (players)
 end
 
 cmd.lob = function ()
-	local players = get_playerlist()
 	local lobby = do_lobby_debug()
+	local players = get_playerlist()
+	if #players == 0 then
+		cmd.echo('lob: failed to get playerlist!')
+		return
+	end
+
 	add_steamnames(players)
 
 	local playing = {red = 0, blu = 0}
@@ -1080,7 +1192,7 @@ cmd.lob = function ()
 		local reasons = check_bot(t, players, true)
 		if reasons then
 			cmd.echo(string.format('%s: %s %s: %s',
-			    t.team, printableish(t.name), t.steamid,
+			    t.team, string.escape(t.name), t.steamid,
 			    table.concat(reasons, '; ')))
 			playing[t.team] = playing[t.team]+1
 		end

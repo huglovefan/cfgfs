@@ -83,10 +83,11 @@ static void do_reload(void) {
 	buffer_list_reset(&buffers);
 	buffer_list_reset(&init_cfg);
 
-	 lua_getglobal(L, "_reload_2");
-	  lua_getglobal(L, "_reload_1");
-	 lua_call(L, 1, 1);
-	 buffer_list_swap(&buffers, &init_cfg);
+	lua_getglobal(L, "_reload_1");
+	 lua_call(L, 0, 1);
+	  buffer_list_swap(&buffers, &init_cfg);
+	  lua_getglobal(L, "_reload_2");
+	  lua_rotate(L, -2, 1);
 	lua_call(L, 1, 0);
 
 	lua_release_state(L);

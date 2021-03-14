@@ -70,7 +70,7 @@ it reads a config file from cfgfs.
 
 ## System requirements
 
-- Lua 5.4 <sup>(on museum computers without 5.4, 5.3 [might] also work)</sup>
+- Lua 5.4
 - `libfuse3`
 - `libreadline`
 - `libx11`, `libxtst`
@@ -78,8 +78,6 @@ it reads a config file from cfgfs.
 
 At the moment only GNU/Linux is supported. I don't have a Windows computer to
 test with and I don't <del>want one</del> know if this will even work on it.
-
-[might]: https://github.com/mpv-player/mpv/issues/5205#issuecomment-350418132
 
 ## Installation
 

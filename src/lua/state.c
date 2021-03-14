@@ -20,7 +20,12 @@
 static lua_State *g_L;
 static pthread_mutex_t lua_mutex = PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP;
 
-#define ACCEPTABLE_DELAY (16.67/2)
+#if defined(WITH_D) || defined(WITH_V)
+ #define ACCEPTABLE_DELAY (16.67/2)
+#else
+ #define ACCEPTABLE_DELAY (16.67)
+#endif
+
 static const char *locked_by = NULL;
 static double      locked_at = 0.0;
 
@@ -72,6 +77,7 @@ D	assert(g_L != NULL);
 
 void lua_unlock_state_no_click(void) {
 D	assert(stack_is_clean(g_L));
+else	assert(stack_is_clean_quick(g_L));
 	double locked_for = mono_ms()-locked_at;
 	if (locked_for > ACCEPTABLE_DELAY) {
 		eprintln("warning: lua call took %.2fms (%s)",

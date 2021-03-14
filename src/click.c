@@ -174,14 +174,11 @@ static int l_click(lua_State *L) {
 static int l_cancel_click(lua_State *L) {
 	if (lua_islightuserdata(L, 1)) {
 		pthread_t thread = (pthread_t)(lua_touserdata(L, 1));
-		check_errcode(
-		    pthread_cancel(thread),
-		    "cancel_click: pthread_cancel",
-		    goto out);
+		int err = pthread_cancel(thread);
+		if (err != 0 && err != ESRCH) {
+			eprintln("cancel_click: pthread_cancel: %s", strerror(err));
+		}
 	}
-out:
-	// return nothing. it's hard to know accurately if it was really
-	//  cancelled anyway
 	return 0;
 }
 

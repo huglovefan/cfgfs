@@ -1,6 +1,5 @@
 #include "cli_output.h"
 
-#include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -47,26 +46,6 @@ void perror(const char *s) {
 	} else {
 		eprintln("%s", strerror(errno));
 	}
-}
-
-// declared in macros.h
-__attribute__((cold))
-__attribute__((noreturn))
-void cfgfs_assert_fail(const char *fmt, ...) {
-	if (cli_trylock_output_nosave()) {
-		cli_save_prompt_locked();
-	}
-
-	va_list args;
-	va_start(args, fmt);
-	 vfprintf(stderr, fmt, args);
-	va_end(args);
-
-	typedef void (*print_backtrace_t)(void);
-	print_backtrace_t fn = (print_backtrace_t)dlsym(RTLD_DEFAULT, "__sanitizer_print_stack_trace");
-	if (fn != NULL) fn();
-
-	abort();
 }
 
 // -----------------------------------------------------------------------------

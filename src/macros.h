@@ -68,7 +68,7 @@
 	({ \
 		__auto_type _assume_v = (v); \
 		if (unlikely(!_assume_v)) { \
-			D cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Wrong unsafe_optimization_hint(): %s\n", __func__, #v); \
+			D ASSERT_FAIL_WITH_FMT("Wrong unsafe_optimization_hint(): %s", #v); \
 			__builtin_unreachable(); \
 		} \
 		_assume_v; \
@@ -78,7 +78,7 @@
 // do not use
 #define unsafe_unreachable() \
 	({ \
-		D cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Wrong unsafe_unreachable()\n", __func__); \
+		D ASSERT_FAIL_NO_FMT("Wrong unsafe_unreachable()"); \
 		__builtin_unreachable(); \
 	})
 
@@ -130,10 +130,23 @@ static inline void check_otx(const int *v) {
 
 // -----------------------------------------------------------------------------
 
-#define assert_unreachable() \
-	cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Unreachable code hit\n", __func__)
+#define assert_unreachable() ({ ASSERT_FAIL_NO_FMT("Unreachable code hit"); })
 
 // -----------------------------------------------------------------------------
+
+// make the compiler check that a format string and the arguments match
+// note: fmt must be a string literal for this to work
+
+#define CHECK_FMT_STR(fmt, ...) check_format_string("" fmt, ##__VA_ARGS__)
+
+__attribute__((format(printf, 1, 2)))
+static inline void check_format_string(const char *fmt, ...) {
+	(void)fmt;
+}
+
+// -----------------------------------------------------------------------------
+
+#include "error.h"
 
 #undef assert
 
@@ -141,16 +154,30 @@ static inline void check_otx(const int *v) {
 #define STRINGIZE_DETAIL(x) #x
 #define STRINGIZE(x) STRINGIZE_DETAIL(x)
 
-// defined in cli_output.c
-__attribute__((cold))
-__attribute__((format(printf, 1, 2)))
-__attribute__((noreturn))
-void cfgfs_assert_fail(const char *fmt, ...);
+#define MAKE_ASSERTDATA(ident, fmt_, func_, expr_) \
+	static const struct assertdata ident = { \
+		.fmt = fmt_, \
+		.func = func_, \
+		.expr = "" expr_ "", \
+	}; \
+	CHECK_FMT_STR(fmt_, func_, expr_)
+
+#define ASSERT_FAIL_NO_FMT(s) ASSERT_FAIL_WITH_FMT("%s", s)
+#define ASSERT_FAIL_WITH_FMT(fmt, s) \
+	({ \
+		MAKE_ASSERTDATA(assertdata, \
+		    EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: " fmt "\n", \
+		    __func__, \
+		    s); \
+		assert_fail(&assertdata); \
+		asm("hlt"); \
+		__builtin_unreachable(); \
+	})
 
 #define assert2(v, s) \
 	({ \
 		if (unlikely(!(v))) { \
-			cfgfs_assert_fail(EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: Assertion failed: %s\n", __func__, (s)); \
+			ASSERT_FAIL_WITH_FMT("Assertion failed: %s", s); \
 			compiler_enforced_unreachable(); \
 		} \
 	})

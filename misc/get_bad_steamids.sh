@@ -1,30 +1,33 @@
-do_console_logs() {
-	echo console.log
-	cat \
-	    ~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf/console.log.old \
-	    console.log \
-	2>/dev/null | perl -0777 -e '
-	foreach (<>=~m/# +[0-9]+ "(?=.{0,31}(?:valve|nigger|\n)).{0,32}"(?=[^\n]{40}) +(\[U:1:[0-9]+\]) +[:0-9]+ +[0-9]+ +[0-9]+ [a-z]+\n/gis) {
-		print("$_\n");
-	}
-	' | awk '!t[$0]++'
-}
 do_list() {
 	echo "$1"
-	curl -s --compressed "$2" | jq -r '.players[] | select(.attributes | index("cheater")) | .steamid'
+	mkdir -p misc/lists
+	outfile=misc/lists/$1.json
+	time_cond=
+	if [ -e $outfile ]; then
+		time_cond="--time-cond $outfile"
+	fi
+	curl \
+	    --compressed \
+	    --no-progress-meter \
+	    --output "$outfile" \
+	    --remote-time \
+	    --tcp-fastopen \
+	    ${time_cond} \
+	    "$2"
+	jq -r '.players[] | select(.attributes | index("cheater")) | .steamid' <"$outfile"
 	if [ $? -ne 0 ]; then
 		>&2 echo "error parsing list '$1'"
 	fi
 }
-do_list_local() {
-	echo "$1"
-	grep -Po '^\s*\K\[U:1:[0-9]+\]' "$2"
-}
 {
 if [ -e misc/bots.list ]; then
-	do_list_local bots.list misc/bots.list
+	echo bots.list
+	grep -Po '^\s*\K\[U:1:[0-9]+\]' misc/bots.list
 fi
-do_console_logs
+{
+	echo cfgfs_log
+	cat logs/*.log | grep -Po '(blu|red): .* \K\[U:1:[0-9]+\]: (impossible name|name stealer|known bot name)' | sort -Vu
+}
 # https://github.com/PazerOP/tf2_bot_detector/wiki/Customization#third-party-player-lists-and-rules
 do_list milenko 'https://incontestableness.github.io/milenko-lists/playerlist.milenko-cumulative.json'
 do_list pazer 'https://raw.githubusercontent.com/PazerOP/tf2_bot_detector/master/staging/cfg/playerlist.official.json'
