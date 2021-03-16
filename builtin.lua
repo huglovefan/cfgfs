@@ -155,7 +155,8 @@ end
 
 -- crappy event loop thing
 
--- list of timeout objects with properties:
+-- list of coroutines waiting to be resumed
+-- contains objects with properties:
 --   co: the coroutine
 --   target: timestamp of when it should be resumed
 --   gen: value of ev_generation_counter when it was added
@@ -179,8 +180,9 @@ ev_error_handlers = setmetatable({}, {__mode = 'k'}) -- local
 -- (this is badly named)
 local ev_return_handlers = setmetatable({}, {__mode = 'k'})
 
-local sym_ready = {}
-local sym_wait = {}
+-- unique values for yielding
+local sym_ready = {} -- ev_loop_co is ready to be reused
+local sym_wait = {} -- coroutine used wait() and put itself in the list
 
 -- ev_loop_co: used for calling functions in a coroutine context without
 --  creating a new coroutine each time for that
@@ -190,28 +192,29 @@ local ev_loop_fn
 
 local ev_call
 
-local ev_outoftheway = function () -- i had a descriptive name for this before but i forgot what it was
-	if coroutine.running() == ev_loop_co then
-		ev_loop_co = coroutine.create(ev_loop_fn)
-	end
-end
-
 do
 	local ev_loop_fn_main = function (...)
 		local args = {...}
 		local this_co = coroutine.running()
 		while true do
 			args[1](select(2, table.unpack(args)))
+
+			-- the thing we called used yield so we're not the main
+			--  coroutine anymore
 			if ev_loop_co ~= this_co then
 				break
 			end
+
+			-- clear state, pretend this is a new coroutine
 			ev_error_handlers[this_co] = nil
 			ev_return_handlers[this_co] = nil
+
 			args = {coroutine.yield(sym_ready)}
 		end
 	end
 	local ev_loop_fn_catch = function (err)
-		-- note: the two return values are in a table because this function can only return one value
+		-- note: the two return values are in a table because this
+		--  function can only return one value
 		return {err, debug.traceback(err, 2)}
 	end
 	ev_loop_fn = function (...)
@@ -222,11 +225,16 @@ ev_loop_co = coroutine.create(ev_loop_fn)
 
 local ev_handle_return = function (co, ok, rv1, rv2)
 	if ok then
+		-- user coroutine yielded/erred?
 		if co == ev_loop_co and rv1 ~= sym_ready then
 			ev_loop_co = coroutine.create(ev_loop_fn)
 		end
+
+		-- pcall threw up and the coroutine died?
 		if rv1 == false and coroutine.status(co) == 'dead' then
 			-- note: rv2 is the return value from ev_loop_fn_catch()
+
+			-- someone wants to know about this error?
 			local handler = ev_error_handlers[co]
 			if handler then
 				ev_error_handlers[co] = nil
@@ -234,28 +242,31 @@ local ev_handle_return = function (co, ok, rv1, rv2)
 			else
 				eprintln('\aerror: %s', rv2[2])
 			end
+
 			local ok, err = coroutine.close(co) -- can this yield?
 			if not ok then
 				eprintln('\aerror: %s', err)
 			end
 		end
+
+		-- someone wants to know about this return?
 		local cb = ev_return_handlers[co]
 		if cb then
 			ev_return_handlers[co] = nil
 			return ev_call(cb, co, cb)
 		end
 	else
-		local ok, err = coroutine.close(co)
-		if not ok then
-			eprintln('\aerror: %s', err)
-		end
-		-- idiot forgot to use pcall
+		-- some kind of a programmer error. ev_loop_fn uses pcall so we
+		--  should never get here
+
 		return error(rv1)
 	end
 end
 
-ev_call = function (fn, ...) -- local
-	ev_outoftheway()
+ev_call = function (fn, ...) -- note: this is declared as local above
+	if coroutine.running() == ev_loop_co then
+		ev_loop_co = coroutine.create(ev_loop_fn)
+	end
 	return ev_handle_return(ev_loop_co, coroutine.resume(ev_loop_co, fn, ...))
 end
 local ev_resume = function (co, ...)
@@ -386,63 +397,134 @@ end
 
 spinoff = ev_call
 
-local resume_cos = {}
-local resume_id = 0
-
--- i forgot what was the point of this
-reexec = function ()
-	local id = tostring(resume_id)
-	resume_id = resume_id+1
-	resume_cos[id] = assert(coroutine.running())
-	cfgf('exec"cfgfs/resume/%d', id)
-	return coroutine.yield()
-end
-
 --------------------------------------------------------------------------------
 
-local aliases = make_resetable_table()
-
-local binds_down = make_resetable_table()
-local binds_up = make_resetable_table()
+-- event stuff
 
 local events = make_resetable_table()
 
-unmask_next = make_resetable_table()
-
-is_pressed = {}
-for key in pairs(key2num) do
-	is_pressed[key] = false
-end
-setmetatable(is_pressed, {
-	__index = function (_, key)
-		return error(string.format('unknown key "%s"', key), 2)
-	end,
-})
-
-local num2class = {
-	'scout', 'soldier', 'pyro',
-	'demoman', 'heavyweapons', 'engineer',
-	'medic', 'sniper', 'spy',
-}
-
-local class2num = {}
-
-for num, class in ipairs(num2class) do
-	class2num[class] = num
+add_listener = function (name, cb)
+	if type(name) == 'string' then
+		local t = events[name]
+		if t then
+			table.insert(t, cb)
+			t[cb] = true
+		else
+			events[name] = {[1] = cb, [cb] = true}
+		end
+	elseif type(name) == 'table' then
+		for _, name in ipairs(name) do
+			add_listener(name, cb)
+		end
+	else
+		return error('add_listener: name must be a string or list of strings', 2)
+	end
 end
 
-_lookup_path = function (path)
-	local cnt = (unmask_next[path] or 0)
-	if cnt > 0 then
-		unmask_next[path] = cnt-1
-		return 0
+remove_listener = function (name, cb)
+	if type(name) == 'string' then
+		local t = events[name]
+		if t and t[cb] then
+			if #t > 1 then
+				for i = 1, #t do
+					if t[i] == cb then
+						table.remove(t, i)
+						t[cb] = nil
+						break
+					end
+				end
+			else
+				assert(#t == 1)
+				t[cb] = nil
+				events[name] = nil
+			end
+		end
+	elseif type(name) == 'table' then
+		for _, name in ipairs(name) do
+			remove_listener(name, cb)
+		end
+	else
+		return error('remove_listener: name must be a string or list of strings', 2)
 	end
-	if not (cfgfs.intercept_cfgs[path]
-	        or cfgfs.hide_cfgs[path])
-	then
-		return 0
+end
+
+local last_event_name = nil
+local event_was_cancelled = false
+local may_cancel_event = false
+
+fire_event = function (name, ...)
+	local rv = 0
+	local cancelled = false
+	local t = events[name]
+	if t then
+		local copy = {table.unpack(t)}
+		for _, cb in ipairs(copy) do
+			if t[cb] then
+				last_event_name = name
+
+				-- note: this may already be true if it's an
+				--  event handler firing this event
+				local old_m_c_e = may_cancel_event
+				may_cancel_event = true
+
+				if type(cb) == 'function' then
+					ev_call(cb, ...)
+				elseif type(cb) == 'thread' then
+					ev_resume(cb, ...)
+				end
+
+				rv = rv+1
+				may_cancel_event = old_m_c_e
+
+				if event_was_cancelled then
+					cancelled = true
+					event_was_cancelled = false
+					break
+				end
+			end
+		end
 	end
-	return 0xf
+	if cancelled then
+		rv = -rv
+	end
+	return rv
+end
+
+cancel_event = function ()
+	if may_cancel_event then
+		event_was_cancelled = true
+	else
+		return error('tried to cancel_event() outside an event handler', 2)
+	end
+end
+
+wait_for_event = function (name, timeout_opt)
+	local this_co = coroutine.running()
+	if this_co then
+		local canceldata = {}
+		if timeout_opt then
+			spinoff(function ()
+				if wait(timeout_opt, canceldata) then
+					last_event_name = nil
+					return ev_resume(this_co)
+				end
+			end)
+		end
+		add_listener(name, this_co)
+		local t = {coroutine.yield()}
+		remove_listener(name, this_co)
+		cancel_wait(canceldata)
+		return last_event_name, table.unpack(t)
+	else
+		return error('tried to wait_for_event() outside a coroutine', 2)
+	end
+end
+
+-- like wait_for_event() but usable in a for-in loop
+wait_for_events = function (name, timeout_opt)
+	return function ()
+		return wait_for_event(name, timeout_opt)
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -452,7 +534,8 @@ end
 cfg = assert(_cfg)
 cfgf = function (fmt, ...) return cfg(string.format(fmt, ...)) end
 
--- note: these are separate tables so that reassigning a value always calls __newindex()
+-- note: these are separate tables so that assigning an existing value calls
+--  __newindex() too
 local cmd_fns = make_resetable_table()
 local cmdv_fns = make_resetable_table()
 local cmdp_fns = make_resetable_table()
@@ -620,6 +703,9 @@ cvar = setmetatable({--[[ empty ]]}, {
 
 --------------------------------------------------------------------------------
 
+local binds_down = make_resetable_table()
+local binds_up = make_resetable_table()
+
 local click_key_bound = false
 
 bind = function (key, cmd, cmd2)
@@ -672,120 +758,32 @@ end
 
 --------------------------------------------------------------------------------
 
-add_listener = function (name, cb)
-	if type(name) == 'string' then
-		local t = events[name]
-		if t then
-			table.insert(t, cb)
-			t[cb] = true
-		else
-			events[name] = {[1] = cb, [cb] = true}
-		end
-	elseif type(name) == 'table' then
-		for _, name in ipairs(name) do
-			add_listener(name, cb)
-		end
-	else
-		return error('add_listener: name must be a string or list of strings', 2)
+local unmask_next = make_resetable_table()
+
+_lookup_path = function (path)
+	local cnt = (unmask_next[path] or 0)
+	if cnt > 0 then
+		unmask_next[path] = cnt-1
+		return 0
 	end
+
+	if not (cfgfs.intercept_cfgs[path]
+	        or cfgfs.hide_cfgs[path])
+	then
+		return 0
+	end
+
+	return 0xf
 end
 
-remove_listener = function (name, cb)
-	if type(name) == 'string' then
-		local t = events[name]
-		if t and t[cb] then
-			if #t > 1 then
-				for i = 1, #t do
-					if t[i] == cb then
-						table.remove(t, i)
-						t[cb] = nil
-						break
-					end
-				end
-			else
-				assert(#t == 1)
-				t[cb] = nil
-				events[name] = nil
-			end
-		end
-	elseif type(name) == 'table' then
-		for _, name in ipairs(name) do
-			remove_listener(name, cb)
-		end
-	else
-		return error('remove_listener: name must be a string or list of strings', 2)
-	end
+is_pressed = setmetatable({}, {
+	__index = function (_, key)
+		return error(string.format('unknown key "%s"', key), 2)
+	end,
+})
+for key in pairs(key2num) do
+	is_pressed[key] = false
 end
-
-local last_event_name = nil
-local event_was_cancelled = false
-local may_cancel_event = false
-
-fire_event = function (name, ...)
-	local rv = 0
-	local cancelled = false
-	local t = events[name]
-	if t then
-		local copy = {table.unpack(t)}
-		for _, cb in ipairs(copy) do
-			if t[cb] then
-				last_event_name = name
-				may_cancel_event = true
-
-				if type(cb) == 'function' then
-					ev_call(cb, ...)
-				elseif type(cb) == 'thread' then
-					ev_resume(cb, ...)
-				end
-
-				rv = rv+1
-				may_cancel_event = false
-
-				if event_was_cancelled then
-					cancelled = true
-					event_was_cancelled = false
-					break
-				end
-			end
-		end
-	end
-	if cancelled then
-		rv = -rv
-	end
-	return rv
-end
-
-cancel_event = function ()
-	assert(may_cancel_event, 'tried to cancel_event() outside an event handler')
-	event_was_cancelled = true
-end
-
-wait_for_event = function (name, timeout_opt)
-	local this_co = coroutine.running()
-	local canceldata = {}
-	if timeout_opt then
-		spinoff(function ()
-			if wait(timeout_opt, canceldata) then
-				last_event_name = nil
-				return ev_resume(this_co)
-			end
-		end)
-	end
-	add_listener(name, this_co)
-	local t = {coroutine.yield()}
-	remove_listener(name, this_co)
-	cancel_wait(canceldata)
-	return last_event_name, table.unpack(t)
-end
-
--- like wait_for_event() but usable in a for-in loop
-wait_for_events = function (name, timeout_opt)
-	return function ()
-		return wait_for_event(name, timeout_opt)
-	end
-end
-
---------------------------------------------------------------------------------
 
 _get_contents = function (path)
 	-- keybind?
@@ -924,12 +922,11 @@ _get_contents = function (path)
 		return
 	end
 	if path == '/cfgfs/click.cfg' then
-		-- new: only do timeouts specifically on click
-		-- this way timeouts and key events can't happen in the wrong order
 		_click_received()
 		return ev_do_timeouts()
 	end
 	if path == '/cfgfs/buffer.cfg' then
+		-- nothing to do, buffer contents are returned automatically
 		return
 	end
 
@@ -952,23 +949,9 @@ _get_contents = function (path)
 			end
 		end
 
-		local m = path:between('resume/', '.cfg')
-		if m then
-			local f = resume_cos[m]
-			if f then
-				resume_cos[m] = nil
-				return ev_resume(f)
-			else
-				return eprintln('warning: tried to resume nonexistent coroutine %s', m)
-			end
-		end
-
--- next (number) times cfgfs_getattr() gets a request about this file, say it doesn't exist
 		local m = path:after('unmask_next/')
 		if m then
-			local newval = 3
---			eprintln('unmask_next[%s]: %d -> %d (lua)', m, unmask_next[m] or 0, newval)
-			unmask_next[m] = newval
+			unmask_next[m] = 3
 			return
 		end
 
@@ -987,6 +970,7 @@ _get_contents = function (path)
 
 		return eprintln('warning: unknown cfgfs config "%s"', path)
 	else
+		-- is it config.cfg? output our license message for that
 		if path == 'config.cfg' then
 			cmd.echo('')
 			cmd.echo('cfgfs is free software released under the terms of the GNU AGPLv3 license.')
@@ -998,12 +982,24 @@ _get_contents = function (path)
 			cmd.echo('')
 		end
 
+		-- should exec the real one?
 		if not cfgfs.hide_cfgs[path] then
 			cfgf('exec"cfgfs/unmask_next/%s";exec"%s"', path, path)
 		end
 
+		-- is this a class config?
 		local cls = (path:before('.cfg') or path)
-		if class2num[cls] then
+		if ({
+			['scout'] = true,
+			['soldier'] = true,
+			['pyro'] = true,
+			['demoman'] = true,
+			['heavyweapons'] = true,
+			['engineer'] = true,
+			['medic'] = true,
+			['sniper'] = true,
+			['spy'] = true,
+		})[cls] then
 			fire_event('classchange', cls)
 		end
 	end
@@ -1409,7 +1405,9 @@ local colorize_game_message = function (line)
 	end
 
 	-- s*icide
-	local name = line:match('^(.+) suicided%.$')
+	local name =
+	    line:match('^(.+) suicided%.$') or
+	    line:match('^(.+) suicided%. %(crit%)$')
 	if name then
 		if not name2team[name] then
 			name2team[name] = 'unknown'

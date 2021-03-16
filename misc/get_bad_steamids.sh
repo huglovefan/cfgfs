@@ -26,7 +26,7 @@ if [ -e misc/bots.list ]; then
 fi
 {
 	echo cfgfs_log
-	cat logs/*.log | grep -Po '(blu|red): .* \K\[U:1:[0-9]+\]: (impossible name|name stealer|known bot name)' | sort -Vu
+	cat logs/*.log | grep -Po '(blu|red): .* \K\[U:1:[0-9]+\](?=: (impossible name|name stealer|known bot name))' | sort -Vu
 }
 # https://github.com/PazerOP/tf2_bot_detector/wiki/Customization#third-party-player-lists-and-rules
 do_list milenko 'https://incontestableness.github.io/milenko-lists/playerlist.milenko-cumulative.json'

@@ -301,7 +301,7 @@ cmd.unmute = function () cvar.voice_enable = 1 end
 
 add_listener('+m', function ()
 	if not is_pressed['ctrl'] then return end
-	cancel_bind()
+	cancel_event()
 	if 0 ~= tonumber(cvar.voice_enable) then
 		cmd.echo('muted')
 		cvar.voice_enable = 0
@@ -439,8 +439,7 @@ cvar.mat_disable_lightwarp = 0
 cvar.r_lightaverage = 0
 cvar.r_rimlight = 1
 
-cvar.r_dynamic = 1
-cvar.r_maxdlights = 32
+cvar.r_dynamic = 0
 
 local force_use_world_model = nil
 add_listener({'classchange', 'slotchange'}, function ()
@@ -677,9 +676,13 @@ listupdate = function ()
 	bad_steamids = {}
 	local cnt = 0
 	for line in sh('timeout 10 sh misc/get_bad_steamids.sh'):lines() do
-		local steamid, lists = assert(line:match('^(%S+)%s+(%S+)$'))
-		bad_steamids[steamid] = lists
-		cnt = cnt+1
+		local steamid, lists = line:match('^(%S+)%s+(%S+)$')
+		if steamid then
+			bad_steamids[steamid] = lists
+			cnt = cnt+1
+		else
+			eprintln('listupdate: failed to parse line: "%s"', line)
+		end
 	end
 	if oldcnt ~= -1 then
 		println('listupdate: loaded %d steamids (%d new)',
@@ -998,7 +1001,10 @@ end
 local check_bot = function (t, players, grasp_at_straws)
 	local reasons = {}
 	do
-		local clean = t.name:lower():frobnicate()
+		local clean = t.name
+		    :gsub('[\x7f-\xff]', '')
+		    :lower()
+		    :frobnicate()
 		if (
 			clean:find(' ', 1, true) or
 			clean:find('DCMMOX', 1, true) or
@@ -1010,11 +1016,13 @@ local check_bot = function (t, players, grasp_at_straws)
 	do
 		local clean = t.name
 		    :gsub('^%([0-9]+%)', '', 1)
-		    :gsub('[\u{200f}\u{202d}\u{0e4a}]', '')
+		    :gsub('[\x7f-\xff]', '')
 		    :frobnicate()
 		if (
 			clean == 'YBEZZS\x04MM\x05jN\x19LI\x1aD\x1c' or
-			clean == '~]CFCMB^\nyZKXAFO\nR\n\x1e\x18'
+			clean == '~]CFCMB^\nyZKXAFO\nR\n\x1e\x18' or
+			clean == 'egomk~xedci' or
+			clean == 'nEI^EX\ndMMOXACFFOX'
 		) then
 			table.insert(reasons, 'known bot name')
 		end
@@ -1026,7 +1034,11 @@ local check_bot = function (t, players, grasp_at_straws)
 		table.insert(reasons, 'on lists: ' .. bad_steamids[t.steamid])
 	end
 	if grasp_at_straws and t.steamname then
-		if mangle_name(t.steamname) ~= t.name then
+		local mangled = mangle_name(t.steamname)
+		if not (
+			mangled == t.name or
+			mangled == t.name:gsub('^%([0-9]+%)', '', 1)
+		) then
 			table.insert(reasons, string.format(
 			    'steam name differs: %s',
 			    string.escape(t.steamname)))
