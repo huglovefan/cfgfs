@@ -8,14 +8,25 @@ if [ $# -eq 0 ]; then
 	exit 1
 fi
 
+>&2 echo "== cfgfs starting for app ${SteamAppId} =="
+
 # pwd:
 # [[/home/human/.local/share/Steam/steamapps/common/Team Fortress 2]]
 # %command%:
 # [['/home/human/.local/share/Steam/steamapps/common/Team Fortress 2/hl2.sh' -game tf -steam]]
 
-t=$(realpath -- "$0") || exit
-t=$(dirname -- "$t") || exit
-[ -e "$t/cfgfs" ] || exit
+# temporarily unset these to reduce warning spam
+ld_library_path=$LD_LIBRARY_PATH; unset LD_LIBRARY_PATH
+ld_preload=$LD_PRELOAD; unset LD_PRELOAD
+
+if ! { t=$(realpath -- "$0") && t=$(dirname -- "$t"); }; then
+	>&2 echo "cfgfs_run: failed to find the cfgfs directory!"
+	exit 1
+fi
+if ! [ -f "$t/cfgfs" -a -x "$t/cfgfs" ]; then
+	>&2 echo "cfgfs_run: cfgfs executable not found!"
+	exit 1
+fi
 
 export CFGFS_STARTTIME="$(date +%s)"
 
@@ -38,23 +49,23 @@ find_gamedir_from_cmdline() {
 	return 1
 }
 if ! find_gamedir_from_cmdline "$@"; then
-	>&2 echo "cfgfs_run: missing -game parameter"
+	>&2 echo "cfgfs_run: -game parameter missing or not set to a valid value"
 	exit 1
 fi
 
-cfgfs_mountpoint=$gamedir/custom/!cfgfs/cfg
+# note: the "!cfgfs" name is hardcoded in other places too
+gamedir_to_cfgfs_mount_path=custom/!cfgfs/cfg
 
-mkdir -p "$cfgfs_mountpoint" || exit
+cfgfs_mountpoint=$gamedir/$gamedir_to_cfgfs_mount_path
 
 {
-cd -- "$cfgfs_dir" || exit
+if ! cd "$cfgfs_dir"; then
+	>&2 echo "cfgfs_run: failed to cd to the cfgfs directory!"
+	exit 1
+fi
 
 # steam sets this to "C" which breaks unicode support in xterm
 if [ "$LC_ALL" = "C" ]; then unset LC_ALL; fi
-
-# steam sets these to funny values which breaks things
-unset LD_PRELOAD
-unset LD_LIBRARY_PATH
 
 export GAMEDIR="$gamedir"
 export GAMEROOT="$gameroot"
@@ -66,10 +77,13 @@ if [ -f "$gamedir/gameinfo.txt" ] && \
    gamename=$(grep -Poim1 '^\s*(?:game\s|"game")\s*(?:"\K[^"]*(?=(?:"\s*)?$)|\K.*?(?=\s*$))' "$gamedir/gameinfo.txt") \
 ; then
 	export GAMENAME="$gamename"
+else
+	>&2 echo "cfgfs_run: failed to parse game name from gameinfo.txt!"
+	exit 1
 fi
 
 if [ -z "$CFGFS_SCRIPT" ]; then
-	# note: SteamAppId is defined by steam
+	# note: SteamAppId is set by steam
 	export CFGFS_SCRIPT=script_${SteamAppId}.lua
 	if [ ! -e "$CFGFS_SCRIPT" ]; then
 		{
@@ -79,57 +93,133 @@ if [ -z "$CFGFS_SCRIPT" ]; then
 		} >>"$CFGFS_SCRIPT"
 	fi
 fi
+
 export CFGFS_RUN_PID=$$
 while true; do
-	xterm -title "cfgfs (${GAMENAME:-App ID ${SteamAppId}})" -e /bin/sh cfgfs_failsafe.sh "$cfgfs_mountpoint"
-	if ! { pstree -aAclntT -p "$CFGFS_RUN_PID" | awk '/\+exec cfgfs\/init/{f=1}END{exit(!f)}'; }; then
+	xterm \
+	    -title "cfgfs (${GAMENAME:-App ID ${SteamAppId}})" \
+	    -e /bin/sh cfgfs_failsafe.sh "$cfgfs_mountpoint"
+
+	# is xterm even installed?
+	if [ $? -ne 0 ] && ! command -v xterm >/dev/null; then
+		>&2 echo "cfgfs_run: xterm not installed!"
 		break
 	fi
+
+	for delay in "" 0.2; do
+		if [ -n "$delay" ]; then command sleep "$delay"; fi
+
+		# has cfgfs_run exited yet?
+		if [ ! -e "/proc/$CFGFS_RUN_PID" ]; then
+			exit 0
+		fi
+	done
+
 	export CFGFS_RESTARTED=1
 	export CFGFS_TERMINAL_CLOSED=1
 done
 } &
 cfgfs_term_pid=$!
 
+# check that cfgfs is up and running (not only up or running but both)
+check_cfgfs_works() {
+	# what does mountpoint -q say?
+	# this uses stat(), which has a few problems
+	# - it can freeze the "mountpoint" process in case the filesystem is
+	#    running but unresponsive
+	# - it can return a false result in case the cfgfs process has crashed
+	#    but stat("/") was cached by the kernel
+	# to avoid the hang, a short timeout is used here
+	# to avoid the false result, a second check is done after this
+	if timeout 0.1 mountpoint -q "$cfgfs_mountpoint"; then
+		# test if we can open and close a file from the filesystem.
+		# - this must be open() because stat() calls are cached
+		# - opening and closing a config has no side effects if we don't
+		#    read any data from it (source also likes opening and
+		#    closing config files for fun)
+		# - this must use timeout because the open() call can hang if
+		#    the filesystem is in a bad state
+		if F=$cfgfs_mountpoint/cfgfs/buffer.cfg timeout 0.1 sh -c 'exec <"$F"'; then
+			# ok: opening and closing a file works, filesystem must
+			#  be up (and running) now
+			return 0
+		else
+			return 1
+		fi
+	else
+		return 1
+	fi
+}
+
 wait_cfgfs_ready() {
 	iter=1
 	while true; do
-		if mountpoint -q "$cfgfs_mountpoint"; then
-			return 0
-		fi
 		if [ ! -e "/proc/$cfgfs_term_pid" ]; then
+			>&2 echo "cfgfs_run: terminal process exited unexpectedly"
 			return 1
 		fi
+
+		# is it working yet?
+		if check_cfgfs_works; then
+			return 0
+		fi
+
 		if [ $iter -le 10 ]; then
+			# note: the built-in sleep in dash doesn't support
+			#  fractional sleeping, use GNU sleep which does
 			command sleep 0.1
-			# hope the non-builtin sleep supports fractional sleeping
 		else
-			sleep 1 || return 1
+			sleep 1
 		fi
 		iter=$((iter+1))
 	done
 }
 
-wait_cfgfs_ready || exit
-
-if [ -f "$gamedir/console.log" -a ! -L "$gamedir/console.log" ]; then
-	newname=$gamedir/console.log.old
-	if [ -e "$newname" ]; then
-		newname=$gamedir/console.log.$(date +%s)
-	fi
-	mv -fv "$gamedir/console.log" "$newname"
+if ! wait_cfgfs_ready; then
+	# unmount in case it's stuck or something. we're not going to launch the
+	#  game anyway
+	fusermount -u "$cfgfs_mountpoint" 2>/dev/null &
+	exit 1
 fi
-ln -sfv custom/!cfgfs/cfg/console.log "$gamedir/console.log"
 
-command "$@" \
-    -condebug \
-    +exec cfgfs/init
+link_console_log() {
+	# if console.log is a real file, move it out of the way first
+	if [ -f "$gamedir/console.log" -a ! -L "$gamedir/console.log" ]; then
+		newname=$gamedir/console.log.old
+		if [ -e "$newname" ]; then
+			newname=$gamedir/console.log.$(date +%s)
+		fi
+		mv -fv "$gamedir/console.log" "$newname"
+	fi
+
+	if ! ln -sfv "$gamedir_to_cfgfs_mount_path/console.log" "$gamedir/console.log"; then
+		>&2 echo "cfgfs_run: failed to symlink console.log!"
+	fi
+}
+unlink_console_log() {
+	if [ -L "$gamedir/console.log" ]; then
+		rm -fv "$gamedir/console.log"
+	fi
+}
+
+link_console_log
+
+(
+	if [ -n "$ld_library_path" ]; then export LD_LIBRARY_PATH="$ld_library_path"; fi
+	if [ -n "$ld_preload" ]; then export LD_PRELOAD="$ld_preload"; fi
+
+	# -condebug: redirect console output to console.log early
+	exec "$@" \
+	    -condebug \
+	    +exec cfgfs/init
+)
 rv=$?
+if [ $rv -ne 0 ]; then
+	>&2 echo "cfgfs_run: game exited with status $rv"
+fi
+
+unlink_console_log
 
 fusermount -u "$cfgfs_mountpoint" 2>/dev/null &
-
-if [ -L "$gamedir/console.log" ]; then
-	rm -fv "$gamedir/console.log"
-fi
 
 exit $rv

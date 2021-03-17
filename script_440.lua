@@ -693,11 +693,13 @@ listupdate = function ()
 	oldcnt = cnt
 end
 
-add_listener('startup', function ()
-	panic = fatal
-	listupdate()
-	panic = nil
-end)
+if not os.getenv('NO_LISTUPDATE') then
+	add_listener('startup', function ()
+		panic = fatal
+		listupdate()
+		panic = nil
+	end)
+end
 
 local parse_status = function ()
 	local players = {}

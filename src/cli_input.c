@@ -50,15 +50,12 @@ __attribute__((cold))
 static void linehandler(char *line) {
 	cli_reading_line = false;
 
-	if (line != NULL) {
-		if (*line != '\0') {
-			lua_State *L = lua_get_state("cli_input");
-			if (L == NULL) goto lua_done;
-			 lua_getglobal(L, "_cli_input");
-			  lua_pushstring(L, line);
-			lua_call(L, 1, 0);
-			lua_release_state(L);
-lua_done:;
+	if (likely(line != NULL)) {
+		if (likely(*line != '\0')) {
+			// write the history item first so that it's saved even
+			//  if the command causes cfgfs to crash
+			// (convenient for testing)
+
 			bool same_as_last_history_item =
 			    (history_length != 0 &&
 			     0 == strcmp(line, history_get(history_length)->line));
@@ -68,6 +65,13 @@ lua_done:;
 				append_history(1, HISTORY_FILE);
 			}
 
+			lua_State *L = lua_get_state("cli_input");
+			if (likely(L != NULL)) {
+				 lua_getglobal(L, "_cli_input");
+				  lua_pushstring(L, line);
+				lua_call(L, 1, 0);
+				lua_release_state(L);
+			}
 		}
 	} else {
 		cli_got_eof = true;

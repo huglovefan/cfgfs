@@ -61,6 +61,7 @@ CFLAGS += \
           -Wno-disabled-macro-expansion \
           -Wno-format-nonliteral \
           -Wno-gnu-auto-type \
+          -Wno-gnu-binary-literal \
           -Wno-gnu-conditional-omitted-operand \
           -Wno-gnu-statement-expression \
           -Wno-gnu-zero-variadic-macro-arguments \

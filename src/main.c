@@ -36,7 +36,7 @@
 
 static pthread_t g_main_thread;
 
-// true if we're exiting because main_quit() was called
+// true if main_quit() has been called (checked during exit)
 static bool main_quit_called;
 
 __attribute__((cold))
@@ -61,9 +61,15 @@ union sft_ptr {
 	enum special_file_type sft;
 };
 
+#define FILE_TYPE_BITS      0b01111
+#define ORDINARY_CONFIG_BIT 0b10000
+
+#define FH_GET_TYPE(x) (enum special_file_type)((((union sft_ptr){.fh = x}).fh)&FILE_TYPE_BITS)
+#define FH_IS_ORDINARY(x) (int)((((union sft_ptr){.fh = x}).fh)&ORDINARY_CONFIG_BIT)
+
 #define MESSAGE_DIR_PREFIX "/message/"
 
-static int l_lookup_path(const char *restrict path);
+static int l_lookup_path(const char *restrict path, bool is_open);
 
 #define starts_with(self, other) \
 	(0 == memcmp(self, other, strlen(other)))
@@ -76,7 +82,9 @@ static int l_lookup_path(const char *restrict path);
 	 0 == memcmp(self, other, length))
 
 __attribute__((always_inline))
-static int lookup_path(const char *restrict path, union sft_ptr *type) {
+static int lookup_path(const char *restrict path,
+                       union sft_ptr *type,
+                       bool is_open) {
 	const char *slashdot = path;
 D	assert(*slashdot == '/');
 	const char *p = path;
@@ -124,15 +132,22 @@ D	assert(*slashdot == '/');
 
 	// it's probably a real config
 	// check with the lua function if we should intercept it or not
-	return l_lookup_path(path);
+	if (type) type->fh |= ORDINARY_CONFIG_BIT;
+	return l_lookup_path(path, is_open);
 }
 
 #undef starts_with
 #undef ends_with
 #undef equals
 
+// name of the last "ordinary" config that was opened, and how many times it was opened
+// the purpose of this is to detect the case when the game manually reads config.cfg at startup
+// we don't want to call into lua or return any buffer contents in that case because it'll be discarded
+static char last_opened_config_name[32];
+static unsigned int last_opened_config_cnt;
+
 __attribute__((noinline))
-static int l_lookup_path(const char *restrict path) {
+static int l_lookup_path(const char *restrict path, bool is_open) {
 	lua_State *L = lua_get_state("lookup_path()");
 	if (unlikely(L == NULL)) return -errno;
 	 lua_getglobal(L, "_lookup_path");
@@ -141,7 +156,16 @@ static int l_lookup_path(const char *restrict path) {
 	 int rv = (int)lua_tointeger(L, -1);
 	lua_pop(L, 1);
 D	assert(rv == 0 || rv == 0xd || rv == 0xf);
-	if (rv == 0) rv = -ENOENT;
+	if (rv == 0) {
+		rv = -ENOENT;
+	} else if (rv == 0xf && is_open) {
+		if (0 == strcmp(path, last_opened_config_name)) {
+			last_opened_config_cnt += 1;
+		} else {
+			snprintf(last_opened_config_name, sizeof(last_opened_config_name), "%s", path);
+			last_opened_config_cnt = 0;
+		}
+	}
 	lua_release_state_no_click(L);
 	return rv;
 }
@@ -155,7 +179,7 @@ static int cfgfs_getattr(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_getattr: %s", path);
 
-	int rv = lookup_path(path, NULL);
+	int rv = lookup_path(path, NULL, false);
 
 	if (rv == 0xf) {
 		stbuf->st_mode = 0444|S_IFREG;
@@ -178,7 +202,7 @@ static int cfgfs_open(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_open: %s", path);
 
-	int rv = lookup_path(path, (union sft_ptr *)&fi->fh);
+	int rv = lookup_path(path, (union sft_ptr *)&fi->fh, true);
 
 	if (rv == 0xf) {
 		return 0;
@@ -206,14 +230,6 @@ V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 
 	if (unlikely(offset != 0)) return 0;
 
-	// check that it's not some special file. we only support reading configs here
-	enum special_file_type sft;
-	memcpy(&sft, &fi->fh, sizeof(enum special_file_type));
-	if (unlikely(sft != sft_none)) {
-V		eprintln("cfgfs_read: can't read this type of file!");
-		return -EOPNOTSUPP;
-	}
-
 	if (unlikely(size < reported_cfg_size)) {
 		eprintln("\acfgfs_read: read size too small! expected at least %zu, got only %zu",
 		    reported_cfg_size, size);
@@ -221,8 +237,32 @@ D		abort();
 		return -EOVERFLOW;
 	}
 
+	// check that it's not some special file. we only support reading configs here
+	if (unlikely(FH_GET_TYPE(fi->fh) != sft_none)) {
+V		eprintln("cfgfs_read: can't read this type of file!");
+		return -EOPNOTSUPP;
+	}
+
+	// catch the game manually reading config.cfg at startup so we don't
+	//  lose any buffer contents to that
+	if (
+		unlikely(FH_IS_ORDINARY(fi->fh)) &&
+		unlikely(last_opened_config_cnt <= 1) &&
+		likely(0 == strcmp(path, last_opened_config_name))
+	) {
+		last_opened_config_cnt = 0;
+		if (unlikely(0 != strcmp(path, "/config.cfg"))) {
+			eprintln("cfgfs_read: warning: ignoring manual read of %s",
+			    path+1);
+		}
+		return 0;
+	}
+
 	// /unmask_next/ must not return buffer contents (can mess up the order)
-	bool silent = starts_with(path, "/cfgfs/unmask_next/");
+	bool silent = false;
+	if (unlikely(starts_with(path, "/cfgfs/unmask_next/"))) {
+		silent = true;
+	}
 
 	lua_State *L = lua_get_state("cfgfs_read()");
 	if (unlikely(L == NULL)) {
@@ -310,7 +350,7 @@ static int cfgfs_write(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
-	switch (((union sft_ptr){.fh = fi->fh}).sft) {
+	switch (FH_GET_TYPE(fi->fh)) {
 	case sft_console_log: {
 		static pthread_mutex_t logcatcher_lock = PTHREAD_MUTEX_INITIALIZER;
 		static char logbuffer[8192];
@@ -416,7 +456,7 @@ V	eprintln("control_do_line: line=[%.*s]", (int)size, line);
 
 static int cfgfs_release(const char *path, struct fuse_file_info *fi) {
 V	eprintln("cfgfs_release: %s", path);
-	switch (((union sft_ptr){.fh = fi->fh}).sft) {
+	switch (FH_GET_TYPE(fi->fh)) {
 	case sft_none:
 		return 0;
 	case sft_message: {
