@@ -27,6 +27,8 @@ static inline void buffer_free(struct buffer *self) {
 	free(self);
 }
 
+void buffer_make_full(struct buffer *self);
+
 // -----------------------------------------------------------------------------
 
 struct buffer_list {

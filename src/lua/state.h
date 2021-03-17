@@ -26,3 +26,5 @@ void lua_unlock_state_and_click(void);
 
 #define lua_release_state_and_click(L) ({ (void)(L); lua_unlock_state_and_click(); })
 #define lua_release_state_no_click(L) ({ (void)(L); lua_unlock_state_no_click(); })
+
+int l_get_locker(lua_State *L);

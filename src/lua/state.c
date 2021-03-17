@@ -117,3 +117,8 @@ _Bool lua_lock_state_unchecked(void) {
 void lua_unlock_state_unchecked(void) {
 	pthread_mutex_unlock(&lua_mutex);
 }
+
+int l_get_locker(lua_State *L) {
+	lua_pushstring(L, locked_by);
+	return 1;
+}

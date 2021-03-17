@@ -29,9 +29,9 @@ static void buffer_add_line(struct buffer *restrict self,
 	memcpy(p, buf, sz);
 }
 
-__attribute__((cold))
+__attribute__((minsize))
 __attribute__((noinline))
-static void buffer_make_full(struct buffer *self) {
+void buffer_make_full(struct buffer *self) {
 D	assert(!self->full);
 	self->full = true;
 

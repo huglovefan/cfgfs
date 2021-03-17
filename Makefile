@@ -21,6 +21,7 @@ OBJS = \
        src/main.o \
        src/buffers.o \
        src/buffer_list.o \
+       src/immediate_entry.o \
        src/lua/state.o \
        src/lua/builtins.o \
        src/cli_output.o \

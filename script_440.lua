@@ -1024,7 +1024,8 @@ local check_bot = function (t, players, grasp_at_straws)
 			clean == 'YBEZZS\x04MM\x05jN\x19LI\x1aD\x1c' or
 			clean == '~]CFCMB^\nyZKXAFO\nR\n\x1e\x18' or
 			clean == 'egomk~xedci' or
-			clean == 'nEI^EX\ndMMOXACFFOX'
+			clean == 'nEI^EX\ndMMOXACFFOX' or
+			clean == 'aCDM\ndMMOXACFFOX'
 		) then
 			table.insert(reasons, 'known bot name')
 		end

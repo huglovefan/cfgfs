@@ -28,6 +28,7 @@
 #include "cli_input.h"
 #include "cli_output.h"
 #include "click.h"
+#include "immediate_entry.h"
 #include "lua.h"
 #include "macros.h"
 #include "reloader.h"
@@ -64,8 +65,8 @@ union sft_ptr {
 #define FILE_TYPE_BITS      0b01111
 #define ORDINARY_CONFIG_BIT 0b10000
 
-#define FH_GET_TYPE(x) (enum special_file_type)((((union sft_ptr){.fh = x}).fh)&FILE_TYPE_BITS)
-#define FH_IS_ORDINARY(x) (int)((((union sft_ptr){.fh = x}).fh)&ORDINARY_CONFIG_BIT)
+#define FH_GET_TYPE(x) (enum special_file_type)((x) & FILE_TYPE_BITS)
+#define FH_IS_ORDINARY(x) (((x) & ORDINARY_CONFIG_BIT) != 0)
 
 #define MESSAGE_DIR_PREFIX "/message/"
 
@@ -264,7 +265,7 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 		silent = true;
 	}
 
-	lua_State *L = lua_get_state("cfgfs_read()");
+	lua_State *L = lua_get_state("cfgfs_read");
 	if (unlikely(L == NULL)) {
 		return -errno;
 	}
@@ -281,14 +282,31 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 	if (likely(!silent)) {
 		struct buffer *ent = buffer_list_grab_first(&buffers);
 D		assert(ent != NULL); // should be fakebuf or a real one
-		size_t outsize = buffer_get_size(ent);
-		rv = (int)outsize;
+
+		// is this even a good idea
+		if (
+			likely(!ent->full) &&
+			unlikely(expecting_immediate_entry > 0)
+		) {
+			lua_release_state_no_click(L);
+			buffer_make_full(ent);
+			rv = (int)buffer_get_size(ent);
+			if (unlikely(ent != &fakebuf)) {
+				buffer_memcpy_to(ent, buf, buffer_get_size(ent));
+				buffer_free(ent);
+			}
+			wait_immediate_entries();
+			goto out_unlocked;
+		}
+
+		rv = (int)buffer_get_size(ent);
 		if (unlikely(ent != &fakebuf)) {
-			buffer_memcpy_to(ent, buf, outsize);
+			buffer_memcpy_to(ent, buf, buffer_get_size(ent));
 			buffer_free(ent);
 		}
 	}
 	lua_release_state_no_click(L);
+out_unlocked:
 	VV {
 		if (rv >= 0) {
 			eprintln("data=[[%.*s]] rv=%d", rv, buf, rv);

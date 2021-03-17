@@ -1585,25 +1585,29 @@ end
 -- non-blocking child processes
 
 local linereader = function (got_line)
-	local data = {}
+	local data = ''
 	return function (s)
 		if s then
 			local i = 1
 			while i <= #s do
 				local nlpos = s:find('\n', i, true)
 				if nlpos then
-					got_line(table.concat(data, '') .. s:sub(i, nlpos-1))
-					data = {}
+					if data == '' then
+						got_line(s:sub(i, nlpos-1))
+					else
+						got_line(data .. s:sub(i, nlpos-1))
+						data = ''
+					end
 					i = nlpos+1
 				else
-					table.insert(data, s:sub(i))
+					data = data .. s:sub(i)
 					break
 				end
 			end
 		else
-			if #data ~= 0 then
-				got_line(table.concat(data, ''))
-				data = {}
+			if data ~= '' then
+				got_line(data)
+				data = ''
 			end
 			got_line(nil)
 		end
@@ -1645,30 +1649,43 @@ sh = function (cmd, mode)
 	local readable = not not mode:find('r')
 	local writable = not not mode:find('w')
 
-	local p = io.popen([[
+	local s =
+		-- line 1
+		'chan=' .. shellquote(chan) .. ';' ..
+		-- line 2
+		'CFGFS_PID_CHAN="${CFGFS_MOUNTPOINT}/message/${chan}.pid" ' ..
+		    -- if the command is writable, then the 'w' flag is passed
+		    --  to io.popen which makes stdin be a pipe (ok)
+		    -- if it's not writable, then we should redirect stdin away
+		    --  from the terminal so that the command doesn't try to
+		    --  read from it
+		    ((writable) and
+		        '' or
+		        '0<>/dev/null ') ..
+		    -- if the command is readable, then redirect stdout to a
+		    --  message channel we can read
+		    -- if it's not readable and not writable, then io.popen('r')
+		    --  was used which makes stdout a pipe. need to redirect it
+		    --  to the terminal in this case
+		    ((readable) and
+		        '>"${CFGFS_MOUNTPOINT}/message/${chan}" ' or
+		        ((writable) and
+		            '' or
+		            '>&2 ')) ..
+		'sh -c ' ..
+		    "'" ..
+		        'echo $$ >"$CFGFS_PID_CHAN";' ..
+		        'unset CFGFS_PID_CHAN;' ..
+		    "'" ..
+		    shellquote(cmd) ..
+		    ';' ..
+		-- line 3
+		'echo $? >"${CFGFS_MOUNTPOINT}/message/${chan}.rv"'
 
-	chan=]]..shellquote(chan)..'\n'..[[
-
-	# redirect this early so that the close is always received
-	exec >"${CFGFS_MOUNTPOINT}/message/${chan}.rv"
-
-	(
-		set -e
-		if ]]..tostring(readable)..[[; then
-			exec >"${CFGFS_MOUNTPOINT}/message/${chan}"
-		else
-			exec >&2
-		fi
-		if ! ]]..tostring(writable)..[[; then
-			exec 0<>/dev/null
-		fi
-		sh -c 'echo $PPID' >"${CFGFS_MOUNTPOINT}/message/${chan}.pid"
-		exec sh -c ]]..shellquote(cmd)..'\n'..[[
-	)
-
-	echo $?
-
-	]], (writable and 'w' or 'r'))
+	-- writable -> stdin is a pipe
+	-- readable -> stdout is a pipe
+	-- but we implement our own "readable" flag so only care about 'w' here
+	local p = io.popen(s, ((writable) and 'w' or 'r'))
 
 	local lr = nil
 	local ar = nil
