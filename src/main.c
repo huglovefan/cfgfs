@@ -323,42 +323,6 @@ out_unlocked:
 
 static int cfgfs_write_control(const char *data, size_t size);
 
-// locking for the static buffer in cfgfs_write() -> case sft_console_log
-#define BUFFER_LOCK() ({ if (!buffer_locked) { buffer_locked = true; pthread_mutex_lock(&logcatcher_lock); } })
-#define BUFFER_RESET() ({ if (buffer_locked) p = logbuffer; })
-#define BUFFER_UNLOCK() ({ if (buffer_locked) { buffer_locked = false; pthread_mutex_unlock(&logcatcher_lock); } })
-
-// size check before a memcpy to that buffer
-#define SIZE_CHECK(size, errlabel) \
-	({ \
-		assert(buffer_locked); \
-		size_t buffer_used = (size_t)(p-logbuffer); \
-		size_t buffer_left = sizeof(logbuffer)-buffer_used; \
-		if (unlikely((size) > buffer_left)) { \
-D			eprintln("cfgfs_write: memcpy won't fit! buffer_used=%zu buffer_left=%zu size=%zu", \
-			    buffer_used, buffer_left, (size_t)(size)); \
-			rv = -E2BIG; \
-			goto errlabel; \
-		} \
-	})
-
-#define log_catcher_got_line(p, sz, errlabel) \
-	({ \
-		if (likely(!lua_locked)) { \
-			if (unlikely(!lua_lock_state("cfgfs_write()->sft_console_log"))) { \
-				rv = -errno; \
-				goto errlabel; \
-			} \
-			lua_locked = true; \
-		} \
-		lua_State *L = lua_get_state_already_locked(); \
-		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX); \
-		  lua_pushlstring(L, (p), (sz)); \
-		BUFFER_RESET(); \
-		BUFFER_UNLOCK(); \
-		lua_call(L, 1, 0); \
-	})
-
 __attribute__((hot))
 static int cfgfs_write(const char *restrict path,
                        const char *restrict data,
@@ -370,60 +334,23 @@ V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
 	switch (FH_GET_TYPE(fi->fh)) {
 	case sft_console_log: {
-		static pthread_mutex_t logcatcher_lock = PTHREAD_MUTEX_INITIALIZER;
-		static char logbuffer[8192];
-		static char *p = logbuffer;
-		bool lua_locked = false;
-		bool buffer_locked = false;
-		size_t insize = size;
-		int rv = (int)insize;
-
-		one_true_entry();
-		if (likely(size >= 2 && data[size-1] == '\n')) {
-			// writing a full line in one go
-			// may contain embedded newlines
-			log_catcher_got_line(data, size-1, out_full_write);
-		} else {
-			// idiot writing a line in multiple parts
-			BUFFER_LOCK();
-			do {
-				char *nl = memchr(data, '\n', size);
-				if (likely(nl == NULL)) {
-					// incoming data doesn't complete a line. add it to the buffer and get out
-					SIZE_CHECK(size, out_partial_write);
-					memcpy(p, data, size);
-					p += exchange(size, 0);
-				} else {
-					// incoming data completes a line
-
-					size_t partlen = (size_t)(nl-data);
-					SIZE_CHECK(partlen, out_partial_write);
-					memcpy(p, data, partlen);
-
-					size_t totallen = (size_t)(p-logbuffer)+partlen;
-					p = logbuffer;
-					data += partlen+1;
-					size -= partlen+1;
-
-					log_catcher_got_line(
-					    logbuffer,
-					    totallen,
-					    out_partial_write);
-				}
-			} while (unlikely(size != 0));
-out_partial_write:
-			BUFFER_UNLOCK();
+		bool complete = (size >= 2 && data[size-1] == '\n');
+		lua_State *L = lua_get_state("cfgfs_write/sft_console_log");
+		if (unlikely(L == NULL)) {
+			return -errno;
 		}
-out_full_write:
-		one_true_exit();
-		if (lua_locked) lua_unlock_state();
-		return rv;
+		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX);
+		  lua_pushlstring(L, data, likely(complete) ? size-1 : size);
+		   lua_pushboolean(L, complete);
+		lua_call(L, 2, 0);
+		lua_release_state(L);
+		return (int)size;
 	}
 	case sft_control:
 		return cfgfs_write_control(data, size);
 	case sft_message: {
 		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
-		lua_State *L = lua_get_state("cfgfs_write()->sft_message");
+		lua_State *L = lua_get_state("cfgfs_write/sft_message");
 		if (unlikely(L == NULL)) return -errno;
 		 lua_getglobal(L, "_message");
 		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));

@@ -376,19 +376,16 @@ add_listener('classchange', function (class)
 	end
 end)
 
-do
-	local myname = nil
-	spinoff(function ()
-		wait_for_event('classchange')
-		myname = cvar.name
-	end)
-	add_listener('player_killed', function (t)
+spinoff(function ()
+	wait_for_event('classchange')
+	local myname = cvar.name
+	for _, t in wait_for_events('player_killed') do
 		if t.killer == myname and t.weapon:find('deflect') then
 			wait(300)
 			cmd.voicemenu(2, 6) -- nice shot!
 		end
-	end)
-end
+	end
+end)
 
 --------------------------------------------------------------------------------
 
@@ -535,6 +532,7 @@ bind('e',                               'voicemenu 0 0')
 cmd.bind('r',                           '+reload')
 bind('t', function (_, key)
 	if is_pressed['alt'] then
+		cancel_event()
 		if force_use_world_model then
 			force_use_world_model = nil
 		else

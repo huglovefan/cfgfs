@@ -629,22 +629,25 @@ local get_cvars = function (t)
 			outcnt = outcnt+1
 		end
 	end
-	for _, line in wait_for_events('game_console_output', 1000) do
-		local mk, mv = line:match('"([^"]+)" = "([^"]*)"')
-		if mk then
-			if rv[mk] == false then
-				rv[mk] = mv
-				incnt = incnt+1
-				if mk == 'name' then -- hehe
-					own_name_known(mv)
+	for ev, line in wait_for_events({'game_console_output', 'game_console_output_jumbled'}, 1000) do
+		if ev == 'game_console_output_jumbled' then
+			local mk, mv = line:match('^"([^"]+)" = "(.*)"$')
+			if mk then
+				if rv[mk] == false then
+					rv[mk] = mv
+					incnt = incnt+1
+					if mk == 'name' then -- hehe
+						own_name_known(mv)
+					end
 				end
 			end
-		end
-		local mk = line:match('help:  no cvar or command named (.*)$')
-		if mk then
-			if rv[mk] == false then
-				rv[mk] = nil
-				incnt = incnt+1
+		elseif ev == 'game_console_output' then
+			local mk = line:match('^help:  no cvar or command named (.*)$')
+			if mk then
+				if rv[mk] == false then
+					rv[mk] = nil
+					incnt = incnt+1
+				end
 			end
 		end
 		if incnt == outcnt then
@@ -1153,6 +1156,52 @@ our_logfile:setvbuf('line')
 
 --------------------------------------------------------------------------------
 
+-- split chunked input into lines
+
+local linereader = function (got_line)
+	local data = ''
+	return function (s)
+		if s then
+			local i = 1
+			while i <= #s do
+				local nlpos = s:find('\n', i, true)
+				if nlpos then
+					if data == '' then
+						got_line(s:sub(i, nlpos-1))
+					else
+						got_line(data .. s:sub(i, nlpos-1))
+						data = ''
+					end
+					i = nlpos+1
+				else
+					data = data .. s:sub(i)
+					break
+				end
+			end
+		else
+			if data ~= '' then
+				got_line(data)
+				data = ''
+			end
+			got_line(nil)
+		end
+	end
+end
+
+local allreader = function (got_line)
+	local data = {}
+	return function (s)
+		if s then
+			table.insert(data, s)
+		else
+			got_line(table.concat(data, ''))
+			data = {}
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+
 -- terminal printing / coloring / etc
 
 local name2team = {}
@@ -1407,7 +1456,7 @@ local colorize_game_message = function (line)
 	-- s*icide
 	local name =
 	    line:match('^(.+) suicided%.$') or
-	    line:match('^(.+) suicided%. %(crit%)$')
+	    line:match('^(.+) suicided%. %(crit%)$') -- during victory lap
 	if name then
 		if not name2team[name] then
 			name2team[name] = 'unknown'
@@ -1540,25 +1589,40 @@ local colorize_sourcemod_thing = function (line)
 	return false
 end
 
-_game_console_output = function (line)
-	our_logfile:write(line, '\n')
-
-	if fire_event('game_console_output', line) < 0 then
-		-- cancelled
-		return
+local gco_unjumble = linereader(function (line)
+	return _game_console_output(line, true, true)
+end)
+_game_console_output = function (line, complete, was_jumbled)
+	if complete then
+		our_logfile:write(line, '\n')
+		if not was_jumbled then
+			if fire_event('game_console_output', line) < 0 then
+				return
+			end
+			if is_spam(line) then
+				return
+			end
+			line = colorize_game_message(line)
+			    or colorize_sourcemod_thing(line)
+			    or line
+		else
+			if fire_event('game_console_output', line) < 0 then
+				return
+			end
+			-- don't bother doing filtering/colorizing/etc on
+			--  reconstructed jumbled lines (it won't work reliably)
+		end
+		return _println(line)
+	else
+		if line ~= '\n' then
+			-- this event is for the individual pieces written
+			--  without a newline which often come out of order
+			if fire_event('game_console_output_jumbled', line) < 0 then
+				return
+			end
+		end
+		return gco_unjumble(line)
 	end
-
-	if is_spam(line) then
-		-- 2 = dim
-		--printv('\27[2m', line, '\27[0m')
-		return
-	end
-
-	line = colorize_game_message(line)
-	    or colorize_sourcemod_thing(line)
-	    or line
-
-	return _println(line)
 end
 
 --------------------------------------------------------------------------------
@@ -1583,48 +1647,6 @@ end
 --------------------------------------------------------------------------------
 
 -- non-blocking child processes
-
-local linereader = function (got_line)
-	local data = ''
-	return function (s)
-		if s then
-			local i = 1
-			while i <= #s do
-				local nlpos = s:find('\n', i, true)
-				if nlpos then
-					if data == '' then
-						got_line(s:sub(i, nlpos-1))
-					else
-						got_line(data .. s:sub(i, nlpos-1))
-						data = ''
-					end
-					i = nlpos+1
-				else
-					data = data .. s:sub(i)
-					break
-				end
-			end
-		else
-			if data ~= '' then
-				got_line(data)
-				data = ''
-			end
-			got_line(nil)
-		end
-	end
-end
-
-local allreader = function (got_line)
-	local data = {}
-	return function (s)
-		if s then
-			table.insert(data, s)
-		else
-			got_line(table.concat(data, ''))
-			data = {}
-		end
-	end
-end
 
 _message = function (name, data)
 	return fire_event(name, data)
