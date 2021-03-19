@@ -102,6 +102,7 @@ add_listener('slotchange', xh_update)
 add_listener('+tab', function ()
 	if is_pressed['ctrl'] then
 		if #xhs[class][slot] > 1 then
+			cancel_event()
 			table.insert(xhs[class][slot], xhs[class][slot][1])
 			table.remove(xhs[class][slot], 1)
 			return xh_update(slot)
@@ -532,7 +533,6 @@ bind('e',                               'voicemenu 0 0')
 cmd.bind('r',                           '+reload')
 bind('t', function (_, key)
 	if is_pressed['alt'] then
-		cancel_event()
 		if force_use_world_model then
 			force_use_world_model = nil
 		else
@@ -662,6 +662,7 @@ spinoff(function ()
 	threads $(pidof hl2_linux) | awk '{print $2}' | xargs -rn1 taskset -c -p 0,1
 	threads $(pidof hl2_linux) | awk '$3=="MatQueue0"||/:/{print $2}' | xargs -rn1 taskset -c -p 2,3
 	threads $(pidof cfgfs)     | awk '{print $2}' | xargs -rn1 taskset -c -p 0,1
+	doas cpupower -c 2,3 frequency-set --max 3.50GHz
 	]])
 end)
 
@@ -1023,7 +1024,8 @@ local check_bot = function (t, players, grasp_at_straws)
 			clean == '~]CFCMB^\nyZKXAFO\nR\n\x1e\x18' or
 			clean == 'egomk~xedci' or
 			clean == 'nEI^EX\ndMMOXACFFOX' or
-			clean == 'aCDM\ndMMOXACFFOX'
+			clean == 'aCDM\ndMMOXACFFOX' or
+			clean == 'CXKCPE\x04YOFFS\x04Y^EXO'
 		) then
 			table.insert(reasons, 'known bot name')
 		end

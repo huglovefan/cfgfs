@@ -149,7 +149,7 @@ static unsigned int last_opened_config_cnt;
 
 __attribute__((noinline))
 static int l_lookup_path(const char *restrict path, bool is_open) {
-	lua_State *L = lua_get_state("lookup_path()");
+	lua_State *L = lua_get_state("lookup_path");
 	if (unlikely(L == NULL)) return -errno;
 	 lua_getglobal(L, "_lookup_path");
 	  lua_pushstring(L, path+1); // skip "/"
@@ -330,7 +330,7 @@ static int cfgfs_write(const char *restrict path,
                        off_t offset,
                        struct fuse_file_info *restrict fi) {
 	(void)fi;
-V	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
+VV	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
 	switch (FH_GET_TYPE(fi->fh)) {
 	case sft_console_log: {
@@ -375,7 +375,7 @@ __attribute__((cold))
 __attribute__((noinline))
 static int cfgfs_write_control(const char *data, size_t size) {
 	if (size == 8192) return -EMSGSIZE; // might be truncated
-	if (!lua_lock_state("cfgfs_write()->sft_control")) return -errno;
+	if (!lua_lock_state("cfgfs_write/sft_control")) return -errno;
 
 	const char *p = data;
 	for (;;) {
@@ -407,7 +407,7 @@ V	eprintln("cfgfs_release: %s", path);
 	case sft_message: {
 		lua_State *L;
 		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
-		if (!(L = lua_get_state("cfgfs_release()->sft_message"))) return -errno;
+		if (!(L = lua_get_state("cfgfs_release/sft_message"))) return -errno;
 		 lua_getglobal(L, "_message");
 		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));
 		   lua_pushnil(L);
@@ -441,7 +441,7 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 
 	cfg->direct_io = true;
 
-	lua_State *L = lua_get_state("cfgfs_init()");
+	lua_State *L = lua_get_state("cfgfs_init");
 	if (L != NULL) {
 		 lua_getglobal(L, "_fire_startup");
 		lua_call(L, 0, 0);

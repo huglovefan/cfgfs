@@ -66,7 +66,9 @@ enum quoting_mode {
 	qm_say = 1,
 	// echo
 	// arguments are pasted into one to reduce jumbling
-	//   cmd.echo('hello', 'world') -> [[echo"hello world]]
+	//   cmd.echo('hello', 'world') -> [[echo"hello world\x7f]]
+	// also, a \x7f is added at the end to mark echo'd lines in the console
+	//  output
 	qm_echo = 2,
 };
 
@@ -211,8 +213,9 @@ static size_t cmd_get_outsize(int argc,
 		break;
 	case qm_echo:
 		// same as qm_say but without the last quote
+		// +1 for the \x7f to tell where the line ends
 D		assert(argc >= 1);
-		total_len += (size_t)(argc-1);
+		total_len += (size_t)(argc-1) + 1;
 		break;
 	}
 	return total_len;
@@ -283,8 +286,9 @@ static size_t cmd_stringify(char *restrict buf,
 			*buf++ = sep;
 			sep = ' ';
 		}
-		buf -= 1; // last separator
+		buf -= 1; // rewind to the last separator
 		if (mode == qm_say) *buf++ = '"';
+		if (mode == qm_echo) *buf++ = '\x7f';
 		break;
 	}
 	}

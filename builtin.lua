@@ -407,8 +407,10 @@ add_listener = function (name, cb)
 	if type(name) == 'string' then
 		local t = events[name]
 		if t then
-			table.insert(t, cb)
-			t[cb] = true
+			if not t[cb] then
+				table.insert(t, cb)
+				t[cb] = true
+			end
 		else
 			events[name] = {[1] = cb, [cb] = true}
 		end
@@ -985,11 +987,6 @@ _get_contents = function (path)
 			cmd.echo('')
 		end
 
-		-- should exec the real one?
-		if not cfgfs.hide_cfgs[path] then
-			cfgf('exec"cfgfs/unmask_next/%s";exec"%s"', path, path)
-		end
-
 		-- is this a class config?
 		local cls = (path:before('.cfg') or path)
 		if ({
@@ -1004,6 +1001,11 @@ _get_contents = function (path)
 			['spy'] = true,
 		})[cls] then
 			fire_event('classchange', cls)
+		end
+
+		-- should exec the real one?
+		if not cfgfs.hide_cfgs[path] then
+			cfgf('exec"cfgfs/unmask_next/%s";exec"%s"', path, path)
 		end
 	end
 end
@@ -1047,6 +1049,70 @@ end
 
 --------------------------------------------------------------------------------
 
+-- cli input handling
+
+-- cfg commands are parsed here so lua aliases can be called directly (with
+--  arguments and without going through the game)
+
+local parse_command = nil
+if pcall(require, 'lpeg') then
+	local lpeg = require 'lpeg'
+
+	local cfg_grammer = lpeg.P {
+		'script',
+
+		space = lpeg.R'\0 '
+		      - lpeg.P'\n';
+
+		separator = lpeg.P';';
+
+		comment = lpeg.P'//'
+		        * lpeg.V'comment_char'^0;
+		comment_char = lpeg.P(1)
+		             - lpeg.P'\n';
+
+		word = lpeg.C(lpeg.V'word_char'^1);
+		word_char = lpeg.P(1)
+		          - lpeg.S' \n";'
+		          - lpeg.P'//';
+
+		quoted = lpeg.P'"'
+		       * lpeg.C(lpeg.V'quoted_char'^0)
+		       * lpeg.P'"'^-1; -- closing quote is optional
+		quoted_char = lpeg.P(1)
+		            - lpeg.S'"\n';
+
+		command = ( lpeg.V'command_part'
+		          * lpeg.V'space'^0 )^1;
+		command_part = lpeg.V'word'
+		             + lpeg.V'quoted';
+
+		anything = lpeg.P'\n'
+		         + lpeg.V'space'
+		         + lpeg.V'separator'
+		         + lpeg.V'comment'
+		         + lpeg.Ct(lpeg.V'command');
+
+		script = lpeg.Ct( lpeg.V'anything'^1 )
+		       * lpeg.P(-1);
+	}
+	-- todo: characters like : aren't handled here
+
+	parse_command = function (s)
+		local cmds = cfg_grammer:match(s)
+		if cmds then
+			return function ()
+				for _, t in ipairs(cmds) do
+					local name = t[1]
+					cmd[name](select(2, table.unpack(t)))
+				end
+			end
+		else
+			return nil
+		end
+	end
+end
+
 local repl_fn = function (code)
 	local fn, err1 = load('return '..code, 'input')
 	if fn then
@@ -1089,18 +1155,38 @@ _cli_input = function (line)
 		return
 	end
 
+	local fn_to_run = nil
+	if lua_mode then
+		local fn, err = repl_fn(line)
+		if not fn then
+			eprintln('%s', err)
+			return
+		end
+		fn_to_run = fn
+	elseif parse_command then
+		fn_to_run = parse_command(line)
+		if not fn_to_run then
+			-- parsed but there were no commands
+			return
+		end
+	end
+
 	local buffer_was_empty = _buffer_is_empty()
 
-	if lua_mode then
+	if fn_to_run then
 		local id = yield_id
 		local cb_initial
 		local cb_yielded
 		cb_initial = function (co, cb)
 			if co ~= ev_loop_co and coroutine.status(co) == 'suspended' then
 				eprintln('\27[1;34m->\27[0m %d', id)
-				yield_id = (yield_id + 1)
+				yield_id = yield_id+1
 				ev_return_handlers[co] = cb_yielded
 
+				-- ... maybe this should check ev_timeouts or
+				--  something
+				-- at least things waiting for sh() processes do
+				--  get resumed early
 				if  not is_game_window_active()
 				and not attention_message_shown
 				then
@@ -1117,12 +1203,9 @@ _cli_input = function (line)
 			end
 		end
 		ev_return_handlers[ev_loop_co] = cb_initial
-		local fn, err = repl_fn(line)
-		if not fn then
-			eprintln('%s', err)
-			return
-		end
-		ev_call(fn)
+		ev_call(fn_to_run)
+		-- note: the handler callbacks are automatically removed if the
+		--  function returns without yielding
 	else
 		cfg(line)
 	end
@@ -1169,8 +1252,9 @@ local linereader = function (got_line)
 					if data == '' then
 						got_line(s:sub(i, nlpos-1))
 					else
-						got_line(data .. s:sub(i, nlpos-1))
+						local s = data .. s:sub(i, nlpos-1)
 						data = ''
+						got_line(s)
 					end
 					i = nlpos+1
 				else
@@ -1180,8 +1264,11 @@ local linereader = function (got_line)
 			end
 		else
 			if data ~= '' then
-				got_line(data)
+				-- careful: empty data before the call, in case
+				--  it calls us again
+				local s = data
 				data = ''
+				got_line(s)
 			end
 			got_line(nil)
 		end
@@ -1322,6 +1409,7 @@ local split_known_names = function (s, sep, names)
 end
 
 local is_spam = function (line)
+	-- spammy errors there's nothing for us to do about
 	if #line >= 18 then
 		local c = line:sub(1, 1)
 		if c == '\n' and #line >= 56 and line:find('^\n ##### CTexture::LoadTextureBitsFromFile couldn\'t find .*$') then goto match end
@@ -1352,6 +1440,7 @@ local is_spam = function (line)
 		if c == 'U' and #line >= 55 and line:find('^Unable to bind a key for command ".*" after %-?[0-9]+ attempt%(s%)%.$') then goto match end
 		if c == 'm' and #line >= 42 and line:find('^m_face%->glyph%->bitmap%.width is 0 for ch:%-?[0-9]+ .*$') then goto match end
 		if line == 'Unknown command "dimmer_clicked"' then goto match end
+		if line == 'Unknown command: dimmer_clicked' then goto match end
 		if line == 'hit surface has no samples' then goto match end
 		goto nomatch
 		::match::
@@ -1359,6 +1448,23 @@ local is_spam = function (line)
 	end
 	::nomatch::
 	return false
+end
+
+local dim_clutter = function (line)
+	-- spammy messages that might still be useful in some cases
+	if #line >= 18 then
+		local c = line:sub(1, 1)
+		if c == '\'' and #line >= 31 and line:find('^\'.*\' not present; not executing%.$') then goto match end
+		if c == 'C' and #line >= 80 and line:find('^Can\'t use cheat cvar .* in multiplayer, unless the server has sv_cheats set to 1%.$') then goto match end
+		if c == 'C' and #line >= 84 and line:find('^Can\'t change .* when playing, disconnect from the server or switch team to spectators$') then goto match end
+		if c == 'U' and #line >= 17 and line:find('^Unknown command: .*$') then goto match end
+		if c == 'U' and #line >= 18 and line:find('^Unknown command ".*"$') then goto match end
+		goto nomatch
+		::match::
+		return '\27[2m' .. line .. '\27[0m'
+	end
+	::nomatch::
+	return nil
 end
 
 local bright = function (s) return string.format('\27[34;38;2;251;236;203m%s\27[0m', s) end
@@ -1520,21 +1626,6 @@ local colorize_game_message = function (line)
 		return line
 	end
 
-	-- name change (rare)
-	local oldname, newname = line:match('^(.+) has changed name to (.+)$')
-	if oldname then
-		if name2team[oldname] then
-			name2team[newname] = name2team[oldname]
-			name2team[oldname] = nil
-		else
-			name2team[newname] = 'unknown'
-		end
-		line = string.format('%s has changed name to %s',
-		    colorize_team(oldname),
-		    colorize_team(newname))
-		return line
-	end
-
 	-- defended a point
 	local name, pointname, teamnum = line:match('^(.+) defended (.*) for team #(%-?[0-9]+)$')
 	if name then
@@ -1557,15 +1648,21 @@ local colorize_game_message = function (line)
 		local teamname = 'unknown'
 		if teamnum == '2' then teamname = 'red' end
 		if teamnum == '3' then teamname = 'blu' end
-		names = split_known_names(names, ', ', name2team)
-		for i, n in ipairs(names) do
-			if name2team[n] then
-				name2team[n] = teamname
+		if names:find(', ', 1, true) then
+			names = split_known_names(names, ', ', name2team)
+			for i, n in ipairs(names) do
+				if name2team[n] then
+					name2team[n] = teamname
+				end
+				names[i] = colorize_by_team(teamname, n)
 			end
-			names[i] = colorize_by_team(teamname, n)
+			names = table.concat(names, ', ')
+		else
+			name2team[names] = teamname
+			names = colorize_by_team(teamname, names)
 		end
 		line = string.format('%s captured %s for %s',
-		    table.concat(names, ', '),
+		    names,
 		    colorize_by_team(team2opposite[teamname], pointname),
 		    colorize_by_team(teamname, string.format('team #%d', teamnum)))
 		return line
@@ -1590,12 +1687,14 @@ local colorize_sourcemod_thing = function (line)
 end
 
 local gco_unjumble = linereader(function (line)
-	return _game_console_output(line, true, true)
+	if line then
+		return _game_console_output(line, true, true)
+	end
 end)
 _game_console_output = function (line, complete, was_jumbled)
 	if complete then
-		our_logfile:write(line, '\n')
 		if not was_jumbled then
+			our_logfile:write(line, '\n')
 			if fire_event('game_console_output', line) < 0 then
 				return
 			end
@@ -1604,24 +1703,53 @@ _game_console_output = function (line, complete, was_jumbled)
 			end
 			line = colorize_game_message(line)
 			    or colorize_sourcemod_thing(line)
+			    or dim_clutter(line)
 			    or line
+			_println(line)
 		else
-			if fire_event('game_console_output', line) < 0 then
-				return
-			end
-			-- don't bother doing filtering/colorizing/etc on
-			--  reconstructed jumbled lines (it won't work reliably)
+			-- reconstructed jumbled line
+			-- probably contains either
+			-- * "help" command output for getting a cvar
+			-- * echos from outside cfgfs
+
+			our_logfile:write(line, '\n')
+
+			-- 2 = dim
+			printv('\27[2m', line, '\27[0m')
 		end
-		return _println(line)
+
+		-- write out any jumbled line contents that might've been left
+		--  in the buffer
+		-- this might cause it to printed too early but that's not much
+		--  different from how it would be printed in the in-game console
+		return gco_unjumble(nil)
 	else
 		if line ~= '\n' then
-			-- this event is for the individual pieces written
-			--  without a newline which often come out of order
-			if fire_event('game_console_output_jumbled', line) < 0 then
-				return
+			local contents = line:before('\x7f ')
+			if contents then
+				-- cmd.echo() from lua
+				-- (\x7f is added in cmd.c to mark echos so they
+				--  can be identified here)
+
+				our_logfile:write(contents, ' \n')
+				-- preserve the trailing spac↑e from echo
+
+				return println(contents)
+			else
+				-- some other partial write
+
+				-- this event is for the individual pieces of
+				--  lines written in multiple parts
+				if fire_event('game_console_output_jumbled', line) < 0 then
+					return
+				end
+
+				return gco_unjumble(line)
 			end
+		else
+			-- writing the newline
+			return gco_unjumble(nil)
 		end
-		return gco_unjumble(line)
 	end
 end
 
@@ -1890,11 +2018,29 @@ local before_script_exec = function ()
 	cmd.cfgfs_init_log = reinit_log
 
 	cmd.cfgfs_license = 'exec cfgfs/license'
+
+	-- "soft restart" that tries to be safe and hopefully avoid
+	--  freezing the game
 	cmd.cfgfs_restart = function ()
+		-- "fusermount -u" works to exit cfgfs if no process has any
+		--  files from us open
+		-- unset con_logfile to close that file, and hope there are no
+		--  child processes running with any of our files open
+		-- (those could be killed here at some point)
+
 		cvar.con_logfile = ''
+		cmd.echo "restarting..."
 		wait(0)
-		os.exit(1)
+
+		os.execute([[
+		( command sleep 0.1; fusermount -u "$CFGFS_MOUNTPOINT" ) &
+		]])
+		wait(150)
+
+		cvar.con_logfile = 'console.log'
+		cmd.echo "restart failed?"
 	end
+
 	cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
 	cmd.release_all_keys = assert(release_all_keys)
 end
@@ -1951,6 +2097,7 @@ _reload_2 = function (ok)
 	collectgarbage()
 end
 
+-- initial run of script.lua is done and output isn't going in init.cfg anymore
 _fire_startup = function ()
 	-- probably crashed. need to reopen the log file and spit out init.cfg
 	if os.getenv('CFGFS_RESTARTED') then

@@ -265,5 +265,6 @@ start: $(EXE)
 	export GAMEDIR=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf; \
 	export GAMEROOT=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \
+	export NO_LISTUPDATE=1; \
 	. ./env.sh; \
 	exec ./$(EXE) $(CFGFS_FLAGS) "$${GAMEDIR}/custom/!cfgfs/cfg"
