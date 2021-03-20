@@ -41,8 +41,10 @@ static inline double acceptable_lock_delay_for_locker(const char *locker) {
 // the total time holding the lock may be this long or a warning is printed
 // locker: who the lock was held by
 static inline double acceptable_call_delay_for_locker(const char *locker) {
-	if (unlikely(0 == strcmp(locker, "reloader"))) {
-		return 16.67;
+	if (unlikely(0 == strcmp(locker, "cfgfs_init") ||
+	             0 == strcmp(locker, "reloader"))) {
+		// non-interactive
+		return 16.67*2.0;
 	}
 	return 16.67/2.0;
 }

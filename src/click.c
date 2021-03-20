@@ -35,6 +35,7 @@ __attribute__((constructor))
 static void _init_attr(void) {
 	pthread_attr_init(&thread_attr);
 	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
+	pthread_attr_setschedpolicy(&thread_attr, SCHED_FIFO); // placebo
 	pthread_attr_setstacksize(&thread_attr, 0xffff); // glibc default: 8 MB
 }
 
@@ -141,7 +142,7 @@ static bool click_at(double ms, pthread_t *thread) {
 	if (thread == NULL) thread = &nothread;
 
 	void *msp;
-	_Static_assert(sizeof(msp) >= sizeof(ms), "double doesn't fit in pointer");
+	_Static_assert(sizeof(msp) >= sizeof(ms), "double doesn't fit in a pointer");
 	memcpy(&msp, &ms, sizeof(double));
 
 	check_errcode(

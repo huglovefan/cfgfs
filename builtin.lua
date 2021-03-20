@@ -298,10 +298,14 @@ wait = function (ms, canceldata)
 		gen    = ev_generation_counter,
 		target = target,
 		co     = this_co,
+
+		-- for informative purposes
+		delay = ms,
 	})
 
 	coroutine.yield(sym_wait)
 
+	-- was it a cancellable wait?
 	if check_cancel then
 		local stored_id = canceldata.id
 		-- same type (userdata/pthread_t or true)
@@ -389,6 +393,15 @@ local ev_do_timeouts = function ()
 	for i, t in ipairs(ev_timeouts) do
 		if now >= t.target and t.gen <= cur_gen then
 			table.remove(ev_timeouts, i)
+
+			-- warn if it gets badly delayed for whatever reason
+			local delay = now-t.target
+			local three_frames = 1000/120*3
+			if delay > three_frames then
+				eprintln('warning: wait of %.2f ms was delayed by %.2f ms!',
+				    t.delay, delay)
+			end
+
 			ev_resume(t.co)
 			goto again
 		end
@@ -1457,6 +1470,7 @@ local dim_clutter = function (line)
 		if c == '\'' and #line >= 31 and line:find('^\'.*\' not present; not executing%.$') then goto match end
 		if c == 'C' and #line >= 80 and line:find('^Can\'t use cheat cvar .* in multiplayer, unless the server has sv_cheats set to 1%.$') then goto match end
 		if c == 'C' and #line >= 84 and line:find('^Can\'t change .* when playing, disconnect from the server or switch team to spectators$') then goto match end
+		if c == 'F' and #line >= 55 and line:find('^FCVAR_CLIENTCMD_CAN_EXECUTE prevented running command: .*$') then goto match end
 		if c == 'U' and #line >= 17 and line:find('^Unknown command: .*$') then goto match end
 		if c == 'U' and #line >= 18 and line:find('^Unknown command ".*"$') then goto match end
 		goto nomatch
@@ -1734,7 +1748,7 @@ _game_console_output = function (line, complete, was_jumbled)
 				our_logfile:write(contents, ' \n')
 				-- preserve the trailing spac↑e from echo
 
-				return println(contents)
+				return _println(contents)
 			else
 				-- some other partial write
 
@@ -2005,7 +2019,9 @@ end
 -- sometimes something goes wrong and the game deadlocks instead
 -- note: the log is normally inited from launch options, this alias exists to do it on cfgfs startup if it had crashed
 local reinit_log = function ()
-	cvar.con_logfile = ''
+	-- new: test if using an existing file would be safer than setting this
+	--  to an empty string. lets see if this freezes
+	cvar.con_logfile = 'console_tmp.log'
 	cvar.con_logfile = 'console.log'
 	cmd.echo('cfgfs: log file has been reinited')
 end
@@ -2019,24 +2035,14 @@ local before_script_exec = function ()
 
 	cmd.cfgfs_license = 'exec cfgfs/license'
 
-	-- "soft restart" that tries to be safe and hopefully avoid
-	--  freezing the game
 	cmd.cfgfs_restart = function ()
-		-- "fusermount -u" works to exit cfgfs if no process has any
-		--  files from us open
-		-- unset con_logfile to close that file, and hope there are no
-		--  child processes running with any of our files open
-		-- (those could be killed here at some point)
-
-		cvar.con_logfile = ''
+		cvar.con_logfile = 'console_tmp.log'
 		cmd.echo "restarting..."
 		wait(0)
-
 		os.execute([[
 		( command sleep 0.1; fusermount -u "$CFGFS_MOUNTPOINT" ) &
 		]])
 		wait(150)
-
 		cvar.con_logfile = 'console.log'
 		cmd.echo "restart failed?"
 	end

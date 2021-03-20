@@ -303,13 +303,7 @@ cmd.unmute = function () cvar.voice_enable = 1 end
 add_listener('+m', function ()
 	if not is_pressed['ctrl'] then return end
 	cancel_event()
-	if 0 ~= tonumber(cvar.voice_enable) then
-		cmd.echo('muted')
-		cvar.voice_enable = 0
-	else
-		cmd.echo('unmuted')
-		cvar.voice_enable = 1
-	end
+	cvar.voice_enable = 1~tonumber(cvar.voice_enable)
 end)
 
 cmd.antiafk = function ()
@@ -422,6 +416,7 @@ cvar.m_rawinput = 1
 cvar.snd_mute_losefocus = 0
 cvar.sv_allow_point_servercommand = 'always'
 cvar.tf_backpack_page_button_delay = 0
+cvar.tf_contract_progress_show = 0 -- hide contract hud
 cvar.tf_dingaling_volume = 1
 cvar.tf_dingalingaling = 1
 cvar.tf_hud_target_id_disable_floating_health = 1
@@ -430,6 +425,7 @@ cvar.tf_respawn_on_loadoutchanges = 0
 cvar.tf_scoreboard_mouse_mode = 2
 cvar.tf_scoreboard_ping_as_text = 1
 cvar.tf_sniper_fullcharge_bell = 1
+cvar.tf_use_match_hud = 0
 cvar.viewmodel_fov = 75
 cvar.voice_overdrive = 1 -- don't duck game sounds when someone speaks
 
