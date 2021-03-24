@@ -51,8 +51,7 @@ run() {
 				return 1
 			fi
 			;;
-		# fantasy scenarios that shouldn't ever happen but are handled
-		#  here anyway
+		# ???? these should never happen
 		'') ;;
 		*)  >&2 echo "$out";;
 		esac
@@ -114,6 +113,23 @@ sleep_one_second() {
 	return 0
 }
 
+# https://ss64.com/nt/pause.html
+pause() {
+	t=$(stty -g)
+	trap '' HUP INT TERM
+	(
+		trap - HUP INT TERM
+		stty -icanon min 0 time 0
+		while IFS= read -r _; do :; done
+		printf '\aPress any key to continue... '
+		stty -echo min 1
+		dd bs=1 count=1 >/dev/null 2>&1
+	)
+	stty "$t"
+	trap - HUP INT TERM
+	printf '\n'
+}
+
 # normal sequence of events:
 # - this script is started (in a restart loop)
 # - cfgfs_run waits for the filesystem to become mounted and working
@@ -130,6 +146,11 @@ while is_cfgfs_run_running; do
 		fi
 		sleep_one_second || break
 	else
-		sleep_one_second || break
+		if ! sleep_one_second; then
+			# prompt for a keypress instead of immediately exiting
+			#  in case there was an error
+			pause
+			break
+		fi
 	fi
 done

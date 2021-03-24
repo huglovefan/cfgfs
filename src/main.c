@@ -28,9 +28,9 @@
 #include "cli_input.h"
 #include "cli_output.h"
 #include "click.h"
-#include "immediate_entry.h"
 #include "lua.h"
 #include "macros.h"
+#include "optstring.h"
 #include "reloader.h"
 
 // -----------------------------------------------------------------------------
@@ -54,23 +54,37 @@ void main_quit(void) {
 enum special_file_type {
 	sft_none = 0,
 	sft_console_log = 1,
-	sft_control = 2,
-	sft_message = 3,
+	sft_message = 2,
 };
 union sft_ptr {
 	uint64_t fh; // fuse_file_info::fh
 	enum special_file_type sft;
 };
 
-#define FILE_TYPE_BITS      0b01111
-#define ORDINARY_CONFIG_BIT 0b10000
+#define FILE_TYPE_BITS      0b011111111
+#define ORDINARY_CONFIG_BIT 0b100000000
 
 #define FH_GET_TYPE(x) (enum special_file_type)((x) & FILE_TYPE_BITS)
 #define FH_IS_ORDINARY(x) (((x) & ORDINARY_CONFIG_BIT) != 0)
 
+// -----------------------------------------------------------------------------
+
+static char *last_config_name = NULL;
+static size_t last_config_name_len = 0;
+
+static int last_config_open_cnt = 0;
+static int unmask_cnt = 0;
+
+// note: these aren't protected by a lock. config execution is normally
+//  single-threaded so it is thought that a lock isn't needed
+
+// -----------------------------------------------------------------------------
+
 #define MESSAGE_DIR_PREFIX "/message/"
 
-static int l_lookup_path(const char *restrict path, bool is_open);
+static int lookup_ordinary_path(const char *restrict path,
+                                size_t pathlen,
+                                bool is_open);
 
 #define starts_with(self, other) \
 	(0 == memcmp(self, other, strlen(other)))
@@ -86,8 +100,8 @@ __attribute__((always_inline))
 static int lookup_path(const char *restrict path,
                        union sft_ptr *type,
                        bool is_open) {
+	unsafe_optimization_hint(*path != '\0'); // removes a branch
 	const char *slashdot = path;
-D	assert(*slashdot == '/');
 	const char *p = path;
 	for (; *p != '\0'; p++) {
 		switch (*p) {
@@ -117,10 +131,6 @@ D	assert(*slashdot == '/');
 			if (type) type->sft = sft_console_log;
 			return 0xf;
 		}
-		if (unlikely(equals(path, "/.control"))) {
-			if (type) type->sft = sft_control;
-			return 0xf;
-		}
 		return -ENOENT;
 	}
 
@@ -132,43 +142,114 @@ D	assert(*slashdot == '/');
 	}
 
 	// it's probably a real config
-	// check with the lua function if we should intercept it or not
+	// do the checks for ordinary configs
 	if (type) type->fh |= ORDINARY_CONFIG_BIT;
-	return l_lookup_path(path, is_open);
+	return lookup_ordinary_path(path, length, is_open);
 }
 
 #undef starts_with
 #undef ends_with
 #undef equals
 
-// name of the last "ordinary" config that was opened, and how many times it was opened
-// the purpose of this is to detect the case when the game manually reads config.cfg at startup
-// we don't want to call into lua or return any buffer contents in that case because it'll be discarded
-static char last_opened_config_name[32];
-static unsigned int last_opened_config_cnt;
+// -----------------------------------------------------------------------------
+
+static char *intercept_whitelist = NULL;
+static pthread_rwlock_t intercept_whitelist_lock = PTHREAD_RWLOCK_INITIALIZER;
+
+// -----------------------------------------------------------------------------
 
 __attribute__((noinline))
-static int l_lookup_path(const char *restrict path, bool is_open) {
-	lua_State *L = lua_get_state("lookup_path");
-	if (unlikely(L == NULL)) return -errno;
-	 lua_getglobal(L, "_lookup_path");
-	  lua_pushstring(L, path+1); // skip "/"
-	 lua_call(L, 1, 1);
-	 int rv = (int)lua_tointeger(L, -1);
-	lua_pop(L, 1);
-D	assert(rv == 0 || rv == 0xd || rv == 0xf);
-	if (rv == 0) {
-		rv = -ENOENT;
-	} else if (rv == 0xf && is_open) {
-		if (0 == strcmp(path, last_opened_config_name)) {
-			last_opened_config_cnt += 1;
-		} else {
-			snprintf(last_opened_config_name, sizeof(last_opened_config_name), "%s", path);
-			last_opened_config_cnt = 0;
-		}
+static int lookup_ordinary_path(const char *restrict path,
+                                size_t pathlen,
+                                bool is_open) {
+D	assert(pathlen >= 1);
+
+	if (likely(intercept_whitelist != NULL)) {
+		pthread_rwlock_rdlock(&intercept_whitelist_lock);
+		bool found = optstring_test(intercept_whitelist, path, pathlen);
+		pthread_rwlock_unlock(&intercept_whitelist_lock);
+		if (!found) return -ENOENT;
 	}
-	lua_release_state_no_click(L);
-	return rv;
+
+	if (likely(
+		pathlen == last_config_name_len &&
+		0 == memcmp(path, last_config_name, pathlen)
+	)) {
+		if (unmask_cnt <= 0) {
+			if (likely(is_open)) {
+				last_config_open_cnt += 1;
+				// note: this is reset when the config is read
+			}
+			return 0xf;
+		} else {
+			unmask_cnt -= 1;
+			return -ENOENT;
+		}
+	} else {
+		if (unlikely(unmask_cnt != 0 && last_config_name != NULL)) {
+			eprintln("warning: leftover unmask_cnt %d from config %.*s",
+			    unmask_cnt, (int)last_config_name_len, last_config_name);
+		}
+
+		if (unlikely(pathlen > last_config_name_len)) {
+			last_config_name = realloc(last_config_name, pathlen);
+		}
+		memcpy(last_config_name, path, pathlen);
+		last_config_name_len = pathlen;
+		last_config_open_cnt = 0;
+		unmask_cnt = 0;
+		return 0xf;
+	}
+	compiler_enforced_unreachable();
+}
+
+__attribute__((cold))
+int l_intercept_whitelist_set(void *L) {
+	struct optstring *os = NULL;
+	const char *errmsg;
+
+	if (unlikely(lua_type(L, 1) != LUA_TTABLE)) goto nontable;
+	lua_len(L, 1);
+	lua_Integer len = lua_tointeger(L, -1);
+	lua_pop(L, 1);
+
+	if (unlikely(len == 0)) {
+		pthread_rwlock_wrlock(&intercept_whitelist_lock);
+		free(exchange(intercept_whitelist, NULL));
+		pthread_rwlock_unlock(&intercept_whitelist_lock);
+		return 0;
+	}
+
+	os = optstring_new();
+
+	for (int i = 1; i <= len; i++) {
+		lua_geti(L, 1, i);
+		size_t sz;
+		const char *s = lua_tolstring(L, -1, &sz);
+		if (unlikely(s == NULL)) goto nonstring;
+		if (unlikely(sz > 0xff)) goto toolong;
+
+		if (likely(sz != 0)) optstring_append(os, s, sz);
+		lua_pop(L, 1);
+	}
+
+	pthread_rwlock_wrlock(&intercept_whitelist_lock);
+	free(exchange(intercept_whitelist, optstring_finalize(os)));
+	pthread_rwlock_unlock(&intercept_whitelist_lock);
+
+	return 0;
+nontable:
+	errmsg = "l_intercept_whitelist_set: argument is not a table";
+	goto error;
+toolong:
+	errmsg = "l_intercept_whitelist_set: path is too long";
+	goto error;
+nonstring:
+	errmsg = "l_intercept_whitelist_set: argument is not a string";
+	goto error;
+error:
+	optstring_free(exchange(os, NULL));
+	return luaL_error(L, errmsg);
 }
 
 // -----------------------------------------------------------------------------
@@ -217,8 +298,6 @@ D		assert(rv < 0);
 
 // ~
 
-#define starts_with(this, that) (0 == strncmp(this, that, strlen(that)))
-
 __attribute__((hot))
 static int cfgfs_read(const char *restrict path,
                       char *restrict buf,
@@ -244,25 +323,44 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 		return -EOPNOTSUPP;
 	}
 
-	// catch the game manually reading config.cfg at startup so we don't
-	//  lose any buffer contents to that
-	if (
-		unlikely(FH_IS_ORDINARY(fi->fh)) &&
-		unlikely(last_opened_config_cnt <= 1) &&
-		likely(0 == strcmp(path, last_opened_config_name))
-	) {
-		last_opened_config_cnt = 0;
-		if (unlikely(0 != strcmp(path, "/config.cfg"))) {
-			eprintln("cfgfs_read: warning: ignoring manual read of %s",
-			    path+1);
-		}
-		return 0;
-	}
+	size_t pathlen = strlen(path);
 
-	// /unmask_next/ must not return buffer contents (can mess up the order)
-	bool silent = false;
-	if (unlikely(starts_with(path, "/cfgfs/unmask_next/"))) {
-		silent = true;
+	if (unlikely(FH_IS_ORDINARY(fi->fh))) {
+		// catch the game manually reading config.cfg at startup so we don't
+		//  lose any buffer contents to that
+		if (unlikely(last_config_open_cnt <= 1)) {
+			if (unlikely(0 != strcmp(path, "/config.cfg"))) {
+				eprintln("cfgfs_read: warning: ignoring manual read of %s",
+				    path+1);
+			}
+			last_config_open_cnt = 0;
+			return 0;
+		} else {
+			// so it's not being read manually. need to reset this
+			//  anyway so it's correct next time
+			last_config_open_cnt = 0;
+		}
+	} else {
+#define unmask_next_pre "/cfgfs/unmask_next/"
+		if (
+			pathlen > strlen(unmask_next_pre)+strlen(".cfg") &&
+			unlikely(0 == memcmp(path, unmask_next_pre, strlen(unmask_next_pre)))
+		) {
+			if (unlikely(unmask_cnt != 0 && last_config_name != NULL)) {
+				eprintln("warning: leftover unmask_cnt %d from config %.*s",
+				    unmask_cnt, (int)last_config_name_len, last_config_name);
+			}
+
+			const char *name = path+(strlen(unmask_next_pre)-1);
+			size_t namelen = pathlen-(strlen(unmask_next_pre)-1);
+			if (unlikely(namelen > last_config_name_len)) {
+				last_config_name = realloc(last_config_name, namelen);
+			}
+			memcpy(last_config_name, name, namelen);
+			last_config_name_len = namelen;
+			unmask_cnt = 3;
+			return 0;
+		}
 	}
 
 	lua_State *L = lua_get_state("cfgfs_read");
@@ -271,42 +369,20 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 	}
 
 	struct buffer fakebuf;
-	if (likely(!silent)) {
-		buffer_list_maybe_unshift_fake_buf(&buffers, &fakebuf, buf);
-	}
+	buffer_list_maybe_unshift_fake_buf(&buffers, &fakebuf, buf);
 
 	 lua_pushvalue(L, GET_CONTENTS_IDX);
-	  lua_pushstring(L, path);
+	  lua_pushlstring(L, path, pathlen);
 	lua_call(L, 1, 0);
 
-	if (likely(!silent)) {
-		struct buffer *ent = buffer_list_grab_first(&buffers);
-D		assert(ent != NULL); // should be fakebuf or a real one
-
-		// is this even a good idea
-		if (
-			likely(!ent->full) &&
-			unlikely(expecting_immediate_entry > 0)
-		) {
-			lua_release_state_no_click(L);
-			buffer_make_full(ent);
-			rv = (int)buffer_get_size(ent);
-			if (unlikely(ent != &fakebuf)) {
-				buffer_memcpy_to(ent, buf, buffer_get_size(ent));
-				buffer_free(ent);
-			}
-			wait_immediate_entries();
-			goto out_unlocked;
-		}
-
-		rv = (int)buffer_get_size(ent);
-		if (unlikely(ent != &fakebuf)) {
-			buffer_memcpy_to(ent, buf, buffer_get_size(ent));
-			buffer_free(ent);
-		}
+	struct buffer *ent = buffer_list_grab_first(&buffers);
+D	assert(ent != NULL); // should be fakebuf or a real one
+	rv = (int)buffer_get_size(ent);
+	if (unlikely(ent != &fakebuf)) {
+		buffer_memcpy_to(ent, buf, buffer_get_size(ent));
+		buffer_free(ent);
 	}
 	lua_release_state_no_click(L);
-out_unlocked:
 	VV {
 		if (rv >= 0) {
 			eprintln("data=[[%.*s]] rv=%d", rv, buf, rv);
@@ -317,11 +393,7 @@ out_unlocked:
 	return rv;
 }
 
-#undef starts_with
-
 // ~
-
-static int cfgfs_write_control(const char *data, size_t size);
 
 __attribute__((hot))
 static int cfgfs_write(const char *restrict path,
@@ -336,9 +408,7 @@ VV	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 	case sft_console_log: {
 		bool complete = (size >= 2 && data[size-1] == '\n');
 		lua_State *L = lua_get_state("cfgfs_write/sft_console_log");
-		if (unlikely(L == NULL)) {
-			return -errno;
-		}
+		if (unlikely(L == NULL)) return -errno;
 		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX);
 		  lua_pushlstring(L, data, likely(complete) ? size-1 : size);
 		   lua_pushboolean(L, complete);
@@ -346,8 +416,6 @@ VV	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 		lua_release_state(L);
 		return (int)size;
 	}
-	case sft_control:
-		return cfgfs_write_control(data, size);
 	case sft_message: {
 		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
 		lua_State *L = lua_get_state("cfgfs_write/sft_message");
@@ -369,45 +437,15 @@ VV	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
 // ~
 
-static void control_do_line(const char *line, size_t size);
-
-__attribute__((cold))
-__attribute__((noinline))
-static int cfgfs_write_control(const char *data, size_t size) {
-	if (size == 8192) return -EMSGSIZE; // might be truncated
-	if (!lua_lock_state("cfgfs_write/sft_control")) return -errno;
-
-	const char *p = data;
-	for (;;) {
-		const char *c = strchr(p, '\n');
-		if (c == NULL) break;
-		control_do_line(p, (size_t)(c-p));
-		p = c+1;
-	}
-
-	lua_unlock_state();
-	return (int)size;
-}
-
-static void control_do_line(const char *line, size_t size) {
-V	eprintln("control_do_line: line=[%.*s]", (int)size, line);
-	lua_State *L = lua_get_state_already_locked();
-	 lua_getglobal(L, "_control");
-	  lua_pushlstring(L, line, size);
-	lua_call(L, 1, 0);
-}
-
-// ~
-
 static int cfgfs_release(const char *path, struct fuse_file_info *fi) {
 V	eprintln("cfgfs_release: %s", path);
 	switch (FH_GET_TYPE(fi->fh)) {
 	case sft_none:
 		return 0;
 	case sft_message: {
-		lua_State *L;
 		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
-		if (!(L = lua_get_state("cfgfs_release/sft_message"))) return -errno;
+		lua_State *L = lua_get_state("cfgfs_release/sft_message");
+		if (unlikely(L == NULL)) return -errno;
 		 lua_getglobal(L, "_message");
 		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));
 		   lua_pushnil(L);
@@ -416,7 +454,6 @@ V	eprintln("cfgfs_release: %s", path);
 		return 0;
 	}
 	case sft_console_log:
-	case sft_control:
 		return 0;
 	}
 	assert_unreachable();

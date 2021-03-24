@@ -39,18 +39,20 @@ end
 cfg('init.cfg')
 
 
-
-assert(type(fatal) == 'function')
-add_listener('control', function (line)
-	if line == 'ping1' then
-		cfg('pong1')
-	elseif line == 'ping2' then
-		cfg('pong2')
+add_listener('ping.1', function (data)
+	if data then
+		assert(data == 'ping1\n')
 	else
-		fatal('unknown control line: ' .. line)
+		cfg('pong1')
 	end
 end)
-
+add_listener('ping.2', function (data)
+	if data then
+		assert(data == 'ping2\n')
+	else
+		cfg('pong2')
+	end
+end)
 
 
 -- shut up the warning

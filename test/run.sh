@@ -51,12 +51,12 @@ fi
 
 # make sure ">" and ">>" both work
 
-echo ping1 >test/mnt/.control || exit 121
+echo ping1 >test/mnt/message/ping.1 || exit 121
 if ! { cat test/mnt/cfgfs/buffer.cfg | fgrep -q 'pong1'; }; then
 	exit 122
 fi
 
-echo ping2 >>test/mnt/.control || exit 131
+echo ping2 >>test/mnt/message/ping.2 || exit 131
 if ! { cat test/mnt/cfgfs/buffer.cfg | fgrep -q 'pong2'; }; then
 	exit 132
 fi

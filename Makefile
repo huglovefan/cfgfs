@@ -21,7 +21,6 @@ OBJS = \
        src/main.o \
        src/buffers.o \
        src/buffer_list.o \
-       src/immediate_entry.o \
        src/lua/state.o \
        src/lua/builtins.o \
        src/cli_output.o \
@@ -197,13 +196,11 @@ endif
 ## make targets
 
 $(EXE): $(OBJS)
-	@set -e;\
-	echo $(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS);\
-	     $(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
+	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
 buildinfo:
 	@objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{if(p=$$0!~/@plt/)fns++;next}/^$$|^Disa/{next}p&&$$1!="int3"{isns++}END{printf("|   fns: %d\n|  isns: %d\n", fns, isns);}'
-	@printf '| crc32: %8x (function names and instructions without their operands)\n' "$$(objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{p=$$0!~/@plt/;print;next}/^$$|^Disa/{next}p{print$$1}' | cksum | cut -d' ' -f1)"
+	@printf '| crc32: %08x (function names and instructions without their operands)\n' "$$(objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{p=$$0!~/@plt/;print;next}/^$$|^Disa/{next}p{print$$1}' | cksum | cut -d' ' -f1)"
 	@llvm-readelf -S $(EXE) | awk '$$8~/X/{sz+=int("0x"$$6)}END{printf("|  code: %db\n",sz)}'
 
 -include $(DEPS)

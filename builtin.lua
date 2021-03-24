@@ -180,6 +180,10 @@ ev_error_handlers = setmetatable({}, {__mode = 'k'}) -- local
 -- (this is badly named)
 local ev_return_handlers = setmetatable({}, {__mode = 'k'})
 
+-- coroutine -> function it's running
+-- (for ev_find_origin)
+local ev_co_to_fn = setmetatable({}, {__mode = 'kv'})
+
 -- unique values for yielding
 local sym_ready = {} -- ev_loop_co is ready to be reused
 local sym_wait = {} -- coroutine used wait() and put itself in the list
@@ -197,7 +201,9 @@ do
 		local args = {...}
 		local this_co = coroutine.running()
 		while true do
-			args[1](select(2, table.unpack(args)))
+			local fn = args[1]
+			ev_co_to_fn[this_co] = fn
+			fn(select(2, table.unpack(args)))
 
 			-- the thing we called used yield so we're not the main
 			--  coroutine anymore
@@ -273,6 +279,24 @@ local ev_resume = function (co, ...)
 	return ev_handle_return(co, coroutine.resume(co, ...))
 end
 
+-- find the "file and line defined" for a coroutine/function (for debugging)
+local ev_find_origin = function (v)
+	if type(v) == 'thread' then
+		v = ev_co_to_fn[v]
+	end
+	if type(v) == 'function' then
+		local t = debug.getinfo(v)
+		if not t.short_src:find('^%[') then
+			return string.format('%s:%s',
+			    t.short_src:match('[^/]+$'),
+			    t.linedefined)
+		else
+			return t.short_src
+		end
+	end
+	return 'unknown'
+end
+
 -- canceldata: optionally set to an empty table if the wait should be cancellable.
 -- cancellation is done by calling cancel_wait() with that table from a different coroutine.
 -- if the wait is cancelled, the waiting coroutine will be woken up early and get a return value of false from wait()
@@ -329,6 +353,26 @@ wait = function (ms, canceldata)
 	end
 
 	return true
+end
+
+_list_timeouts = function ()
+	local now = _ms()
+	for i, t in ipairs(ev_timeouts) do
+		local status
+		if t.target > now then
+			status = string.format('+%dms',
+			    math.floor(t.target-now))
+		else
+			status = string.format('-%dms!',
+			    math.floor(now-t.target))
+		end
+		println('\27[1m%d\27[0m: <%s> (%s) gen=%d wait=%d (%s)',
+		    i,
+		    t.co, ev_find_origin(t.co),
+		    t.gen, math.floor(t.delay),
+		    status)
+	end
+	println('total %d', #ev_timeouts)
 end
 
 local ev_delete_timeout_for_co = function (co)
@@ -398,8 +442,8 @@ local ev_do_timeouts = function ()
 			local delay = now-t.target
 			local three_frames = 1000/120*3
 			if delay > three_frames then
-				eprintln('warning: wait of %.2f ms was delayed by %.2f ms!',
-				    t.delay, delay)
+				eprintln('warning: wait(%d) at %s was delayed by %.2f ms!',
+				    t.delay, ev_find_origin(t.co), delay)
 			end
 
 			ev_resume(t.co)
@@ -434,6 +478,26 @@ add_listener = function (name, cb)
 	else
 		return error('add_listener: name must be a string or list of strings', 2)
 	end
+end
+
+_list_events = function ()
+	local evnames = {}
+	for k in pairs(events) do
+		table.insert(evnames, k)
+	end
+	table.sort(evnames)
+
+	local cbtotal = 0
+	for _, name in ipairs(evnames) do
+		println('\27[1m%s\27[0m: %d listener(s)', name, #events[name])
+		for i, v in ipairs(events[name]) do
+			println('  \27[1m%d\27[0m: <%s> (%s)',
+			    i, v, ev_find_origin(v))
+		end
+		cbtotal = cbtotal+#events[name]
+	end
+	println('total %d events %d listeners',
+	    #evnames, cbtotal)
 end
 
 remove_listener = function (name, cb)
@@ -776,24 +840,6 @@ end
 
 --------------------------------------------------------------------------------
 
-local unmask_next = make_resetable_table()
-
-_lookup_path = function (path)
-	local cnt = (unmask_next[path] or 0)
-	if cnt > 0 then
-		unmask_next[path] = cnt-1
-		return 0
-	end
-
-	if not (cfgfs.intercept_cfgs[path]
-	        or cfgfs.hide_cfgs[path])
-	then
-		return 0
-	end
-
-	return 0xf
-end
-
 is_pressed = setmetatable({}, {
 	__index = function (_, key)
 		return error(string.format('unknown key "%s"', key), 2)
@@ -965,12 +1011,6 @@ _get_contents = function (path)
 			else
 				return eprintln('warning: tried to exec nonexistent alias %s', m)
 			end
-		end
-
-		local m = path:after('unmask_next/')
-		if m then
-			unmask_next[m] = 3
-			return
 		end
 
 		if path == 'license.cfg' then
@@ -1438,9 +1478,11 @@ local is_spam = function (line)
 		if c == 'E' and #line >= 51 and line:find('^Error: Material ".*" : proxy ".*" unable to initialize!$') then goto match end
 		if c == 'E' and #line >= 54 and line:find('^Error! Variable ".*" is multiply defined in material ".*"!$') then goto match end
 		if c == 'F' and #line >= 37 and line:find('^Failed to create decoder for MP3 %[ .* %]$') then goto match end
+		if c == 'F' and #line >= 67 and line:find('^Failed to load sound ".*", file probably missing from disk/repository$') then goto match end
 		if c == 'F' and #line >= 72 and line:find('^For FCVAR_REPLICATED, ConVar must be defined in client and game %.dlls %(.*%)$') then goto match end
 		if c == 'F' and #line >= 130 and line:find('^Failed to find attachment point specified for AE_CL_CREATE_PARTICLE_EFFECT event%. Trying to spawn effect \'.*\' on attachment named \'.*\'$') then goto match end
 		if c == 'M' and #line >= 25 and line:find('^Missing RecvProp for .* %- .*/.*$') then goto match end
+		if c == 'M' and #line >= 39 and line:find('^MDLCache: Failed load of %.PHY data for .*$') then goto match end
 		if c == 'M' and #line >= 65 and line:find('^MP3 initialized with no sound cache, this may cause janking%. %[ .* %]$') then goto match end
 		if c == 'M' and #line >= 68 and line:find('^Model \'.*\' doesn\'t have attachment \'.*\' to attach particle system \'.*\' to%.$') then goto match end
 		if c == 'N' and #line >= 35 and line:find('^No such variable ".*" for material ".*"$') then goto match end
@@ -1448,10 +1490,12 @@ local is_spam = function (line)
 		if c == 'R' and #line >= 78 and line:find('^Requesting texture value from var ".*" which is not a texture value %(material: .*%)$') then goto match end
 		if c == 'S' and #line >= 33 and line:find('^Shutdown function .* not in list!!!$') then goto match end
 		if c == 'S' and #line >= 49 and line:find('^SetupBones: invalid bone array size %(%-?[0-9]+ %- needs %-?[0-9]+%)$') then goto match end
+		if c == 'S' and #line >= 51 and line:find('^Shader \'.*\' %- Couldn\'t load combo %-?[0-9]+ of shader %(dyn=%-?[0-9]+%)$') then goto match end
 		if c == 'S' and #line >= 53 and line:find('^SOLID_VPHYSICS static prop with no vphysics model! %(.*%)$') then goto match end
 		if c == 'U' and #line >= 18 and line:find('^Unable to remove .*!$') then goto match end
 		if c == 'U' and #line >= 55 and line:find('^Unable to bind a key for command ".*" after %-?[0-9]+ attempt%(s%)%.$') then goto match end
 		if c == 'm' and #line >= 42 and line:find('^m_face%->glyph%->bitmap%.width is 0 for ch:%-?[0-9]+ .*$') then goto match end
+		if c == 'm' and #line >= 106 and line:find('^material .* has a normal map and %$basealphaenvmapmask%.  Must use %$normalmapalphaenvmapmask to get specular%.\n$') --[[ <-- extra newline ]] then goto match end
 		if line == 'Unknown command "dimmer_clicked"' then goto match end
 		if line == 'Unknown command: dimmer_clicked' then goto match end
 		if line == 'hit surface has no samples' then goto match end
@@ -1782,12 +1826,6 @@ end
 
 --------------------------------------------------------------------------------
 
-_control = function (line)
-	return fire_event('control', line)
-end
-
---------------------------------------------------------------------------------
-
 -- non-blocking child processes
 
 _message = function (name, data)
@@ -2012,6 +2050,19 @@ end
 
 --------------------------------------------------------------------------------
 
+local update_intercept_whitelist = function ()
+	local allpaths = {}
+	for name in pairs(cfgfs.intercept_cfgs) do
+		table.insert(allpaths, '/' .. name)
+	end
+	for name in pairs(cfgfs.hide_cfgs) do
+		table.insert(allpaths, '/' .. name)
+	end
+	_intercept_whitelist_set(allpaths)
+end
+
+--------------------------------------------------------------------------------
+
 -- local click_key_bound: declared near bind() where it's set
 
 -- this is a risky operation. it works most of the time but has a chance of freezing the game
@@ -2036,8 +2087,8 @@ local before_script_exec = function ()
 	cmd.cfgfs_license = 'exec cfgfs/license'
 
 	cmd.cfgfs_restart = function ()
-		cvar.con_logfile = 'console_tmp.log'
 		cmd.echo "restarting..."
+		cvar.con_logfile = 'console_tmp.log'
 		wait(0)
 		os.execute([[
 		( command sleep 0.1; fusermount -u "$CFGFS_MOUNTPOINT" ) &
@@ -2051,6 +2102,7 @@ local before_script_exec = function ()
 	cmd.release_all_keys = assert(release_all_keys)
 end
 local after_script_exec = function ()
+	update_intercept_whitelist()
 	if not click_key_bound then
 		eprintln('\awarning: no function key bound to "cfgfs_click" found!')
 		eprintln(' why: one of the f1-f12 keys must be bound to "cfgfs_click" for delayed command execution to work')

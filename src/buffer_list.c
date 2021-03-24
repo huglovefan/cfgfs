@@ -150,14 +150,12 @@ bool buffer_list_maybe_unshift_fake_buf(struct buffer_list *self,
                                         char *data) {
 	if (unlikely(self->first != NULL)) return false;
 
-	buf->size = 0;
-	buf->full = false;
+	memset(buf, 0, sizeof(struct buffer));
 	buf->data = data;
-	buf->next = NULL;
 
+	self->nonfull = buf;
 	self->first = buf;
 	self->last = buf;
-	self->nonfull = buf;
 
 	return true;
 }

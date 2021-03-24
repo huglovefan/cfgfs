@@ -395,15 +395,14 @@ cvar.cl_autoreload = 1
 cvar.cl_customsounds = 1
 cvar.cl_disablehtmlmotd = 1
 cvar.cl_downloadfilter = 'nosounds' -- (all, none, nosounds, mapsonly)
-cvar.cl_hud_playerclass_use_playermodel = 1
+--cvar.cl_hud_playerclass_use_playermodel = 1
 cvar.cl_mvm_wave_status_visible_during_wave = 1
 cvar.cl_rumblescale = 0
 cvar.con_enable = 0
 cvar.engine_no_focus_sleep = 100
 cvar.fov_desired = 90
-do local refresh_rate = 60/1.001
-   cvar.fps_max = refresh_rate*2+1 end
-cvar.glow_outline_effect_enable = 1
+cvar.fps_max = 200
+--cvar.glow_outline_effect_enable = 1
 cvar.hud_classautokill = 0
 cvar.hud_combattext = 1
 cvar.hud_combattext_doesnt_block_overhead_text = 1
@@ -429,11 +428,22 @@ cvar.tf_use_match_hud = 0
 cvar.viewmodel_fov = 75
 cvar.voice_overdrive = 1 -- don't duck game sounds when someone speaks
 
-cvar.mat_disable_lightwarp = 0
-cvar.r_lightaverage = 0
-cvar.r_rimlight = 1
+--cvar.mat_disable_lightwarp = 0
+--cvar.r_lightaverage = 0
+--cvar.r_rimlight = 1
+--cvar.r_dynamic = 0
 
-cvar.r_dynamic = 0
+-- https://gitlab.freedesktop.org/mesa/mesa/-/issues/3514
+cvar.mat_bumpmap = 1
+cvar.mat_phong = 1
+
+cvar.mat_reducefillrate = 0
+cvar.r_ambientboost = 1
+cvar.r_ambientmin = 1.1
+cvar.r_lightaverage = 1
+cvar.r_rimlight = 1
+cvar.r_worldlightmin = '.0002'
+cvar.r_worldlights = 4
 
 local force_use_world_model = nil
 add_listener({'classchange', 'slotchange'}, function ()
@@ -976,14 +986,6 @@ local check_namestealer = function (t, playerlist)
 		end
 	end
 
-	if (
-		name:find('.\u{200f}$') or
-		name:find('.\u{202d}$') or
-		name:find('.\u{0e4a}$')
-	) then
-		return true
-	end
-
 	return false
 end
 
@@ -1015,19 +1017,33 @@ local check_bot = function (t, players, grasp_at_straws)
 		    :gsub('^%([0-9]+%)', '', 1)
 		    :gsub('[\x7f-\xff]', '')
 		    :frobnicate()
+		-- these should probably go in some external file at some point
 		if (
 			clean == 'YBEZZS\x04MM\x05jN\x19LI\x1aD\x1c' or
 			clean == '~]CFCMB^\nyZKXAFO\nR\n\x1e\x18' or
 			clean == 'egomk~xedci' or
 			clean == 'nEI^EX\ndMMOXACFFOX' or
 			clean == 'aCDM\ndMMOXACFFOX' or
-			clean == 'CXKCPE\x04YOFFS\x04Y^EXO'
+			clean == 'CXKCPE\x04YOFFS\x04Y^EXO' or
+			clean == '}KLLOD\x07yy'
 		) then
 			table.insert(reasons, 'known bot name')
 		end
 	end
 	if check_namestealer(t, players) then
 		table.insert(reasons, 'name stealer')
+	elseif grasp_at_straws then
+		if (
+			t.name:find('\u{0e36}', 1, true) or
+			t.name:find('\u{0e38}', 1, true) or
+			t.name:find('\u{0e47}', 1, true) or
+			t.name:find('\u{0e4a}', 1, true) or
+			t.name:find('\u{200f}', 1, true) or
+			t.name:find('\u{202c}', 1, true) or
+			t.name:find('\u{202d}', 1, true)
+		) then
+			table.insert(reasons, 'possible name stealer')
+		end
 	end
 	if bad_steamids[t.steamid] then
 		table.insert(reasons, 'on lists: ' .. bad_steamids[t.steamid])

@@ -29,8 +29,7 @@ static double      locked_at = 0.0;
 // taking the lock may take up to this long or a warning is printed
 // locker: name of who's trying to take the lock
 static inline double acceptable_lock_delay_for_locker(const char *locker) {
-	if (likely(0 == strcmp(locker, "lookup_path") ||
-	           0 == strcmp(locker, "cfgfs_read"))) {
+	if (likely(0 == strcmp(locker, "cfgfs_read"))) {
 		// super critical
 		return 1.0;
 	}
@@ -49,6 +48,28 @@ static inline double acceptable_call_delay_for_locker(const char *locker) {
 	return 16.67/2.0;
 }
 
+static inline bool should_warn_for_contention(const char *me,
+                                              const char *other) {
+#if !(defined(WITH_D) || defined(WITH_V))
+	if (likely(0 == strcmp(me, "cfgfs_read"))) {
+		// super critical
+		return true;
+	}
+	if (likely(other)) {
+		if (0 == strcmp(other, "cfgfs_write/sft_console_log")) {
+			// this needs to be fast
+			return true;
+		}
+	}
+	return false;
+#else
+	// D and V warn for all contention by default
+	(void)me;
+	(void)other;
+	return true;
+#endif
+}
+
 lua_State *lua_get_state(const char *who) {
 	if (unlikely(!lua_lock_state(who))) {
 		return NULL;
@@ -65,7 +86,12 @@ D	assert(L == g_L);
 
 bool lua_lock_state(const char *who) {
 	double lock_start = mono_ms();
-	int err = pthread_mutex_lock(&lua_mutex);
+	bool contested = false;
+	int err = pthread_mutex_trylock(&lua_mutex);
+	if (unlikely(err == EBUSY)) {
+		contested = true;
+		err = pthread_mutex_lock(&lua_mutex);
+	}
 	double lock_end = mono_ms();
 	double lock_dur = lock_end-lock_start;
 
@@ -74,6 +100,11 @@ V		eprintln("lua_lock_state: %s couldn't get lock: %s",
 		    who, strerror(err));
 		errno = err;
 		return false;
+	}
+
+	if (unlikely(contested && should_warn_for_contention(who, prev_locked_by))) {
+		eprintln("warning: %s: lock contention! lock was held by %s for %.2f ms",
+		    who, prev_locked_by, prev_locked_dur);
 	}
 
 	if (unlikely(g_L == NULL)) {

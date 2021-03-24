@@ -18,7 +18,6 @@
 #include "../cli_input.h"
 #include "../cli_output.h"
 #include "../click.h"
-#include "../immediate_entry.h"
 #include "../keys.h"
 #include "../lua.h"
 #include "../macros.h"
@@ -265,6 +264,10 @@ void lua_define_builtins(void *L) {
 	 lua_pushcfunction(L, l_get_locker);
 	lua_setglobal(L, "_get_locker");
 
+	// main.c
+	 lua_pushcfunction(L, (lua_CFunction)l_intercept_whitelist_set);
+	lua_setglobal(L, "_intercept_whitelist_set");
+
 	 lua_getglobal(L, "string");
 	  lua_pushcfunction(L, l_string_starts_with);
 	 lua_setfield(L, -2, "starts_with");
@@ -314,7 +317,6 @@ void lua_define_builtins(void *L) {
 	cfg_init_lua(L);
 	cli_input_init_lua(L);
 	click_init_lua(L);
-	immediate_entry_init_lua(L);
 
 	_Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
 	lua_pushstring(L, AGPL_SOURCE_URL); lua_setglobal(L, "agpl_source_url");

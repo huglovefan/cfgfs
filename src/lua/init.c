@@ -33,10 +33,8 @@ static struct reqval {
 	{"_fire_unload", LUA_TFUNCTION},
 
 	// main.c
-	{"_control", LUA_TFUNCTION},
 	{"_game_console_output", LUA_TFUNCTION},
 	{"_get_contents", LUA_TFUNCTION},
-	{"_lookup_path", LUA_TFUNCTION},
 	{"_message", LUA_TFUNCTION},
 
 	// reloader.c
