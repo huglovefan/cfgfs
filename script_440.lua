@@ -464,10 +464,16 @@ add_listener({'classchange', 'slotchange'}, function ()
 	cvar.cl_first_person_uses_world_model = use_world_model
 end)
 
--- sto = 20
--- lux = 47
-cvar.tf_mm_custom_ping_enabled = 1
-cvar.tf_mm_custom_ping = 35
+do
+	local hour = tonumber(os.date('%H'))
+	-- gaming hours
+	if hour >= 12 and hour <= 23 then
+		cvar.tf_mm_custom_ping_enabled = 1
+		cvar.tf_mm_custom_ping = 35
+	else
+		cvar.tf_mm_custom_ping_enabled = 0
+	end
+end
 
 --------------------------------------------------------------------------------
 
