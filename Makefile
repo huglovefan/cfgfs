@@ -43,7 +43,12 @@ CPPFLAGS += -MMD -MP
 CFLAGS += -std=gnu11
 CPPFLAGS += -D_GNU_SOURCE
 
+# ------------------------------------------------------------------------------
+
+## compiler-specific flags
+
 ifneq (,$(findstring clang,$(CC)))
+# warnings for clang
 CFLAGS += \
           -Weverything \
           -Werror=conditional-uninitialized \
@@ -69,8 +74,9 @@ CFLAGS += \
           -Wno-padded \
           -Wno-reserved-id-macro \
           -Wframe-larger-than=512 \
-# .
+# end
 else
+# warnings for gcc
 CFLAGS += \
           -Wall \
           -Wextra \
@@ -78,9 +84,10 @@ CFLAGS += \
           -Werror=implicit-function-declaration \
           -Wno-bool-operation \
           -Wno-misleading-indentation \
-# .
+# end
 endif
 
+# set thinlto-cache-dir if using clang + lld + -flto=thin
 ifneq (,$(findstring clang,$(CC)))
  ifneq (,$(findstring -flto=thin,$(CFLAGS)))
   ifneq (,$(findstring lld,$(LD)))
@@ -94,8 +101,7 @@ endif
 
 ## options
 
-# verbosity/debug enablings
-
+# VV=1: very verbose messages
 ifeq ($(VV),1)
  CPPFLAGS += -DVV="if(1)" -DWITH_VV
  # enable D and V if they're unset
@@ -107,6 +113,7 @@ ifeq ($(VV),1)
  endif
 endif
 
+# V=1: verbose messages
 ifeq ($(V),1)
  CPPFLAGS += -DV="if(1)" -DWITH_V
  # enable D if it's unset
@@ -115,22 +122,26 @@ ifeq ($(V),1)
  endif
 endif
 
+# D=1: debug checks
 ifeq ($(D),1)
  CPPFLAGS += -DD="if(1)" -DWITH_D
 endif
 
-ifeq ($(A),1)
- CFLAGS += --analyzer
- LDFLAGS += --analyzer
-endif
-
+# WE=1: enable -Werror
 ifeq ($(WE),1)
  CFLAGS += -Werror
  ifeq (,$(findstring clang,$(CC)))
-  # "warning: always_inline function might not be inlinable"
-  # "warning: minsize attribute directive ignored"
+  # ignore errors about -Wattributes if using gcc
+  # > warning: always_inline function might not be inlinable
+  # > warning: minsize attribute directive ignored
   CFLAGS += -Wno-error=attributes
  endif
+endif
+
+# gcc analyzer
+ifeq ($(A),1)
+ CFLAGS += --analyzer
+ LDFLAGS += --analyzer
 endif
 
 # pgo
@@ -198,27 +209,6 @@ endif
 $(EXE): $(OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
-buildinfo:
-	@objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{if(p=$$0!~/@plt/)fns++;next}/^$$|^Disa/{next}p&&$$1!="int3"{isns++}END{printf("|   fns: %d\n|  isns: %d\n", fns, isns);}'
-	@printf '| crc32: %08x (function names and instructions without their operands)\n' "$$(objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{p=$$0!~/@plt/;print;next}/^$$|^Disa/{next}p{print$$1}' | cksum | cut -d' ' -f1)"
-	@llvm-readelf -S $(EXE) | awk '$$8~/X/{sz+=int("0x"$$6)}END{printf("|  code: %db\n",sz)}'
-	@echo @
-	@llvm-readelf -S cfgfs | awk '$$2==".data"{printf("|   data: %db (initialized read-write data)\n",int("0x" $$6))}'
-	@llvm-readelf -S cfgfs | awk '$$2==".rodata"{printf("| rodata: %db (initialized read-only data)\n",int("0x" $$6))}'
-	@llvm-readelf -S cfgfs | awk '$$2==".bss"{printf("|    bss: %db (zero-initialized read-write data)\n",int("0x" $$6))}'
-
-postbuild:
-	@mv -f .fndata .fndata.old 2>/dev/null;\
-	make -s buildinfo;\
-	make -s make_fndata;\
-	make -s dodiff;
-
-make_fndata:
-	@objdump --disassemble --no-addresses --no-show-raw-insn --section=.text cfgfs | awk '/^<.*>:$$/{f=substr($$0,2,length($$0)-3);next}/^$$/||$$1=="int3"{next}/^\t/{c[f]++}END{for(f in c)print f,c[f]}' | sort >.fndata
-
-dodiff:
-	@[ ! -e .fndata.old ] || diff -u .fndata.old .fndata | awk 'NR<=2||!/^[+-]/{next}{f=substr($$1,2);fns[f]=1}/^-/{old[f]=$$2}/^\+/{new[f]=$$2}END{for(fn in fns){printf("%s: %di -> %di\n",fn,old[fn],new[fn]);total+=int(new[fn])-int(old[fn])}if(total!=0)printf("total %c%di\n",total>=0?"+":"",total);}'
-
 -include $(DEPS)
 .c.o:
 	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
@@ -248,6 +238,31 @@ install:
 	>&2 echo "error: no suitable install directory found in "'$$'"PATH"; \
 	>&2 echo "add a directory like ~/bin to your path (google it) or try running this as root"; \
 	exit 1;
+
+# ~
+
+buildinfo:
+	@objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{if(p=$$0!~/@plt/)fns++;next}/^$$|^Disa/{next}p&&$$1!="int3"{isns++}END{printf("|   fns: %d\n|  isns: %d\n", fns, isns);}';\
+	printf '| crc32: %08x (function names and instructions without their operands)\n' "$$(objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{p=$$0!~/@plt/;print;next}/^$$|^Disa/{next}p{print$$1}' | cksum | cut -d' ' -f1)";\
+	llvm-readelf -S $(EXE) | awk '$$8~/X/{sz+=int("0x"$$6)}END{printf("|  code: %db\n",sz)}';\
+	echo @;\
+	llvm-readelf -S $(EXE) | awk '$$2==".data"{printf("|   data: %db (initialized read-write data)\n",int("0x" $$6))}';\
+	llvm-readelf -S $(EXE) | awk '$$2==".rodata"{printf("| rodata: %db (initialized read-only data)\n",int("0x" $$6))}';\
+	llvm-readelf -S $(EXE) | awk '$$2==".bss"{printf("|    bss: %db (zero-initialized read-write data)\n",int("0x" $$6))}';\
+
+postbuild:
+	@mv -f .fndata .fndata.old 2>/dev/null;\
+	make -s buildinfo;\
+	make -s make_fndata;\
+	make -s dodiff;
+
+make_fndata:
+	@objdump --disassemble --no-addresses --no-show-raw-insn --section=.text cfgfs | awk '/^<.*>:$$/{f=substr($$0,2,length($$0)-3);next}/^$$/||$$1=="int3"{next}/^\t/{c[f]++}END{for(f in c)print f,c[f]}' | sort >.fndata
+
+dodiff:
+	@[ ! -e .fndata.old ] || diff -u .fndata.old .fndata | awk 'NR<=2||!/^[+-]/{next}{f=substr($$1,2);fns[f]=1}/^-/{old[f]=$$2}/^\+/{new[f]=$$2}END{for(fn in fns){printf("%s: %di -> %di\n",fn,old[fn],new[fn]);total+=int(new[fn])-int(old[fn])}if(total!=0)printf("total %c%di\n",total>=0?"+":"",total);}'
+
+# ~
 
 .PHONY: test
 test:
