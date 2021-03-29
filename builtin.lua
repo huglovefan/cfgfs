@@ -2196,17 +2196,39 @@ do
 		end
 	end)
 
+	-- modname string -> fspath string
+	-- updated when a module is successfully loaded
+	-- if a module fails to load, then this is used to find out the
+	--  filesystem path for it
+	local path_cache = {}
+
 	local require_real = require
 	require = function (modname)
 		-- already loaded and watched this module
 		if true == watched_modules[modname] then
 			return require_real(modname)
 		end
-		local rv = {require_real(modname)}
-		if rv[2] and rv[2]:find('^%.*/.*%.[Ll][Uu][Aa]$') then
-			watched_modules[modname] = _reloader_add_watch(rv[2])
+		local rv = {pcall(require_real, modname)}
+		if rv[1] then
+			local path = rv[3]
+			if path and path:find('^%.*/.*%.[Ll][Uu][Aa]$') then
+				path_cache[modname] = path
+				watched_modules[modname] = _reloader_add_watch(path)
+			end
+			return select(2, table.unpack(rv))
+		else
+			-- require() or the module had an error
+
+			-- if we had successfully loaded this module in the
+			--  past, then we should know the filesystem path for it
+			-- make reloader watch it so that correcting the error
+			--  will retry loading the module
+			if path_cache[modname] then
+				watched_modules[modname] = _reloader_add_watch(path_cache[modname])
+			end
+
+			return error(rv[2], 2)
 		end
-		return table.unpack(rv)
 	end
 end
 
