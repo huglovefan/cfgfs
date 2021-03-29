@@ -2,7 +2,7 @@
 
 cmd.echo('<script.lua>')
 
-cfgfs.hide_cfgs['comfig/echo.cfg'] = true
+cfgfs.block_cfgs['comfig/echo.cfg'] = true
 
 --------------------------------------------------------------------------------
 

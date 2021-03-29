@@ -115,7 +115,7 @@ local init_settings = function ()
 			['config.cfg'] = true,
 		},
 
-		hide_cfgs = {
+		block_cfgs = {
 			-- ['name.cfg'] = true,
 		},
 
@@ -1057,7 +1057,7 @@ _get_contents = function (path)
 		end
 
 		-- should exec the real one?
-		if not cfgfs.hide_cfgs[path] then
+		if not cfgfs.block_cfgs[path] then
 			cfgf('exec"cfgfs/unmask_next/%s";exec"%s"', path, path)
 		end
 	end
@@ -2055,7 +2055,7 @@ local update_notify_list = function ()
 	for name in pairs(cfgfs.notify_cfgs) do
 		table.insert(allpaths, '/' .. name)
 	end
-	for name in pairs(cfgfs.hide_cfgs) do
+	for name in pairs(cfgfs.block_cfgs) do
 		table.insert(allpaths, '/' .. name)
 	end
 	_notify_list_set(allpaths)
