@@ -202,6 +202,22 @@ buildinfo:
 	@objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{if(p=$$0!~/@plt/)fns++;next}/^$$|^Disa/{next}p&&$$1!="int3"{isns++}END{printf("|   fns: %d\n|  isns: %d\n", fns, isns);}'
 	@printf '| crc32: %08x (function names and instructions without their operands)\n' "$$(objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{p=$$0!~/@plt/;print;next}/^$$|^Disa/{next}p{print$$1}' | cksum | cut -d' ' -f1)"
 	@llvm-readelf -S $(EXE) | awk '$$8~/X/{sz+=int("0x"$$6)}END{printf("|  code: %db\n",sz)}'
+	@echo @
+	@llvm-readelf -S cfgfs | awk '$$2==".data"{printf("|   data: %db (initialized read-write data)\n",int("0x" $$6))}'
+	@llvm-readelf -S cfgfs | awk '$$2==".rodata"{printf("| rodata: %db (initialized read-only data)\n",int("0x" $$6))}'
+	@llvm-readelf -S cfgfs | awk '$$2==".bss"{printf("|    bss: %db (zero-initialized read-write data)\n",int("0x" $$6))}'
+
+postbuild:
+	@mv -f .fndata .fndata.old 2>/dev/null;\
+	make -s buildinfo;\
+	make -s make_fndata;\
+	make -s dodiff;
+
+make_fndata:
+	@objdump --disassemble --no-addresses --no-show-raw-insn --section=.text cfgfs | awk '/^<.*>:$$/{f=substr($$0,2,length($$0)-3);next}/^$$/||$$1=="int3"{next}/^\t/{c[f]++}END{for(f in c)print f,c[f]}' | sort >.fndata
+
+dodiff:
+	@[ ! -e .fndata.old ] || diff -u .fndata.old .fndata | awk 'NR<=2||!/^[+-]/{next}{f=substr($$1,2);fns[f]=1}/^-/{old[f]=$$2}/^\+/{new[f]=$$2}END{for(fn in fns){printf("%s: %di -> %di\n",fn,old[fn],new[fn]);total+=int(new[fn])-int(old[fn])}if(total!=0)printf("total %c%di\n",total>=0?"+":"",total);}'
 
 -include $(DEPS)
 .c.o:
@@ -214,7 +230,7 @@ clean:
 	@$(CFGFS_RM) -f -- $(EXE) $(OBJS) $(DEPS)
 
 watch:
-	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >.cfgfs_reexec;pkill -INT cfgfs||rm .cfgfs_reexec;make -s buildinfo'; do\
+	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >.cfgfs_reexec;pkill -INT cfgfs||rm .cfgfs_reexec;make -s postbuild'; do\
 		continue;\
 	done
 
