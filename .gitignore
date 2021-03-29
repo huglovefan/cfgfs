@@ -3,6 +3,8 @@
 
 /.thinlto-cache/
 /test/rv
+/.fndata
+/.fndata.old
 /cfgfs
 *.d
 *.o
@@ -17,3 +19,4 @@
 # to make git ignore any changes to them
 /env.sh
 /misc/bots.list
+/misc/lists/
