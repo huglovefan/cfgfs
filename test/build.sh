@@ -8,7 +8,7 @@ for cc in clang gcc; do
 		untested="$untested $cc"
 		continue
 	fi
-	for lua_pkg in lua5.4 lua5.3 lua5.2 lua5.1 luajit; do
+	for lua_pkg in lua5.4; do
 		if ! pkg-config --libs "$lua_pkg" >/dev/null 2>&1; then
 			>&2 echo "skipping tests for lua_pkg $lua_pkg"
 			untested="$untested $lua_pkg"
