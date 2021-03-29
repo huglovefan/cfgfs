@@ -2180,7 +2180,15 @@ end
 -- booby trap require() so that reloader can watch source files loaded using it
 
 do
+	-- modname string -> state bool
+	--   true = successfully watched
+	--   false = tried to add watch but failed
 	local watched_modules = {}
+
+	-- un-cache loaded modules on reload so they're loaded from disk again
+	-- note: this is needed even for modules that we've failed to watch,
+	--  because without this we would never retry watching them (as loading
+	--  cached modules using require() doesn't return the filesystem path)
 	add_reset_callback(function ()
 		for modname in pairs(watched_modules) do
 			package.loaded[modname] = nil
@@ -2190,11 +2198,13 @@ do
 
 	local require_real = require
 	require = function (modname)
+		-- already loaded and watched this module
+		if true == watched_modules[modname] then
+			return require_real(modname)
+		end
 		local rv = {require_real(modname)}
 		if rv[2] and rv[2]:find('^%.*/.*%.[Ll][Uu][Aa]$') then
-			if _reloader_add_watch(rv[2]) then
-				watched_modules[modname] = true
-			end
+			watched_modules[modname] = _reloader_add_watch(rv[2])
 		end
 		return table.unpack(rv)
 	end
