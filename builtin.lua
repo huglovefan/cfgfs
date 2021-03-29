@@ -443,7 +443,7 @@ local ev_do_timeouts = function ()
 			local three_frames = 1000/120*3
 			if delay > three_frames then
 				eprintln('warning: wait(%d) at %s was delayed by %.2f ms!',
-				    t.delay, ev_find_origin(t.co), delay)
+				    math.floor(t.delay), ev_find_origin(t.co), delay)
 			end
 
 			ev_resume(t.co)
