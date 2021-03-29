@@ -29,7 +29,7 @@ static void buffer_add_line(struct buffer *restrict self,
 	memcpy(p, buf, sz);
 }
 
-__attribute__((minsize))
+__attribute__((cold))
 __attribute__((noinline))
 void buffer_make_full(struct buffer *self) {
 D	assert(!self->full);
@@ -91,14 +91,13 @@ D			assert(self->nonfull != ent);
 	return ent;
 }
 
-#define buffer_new() \
-	({ \
-		struct buffer *_new_ent = malloc((sizeof(struct buffer) + reported_cfg_size)); \
-		unsafe_optimization_hint(_new_ent != NULL); \
-		memset(_new_ent, 0, sizeof(struct buffer)); \
-		_new_ent->data = ((char *)_new_ent + sizeof(struct buffer)); \
-		_new_ent; \
-	})
+static inline struct buffer *buffer_new(void) {
+	struct buffer *_new_ent = malloc((sizeof(struct buffer) + reported_cfg_size));
+	unsafe_optimization_hint(_new_ent != NULL);
+	memset(_new_ent, 0, sizeof(struct buffer));
+	_new_ent->data = ((char *)_new_ent + sizeof(struct buffer));
+	return _new_ent;
+}
 
 static struct buffer *buffer_list_get_nonfull(struct buffer_list *self) {
 	struct buffer *rv = self->nonfull;

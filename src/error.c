@@ -7,7 +7,7 @@
 
 #include "cli_output.h"
 
-static void check_fmt(const char *s) {
+static inline int check_fmt(const char *s) {
 	int ss = 0;
 	for (const char *p = s; *p; p++) {
 		if (*p == '%') {
@@ -17,10 +17,10 @@ static void check_fmt(const char *s) {
 		}
 	}
 	if (ss != 2) goto bad;
-	return;
+	return 1;
 bad:
 	fprintf(stderr, "assert_fail: invalid format string!\n");
-	abort();
+	return 0;
 }
 
 __attribute__((noreturn))
@@ -29,12 +29,12 @@ void assert_fail(const struct assertdata *dt) {
 		cli_save_prompt_locked();
 	}
 
-	check_fmt(dt->fmt);
+	if (!check_fmt(dt->fmt)) goto fail;
 	fprintf(stderr, dt->fmt, dt->func, dt->expr);
 
 	typedef void (*print_backtrace_t)(void);
 	print_backtrace_t fn = (print_backtrace_t)dlsym(RTLD_DEFAULT, "__sanitizer_print_stack_trace");
 	if (fn != NULL) fn();
-
+fail:
 	abort();
 }

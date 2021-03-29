@@ -1,9 +1,9 @@
 #pragma once
 
 struct assertdata {
-	const char *fmt;
-	const char *func;
-	const char *expr;
+	const char *const fmt;
+	const char *const func;
+	const char *const expr;
 };
 
 __attribute__((cold))

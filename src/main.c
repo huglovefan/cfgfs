@@ -376,13 +376,16 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 	lua_call(L, 1, 0);
 
 	struct buffer *ent = buffer_list_grab_first(&buffers);
+
+	lua_release_state_no_click(L);
+
 D	assert(ent != NULL); // should be fakebuf or a real one
 	rv = (int)buffer_get_size(ent);
 	if (unlikely(ent != &fakebuf)) {
 		buffer_memcpy_to(ent, buf, buffer_get_size(ent));
 		buffer_free(ent);
 	}
-	lua_release_state_no_click(L);
+
 	VV {
 		if (rv >= 0) {
 			eprintln("data=[[%.*s]] rv=%d", rv, buf, rv);

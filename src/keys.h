@@ -7,6 +7,6 @@ struct key_list_entry {
 	const KeySym xkey;
 };
 
-extern struct key_list_entry keys[];
+extern const struct key_list_entry keys[];
 
 KeySym keys_name2keysym(const char *name);

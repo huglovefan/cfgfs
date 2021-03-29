@@ -104,7 +104,6 @@ err_toolong:
 	return luaL_error(L, "cmd: command too long");
 }
 
-__attribute__((minsize))
 static int l_cmd_stringify(lua_State *L) {
 	const char *errmsg;
 	int argc = lua_gettop(L);
@@ -178,8 +177,8 @@ static enum quoting_mode cmd_get_quoting_mode(int argc,
 	enum quoting_mode mode = qm_default;
 	if (argc >= 2) {
 		if (words[0].len == 3 && memcmp(words[0].s, "say", 3) == 0) mode = qm_say;
-		if (words[0].len == 4 && memcmp(words[0].s, "echo", 4) == 0) mode = qm_echo;
-		if (words[0].len == 8 && memcmp(words[0].s, "say_team", 8) == 0) mode = qm_say;
+		else if (words[0].len == 4 && memcmp(words[0].s, "echo", 4) == 0) mode = qm_echo;
+		else if (words[0].len == 8 && memcmp(words[0].s, "say_team", 8) == 0) mode = qm_say;
 	}
 	return mode;
 }

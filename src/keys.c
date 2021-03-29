@@ -1,13 +1,12 @@
 #include "keys.h"
 
-#include <stddef.h>
 #include <string.h>
 
 #define XK_LATIN1
 #define XK_MISCELLANY
 #include <X11/keysymdef.h>
 
-struct key_list_entry keys[] = {
+const struct key_list_entry keys[] = {
 	{ "0", XK_0 },
 	{ "1", XK_1 },
 	{ "2", XK_2 },
@@ -152,7 +151,7 @@ struct key_list_entry keys[] = {
 };
 
 KeySym keys_name2keysym(const char *name) {
-	for (struct key_list_entry *p = keys; p->name != NULL; p++) {
+	for (const struct key_list_entry *p = keys; p->name != NULL; p++) {
 		if (0 == strcmp(p->name, name)) {
 			return p->xkey;
 		}
