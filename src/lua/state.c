@@ -187,7 +187,16 @@ void lua_unlock_state_unchecked(void) {
 	pthread_mutex_unlock(&lua_mutex);
 }
 
+// -----------------------------------------------------------------------------
+
 int l_get_locker(lua_State *L) {
 	lua_pushstring(L, locked_by);
 	return 1;
+}
+
+const char *lua_get_locker(lua_State *L) {
+D	assert(L != NULL);
+D	assert(L == g_L);
+	// note: may be null if it's locked using the unchecked functions
+	return locked_by;
 }
