@@ -266,8 +266,8 @@ void lua_define_builtins(void *L) {
 	lua_setglobal(L, "_get_locker");
 
 	// main.c
-	 lua_pushcfunction(L, (lua_CFunction)l_intercept_whitelist_set);
-	lua_setglobal(L, "_intercept_whitelist_set");
+	 lua_pushcfunction(L, (lua_CFunction)l_notify_list_set);
+	lua_setglobal(L, "_notify_list_set");
 	// reloader.c
 	 lua_pushcfunction(L, (lua_CFunction)l_reloader_add_watch);
 	lua_setglobal(L, "_reloader_add_watch");

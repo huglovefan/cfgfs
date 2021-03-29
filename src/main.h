@@ -4,4 +4,4 @@
 
 void main_quit(void);
 
-int l_intercept_whitelist_set(void *L);
+int l_notify_list_set(void *L);

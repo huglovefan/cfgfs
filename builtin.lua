@@ -111,7 +111,7 @@ do
 
 local init_settings = function ()
 	cfgfs = {
-		intercept_cfgs = {
+		notify_cfgs = {
 			['config.cfg'] = true,
 		},
 
@@ -127,15 +127,15 @@ local init_settings = function ()
 	}
 
 	if os.getenv('GAMENAME') == 'Team Fortress 2' then
-		cfgfs.intercept_cfgs['scout.cfg'] = true
-		cfgfs.intercept_cfgs['soldier.cfg'] = true
-		cfgfs.intercept_cfgs['pyro.cfg'] = true
-		cfgfs.intercept_cfgs['demoman.cfg'] = true
-		cfgfs.intercept_cfgs['heavyweapons.cfg'] = true
-		cfgfs.intercept_cfgs['engineer.cfg'] = true
-		cfgfs.intercept_cfgs['medic.cfg'] = true
-		cfgfs.intercept_cfgs['sniper.cfg'] = true
-		cfgfs.intercept_cfgs['spy.cfg'] = true
+		cfgfs.notify_cfgs['scout.cfg'] = true
+		cfgfs.notify_cfgs['soldier.cfg'] = true
+		cfgfs.notify_cfgs['pyro.cfg'] = true
+		cfgfs.notify_cfgs['demoman.cfg'] = true
+		cfgfs.notify_cfgs['heavyweapons.cfg'] = true
+		cfgfs.notify_cfgs['engineer.cfg'] = true
+		cfgfs.notify_cfgs['medic.cfg'] = true
+		cfgfs.notify_cfgs['sniper.cfg'] = true
+		cfgfs.notify_cfgs['spy.cfg'] = true
 		cfgfs.restore_globals_on_reload['class'] = 'classchange'
 		cfgfs.restore_globals_on_reload['slot'] = 'slotchange'
 	end
@@ -2050,15 +2050,15 @@ end
 
 --------------------------------------------------------------------------------
 
-local update_intercept_whitelist = function ()
+local update_notify_list = function ()
 	local allpaths = {}
-	for name in pairs(cfgfs.intercept_cfgs) do
+	for name in pairs(cfgfs.notify_cfgs) do
 		table.insert(allpaths, '/' .. name)
 	end
 	for name in pairs(cfgfs.hide_cfgs) do
 		table.insert(allpaths, '/' .. name)
 	end
-	_intercept_whitelist_set(allpaths)
+	_notify_list_set(allpaths)
 end
 
 --------------------------------------------------------------------------------
@@ -2102,7 +2102,7 @@ local before_script_exec = function ()
 	cmd.release_all_keys = assert(release_all_keys)
 end
 local after_script_exec = function ()
-	update_intercept_whitelist()
+	update_notify_list()
 	if not click_key_bound then
 		eprintln('\awarning: no function key bound to "cfgfs_click" found!')
 		eprintln(' why: one of the f1-f12 keys must be bound to "cfgfs_click" for delayed command execution to work')

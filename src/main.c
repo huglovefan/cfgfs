@@ -153,8 +153,8 @@ static int lookup_path(const char *restrict path,
 
 // -----------------------------------------------------------------------------
 
-static char *intercept_whitelist = NULL;
-static pthread_rwlock_t intercept_whitelist_lock = PTHREAD_RWLOCK_INITIALIZER;
+static char *notify_list = NULL;
+static pthread_rwlock_t notify_list_lock = PTHREAD_RWLOCK_INITIALIZER;
 
 // -----------------------------------------------------------------------------
 
@@ -164,10 +164,10 @@ static int lookup_ordinary_path(const char *restrict path,
                                 bool is_open) {
 D	assert(pathlen >= 1);
 
-	if (likely(intercept_whitelist != NULL)) {
-		pthread_rwlock_rdlock(&intercept_whitelist_lock);
-		bool found = optstring_test(intercept_whitelist, path, pathlen);
-		pthread_rwlock_unlock(&intercept_whitelist_lock);
+	if (likely(notify_list != NULL)) {
+		pthread_rwlock_rdlock(&notify_list_lock);
+		bool found = optstring_test(notify_list, path, pathlen);
+		pthread_rwlock_unlock(&notify_list_lock);
 		if (!found) return -ENOENT;
 	}
 
@@ -204,7 +204,7 @@ D	assert(pathlen >= 1);
 }
 
 __attribute__((cold))
-int l_intercept_whitelist_set(void *L) {
+int l_notify_list_set(void *L) {
 	struct optstring *os = NULL;
 	const char *errmsg;
 
@@ -214,9 +214,9 @@ int l_intercept_whitelist_set(void *L) {
 	lua_pop(L, 1);
 
 	if (unlikely(len == 0)) {
-		pthread_rwlock_wrlock(&intercept_whitelist_lock);
-		free(exchange(intercept_whitelist, NULL));
-		pthread_rwlock_unlock(&intercept_whitelist_lock);
+		pthread_rwlock_wrlock(&notify_list_lock);
+		free(exchange(notify_list, NULL));
+		pthread_rwlock_unlock(&notify_list_lock);
 		return 0;
 	}
 
@@ -233,19 +233,19 @@ int l_intercept_whitelist_set(void *L) {
 		lua_pop(L, 1);
 	}
 
-	pthread_rwlock_wrlock(&intercept_whitelist_lock);
-	free(exchange(intercept_whitelist, optstring_finalize(os)));
-	pthread_rwlock_unlock(&intercept_whitelist_lock);
+	pthread_rwlock_wrlock(&notify_list_lock);
+	free(exchange(notify_list, optstring_finalize(os)));
+	pthread_rwlock_unlock(&notify_list_lock);
 
 	return 0;
 nontable:
-	errmsg = "l_intercept_whitelist_set: argument is not a table";
+	errmsg = "l_notify_list_set: argument is not a table";
 	goto error;
 toolong:
-	errmsg = "l_intercept_whitelist_set: path is too long";
+	errmsg = "l_notify_list_set: path is too long";
 	goto error;
 nonstring:
-	errmsg = "l_intercept_whitelist_set: argument is not a string";
+	errmsg = "l_notify_list_set: argument is not a string";
 	goto error;
 error:
 	optstring_free(exchange(os, NULL));
