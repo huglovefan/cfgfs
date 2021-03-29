@@ -22,6 +22,7 @@
 #include "../lua.h"
 #include "../macros.h"
 #include "../main.h"
+#include "../reloader.h"
 
 // -----------------------------------------------------------------------------
 
@@ -267,6 +268,9 @@ void lua_define_builtins(void *L) {
 	// main.c
 	 lua_pushcfunction(L, (lua_CFunction)l_intercept_whitelist_set);
 	lua_setglobal(L, "_intercept_whitelist_set");
+	// reloader.c
+	 lua_pushcfunction(L, (lua_CFunction)l_reloader_add_watch);
+	lua_setglobal(L, "_reloader_add_watch");
 
 	 lua_getglobal(L, "string");
 	  lua_pushcfunction(L, l_string_starts_with);

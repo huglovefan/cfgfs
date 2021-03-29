@@ -2177,6 +2177,31 @@ end
 
 --------------------------------------------------------------------------------
 
+-- booby trap require() so that reloader can watch source files loaded using it
+
+do
+	local watched_modules = {}
+	add_reset_callback(function ()
+		for modname in pairs(watched_modules) do
+			package.loaded[modname] = nil
+			watched_modules[modname] = nil
+		end
+	end)
+
+	local require_real = require
+	require = function (modname)
+		local rv = {require_real(modname)}
+		if rv[2] and rv[2]:find('^%.*/.*%.[Ll][Uu][Aa]$') then
+			if _reloader_add_watch(rv[2]) then
+				watched_modules[modname] = true
+			end
+		end
+		return table.unpack(rv)
+	end
+end
+
+--------------------------------------------------------------------------------
+
 local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or 'script.lua')
 if not ok then
 	eprintln('\aerror: %s', err)
