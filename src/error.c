@@ -32,9 +32,13 @@ void assert_fail(const struct assertdata *dt) {
 	if (!check_fmt(dt->fmt)) goto fail;
 	fprintf(stderr, dt->fmt, dt->func, dt->expr);
 
+	print_c_backtrace();
+fail:
+	abort();
+}
+
+void print_c_backtrace(void) {
 	typedef void (*print_backtrace_t)(void);
 	print_backtrace_t fn = (print_backtrace_t)dlsym(RTLD_DEFAULT, "__sanitizer_print_stack_trace");
 	if (fn != NULL) fn();
-fail:
-	abort();
 }

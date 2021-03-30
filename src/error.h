@@ -8,3 +8,5 @@ struct assertdata {
 
 __attribute__((cold))
 void assert_fail(const struct assertdata *);
+
+void print_c_backtrace(void);

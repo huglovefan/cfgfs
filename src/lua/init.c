@@ -11,6 +11,7 @@
 
 #include "../buffers.h"
 #include "../cli_output.h"
+#include "../error.h"
 #include "../lua.h"
 #include "../macros.h"
 
@@ -53,7 +54,6 @@ static struct reqval {
 // panic function
 
 static void lua_print_backtrace(lua_State *L);
-static void c_print_backtrace(void);
 
 static int l_panic(lua_State *L) {
 	if (cli_trylock_output_nosave()) {
@@ -65,7 +65,7 @@ static int l_panic(lua_State *L) {
 		fprintf(stderr, "fatal error!\n");
 	}
 	lua_print_backtrace(L);
-	c_print_backtrace();
+	print_c_backtrace();
 	return 0;
 }
 
@@ -93,17 +93,6 @@ static void lua_print_backtrace(lua_State *L) {
 		lua_pop(L, 2);
 	}
 #endif
-}
-
-// print the C backtrace
-// this only works if cfgfs was built with a sanitizer
-static void c_print_backtrace(void) {
-	typedef void (*print_backtrace_t)(void);
-	print_backtrace_t fn = (print_backtrace_t)dlsym(RTLD_DEFAULT, "__sanitizer_print_stack_trace");
-	if (fn != NULL) {
-		fprintf(stderr, "C backtrace:\n");
-		fn();
-	}
 }
 
 // -----------------------------------------------------------------------------
