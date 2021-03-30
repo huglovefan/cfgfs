@@ -31,7 +31,7 @@ int cfgfs_handle_xerror(Display *display, XErrorEvent *error) {
 	)) {
 		cli_lock_output();
 		 fprintf(stderr, "warning: caught harmless X error: %s\n", msgbuf);
-		 print_c_backtrace();
+		 print_c_backtrace_unlocked();
 		cli_unlock_output();
 		return 0;
 	}
@@ -44,6 +44,6 @@ int cfgfs_handle_xerror(Display *display, XErrorEvent *error) {
 	}
 
 	fprintf(stderr, "error: thread %s got an X error: %s\n", thread, msgbuf);
-D	print_c_backtrace();
+D	print_c_backtrace_unlocked();
 	abort();
 }

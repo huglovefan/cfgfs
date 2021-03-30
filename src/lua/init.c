@@ -65,7 +65,7 @@ static int l_panic(lua_State *L) {
 		fprintf(stderr, "fatal error!\n");
 	}
 	lua_print_backtrace(L);
-	print_c_backtrace();
+	print_c_backtrace_unlocked();
 	return 0;
 }
 

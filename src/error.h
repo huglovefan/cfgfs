@@ -9,4 +9,4 @@ struct assertdata {
 __attribute__((cold))
 void assert_fail(const struct assertdata *);
 
-void print_c_backtrace(void);
+void print_c_backtrace_unlocked(void);
