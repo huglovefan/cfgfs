@@ -33,6 +33,7 @@ OBJS = \
        src/keys.o \
        src/lua/init.o \
        src/error.o \
+       src/xlib.o \
 
 DEPS = $(OBJS:.o=.d)
 SRCS = $(OBJS:.o=.c)

@@ -18,6 +18,7 @@
 #include "lua.h"
 #include "macros.h"
 #include "pipe_io.h"
+#include "xlib.h"
 
 _Atomic(_Bool) game_window_is_active = 0;
 
@@ -150,6 +151,7 @@ void attention_init(void) {
 		eprintln("attention: failed to open display!");
 		goto err;
 	}
+	XSetErrorHandler(cfgfs_handle_xerror);
 
 	check_minus1(
 	    pipe(msgpipe),

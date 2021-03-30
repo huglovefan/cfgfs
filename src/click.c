@@ -22,6 +22,7 @@
 #include "keys.h"
 #include "lua.h"
 #include "macros.h"
+#include "xlib.h"
 
 static double pending_click;
 
@@ -65,6 +66,7 @@ void click_init(void) {
 		eprintln("click: failed to open display!");
 		goto out;
 	}
+	XSetErrorHandler(cfgfs_handle_xerror);
 
 	click_set_key("f11");
 out:
