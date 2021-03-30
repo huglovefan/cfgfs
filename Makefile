@@ -241,26 +241,71 @@ install:
 
 # ~
 
-buildinfo:
-	@objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{if(p=$$0!~/@plt/)fns++;next}/^$$|^Disa/{next}p&&$$1!="int3"{isns++}END{printf("|   fns: %d\n|  isns: %d\n", fns, isns);}';\
-	printf '| crc32: %08x (function names and instructions without their operands)\n' "$$(objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '/^<.*>:$$/{p=$$0!~/@plt/;print;next}/^$$|^Disa/{next}p{print$$1}' | cksum | cut -d' ' -f1)";\
-	llvm-readelf -S $(EXE) | awk '$$8~/X/{sz+=int("0x"$$6)}END{printf("|  code: %db\n",sz)}';\
-	echo @;\
-	llvm-readelf -S $(EXE) | awk '$$2==".data"{printf("|   data: %db (initialized read-write data)\n",int("0x" $$6))}';\
-	llvm-readelf -S $(EXE) | awk '$$2==".rodata"{printf("| rodata: %db (initialized read-only data)\n",int("0x" $$6))}';\
-	llvm-readelf -S $(EXE) | awk '$$2==".bss"{printf("|    bss: %db (zero-initialized read-write data)\n",int("0x" $$6))}';\
-
+# print details about cfgfs.exe
+# called by the watch target after a successful build
 postbuild:
-	@mv -f .fndata .fndata.old 2>/dev/null;\
 	make -s buildinfo;\
-	make -s make_fndata;\
-	make -s dodiff;
+	make -s .fndata;\
+	make -s compare_fndata;
 
-make_fndata:
-	@objdump --disassemble --no-addresses --no-show-raw-insn --section=.text cfgfs | awk '/^<.*>:$$/{f=substr($$0,2,length($$0)-3);next}/^$$/||$$1=="int3"{next}/^\t/{c[f]++}END{for(f in c)print f,c[f]}' | sort >.fndata
+buildinfo:
+# total counts of functions and instructions
+	@objdump -d --no-addresses --no-show-raw-insn $(EXE) | awk '\
+	    /^<.*>:$$/ { if (p=$$0!~/@plt/) fns++; next; }\
+	    /^$$|^Disa/ { next; }\
+	    p&&$$1!="int3" { isns++; }\
+	    END { printf("|   fns: %d\n|  isns: %d\n", fns, isns); }\
+	'
+# crc32 of function and instruction names (to tell if a code change had any effect at all)
+# can't include any instruction operands because they usually contain addresses which aren't stable
+	@crcnum=$$(objdump -d --no-addresses --no-show-raw-insn $(EXE) | \
+	    awk ' \
+	        /^<.*>:$$/ {p=$$0!~/@plt/;print;next} \
+	        /^$$|^Disa/ {next} \
+	        p {print$$1} \
+	    ' | cksum);\
+	printf '| crc32: %08x (function names and instructions without their operands)\n' "$${crcnum%% *}"
+# sizes of code and data sections
+	@if awk --version 2>/dev/null | grep -q '^GNU Awk'; then gawk_sucks='--non-decimal-data'; fi;\
+	llvm-readelf -S $(EXE) | awk $$gawk_sucks '\
+	    $$2~/^\./{s[$$2]=$$6}\
+	    END {\
+	        printf("|  code: %db\n",int("0x" s[".text"]));\
+	        printf("@\n");\
+	        printf("|   data: %db (initialized read-write data)\n",int("0x" s[".data"]));\
+	        printf("| rodata: %db (initialized read-only data)\n",int("0x" s[".rodata"]));\
+	        printf("|    bss: %db (zero-initialized read-write data)\n",int("0x" s[".bss"]));\
+	    }\
+	'
 
-dodiff:
-	@[ ! -e .fndata.old ] || diff -u .fndata.old .fndata | awk 'NR<=2||!/^[+-]/{next}{f=substr($$1,2);fns[f]=1}/^-/{old[f]=$$2}/^\+/{new[f]=$$2}END{for(fn in fns){printf("%s: %di -> %di\n",fn,old[fn],new[fn]);total+=int(new[fn])-int(old[fn])}if(total!=0)printf("total %c%di\n",total>=0?"+":"",total);}'
+# count how many instructions each function has and write the counts to a file
+.fndata: cfgfs
+	@mv -f .fndata .fndata.old 2>/dev/null; \
+	objdump --disassemble --no-addresses --no-show-raw-insn --section=.text $(EXE) | \
+	    awk ' \
+	        /^<.*>:$$/ { fn=substr($$0,2,length($$0)-3); next; } \
+	        /^\t/ && $$1!="int3" { cnt[fn]++; } \
+	        END { for (fn in cnt) print(fn, cnt[fn]); } \
+	    ' | \
+	    sort >.fndata
+
+# print changed functions between .fndata.old and .fndata
+compare_fndata:
+	@if ! [ -f .fndata -a -f .fndata.old ]; then exit 0; fi;\
+	diff -u .fndata.old .fndata | \
+	    awk ' \
+	        NR<=2 || !/^[+-]/ { next; } \
+	        { fn=substr($$1, 2); fns[fn]=1; } \
+	        /^-/ { old[fn]=$$2; next; } \
+	        /^\+/ { new[fn]=$$2; next; } \
+	        END { \
+	            for (fn in fns) { \
+	                printf("%s: %di -> %di\n", fn, old[fn], new[fn]); \
+	                total += int(new[fn])-int(old[fn]); \
+	            } \
+	            if (total != 0) printf("total %c%di\n", total>=0 ?"+":"",total); \
+	        } \
+	    '
 
 # ~
 
