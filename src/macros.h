@@ -28,6 +28,12 @@
 		_Static_assert(__builtin_strlen(s) <= 15, "thread name too long"); \
 		prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
 	})
+#define get_thread_name(buf) \
+	({ \
+		_Static_assert(sizeof(buf) >= 16, "buffer too small"); \
+		memset(buf, 0, sizeof(buf)); \
+		prctl(PR_GET_NAME, buf, NULL, NULL, NULL); \
+	})
 
 // get milliseconds since the start of the program
 #define mono_ms() \
