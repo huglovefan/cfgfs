@@ -87,10 +87,8 @@ test with and I don't <del>want one</del> know if this will even work on it.
    If you already have something using `%command%` there, add only `cfgfs_run`.
 
 The cfgfs "config" will be loaded from `script_APPID.lua` where `APPID` is the
-Steam App ID of the game.
-
-(the scripts included with cfgfs are my configs, you'll probably want to erase
-most of them)
+Steam App ID of the game. If it doesn't exist, then an empty one will be
+automatically created.
 
 ## What else?
 

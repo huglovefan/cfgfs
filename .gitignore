@@ -1,22 +1,25 @@
-/.cache/
+# top secret
 /RESEARCH
 
+# build-related junk
+/.cache/
 /.thinlto-cache/
 /test/rv
 /.fndata
 /.fndata.old
 /cfgfs
+/mnt
 *.d
 *.o
 
+# created by cfgfs
 /.cli_history
 /console.log
 /logs/
-/mnt
 
-# i thought gitignore would work for these but apparently you need to do
-# % git update-index --skip-worktree env.sh misc/bots.list
-# to make git ignore any changes to them
+# automatically created, don't belong in this repo
+/script.lua
+/script_*.lua
+
+# user-modifiable
 /env.sh
-/misc/bots.list
-/misc/lists/

@@ -70,6 +70,7 @@ if [ "$LC_ALL" = "C" ]; then unset LC_ALL; fi
 export GAMEDIR="$gamedir"
 export GAMEROOT="$gameroot"
 
+export CFGFS_DIR="$cfgfs_dir"
 export CFGFS_MOUNTPOINT="$cfgfs_mountpoint"
 
 # parse the game name from gameinfo.txt
@@ -80,18 +81,6 @@ if [ -f "$gamedir/gameinfo.txt" ] && \
 else
 	>&2 echo "cfgfs_run: failed to parse game name from gameinfo.txt!"
 	exit 1
-fi
-
-if [ -z "$CFGFS_SCRIPT" ]; then
-	# note: SteamAppId is set by steam
-	export CFGFS_SCRIPT=script_${SteamAppId}.lua
-	if [ ! -e "$CFGFS_SCRIPT" ]; then
-		{
-		echo "-- cfgfs script for ${GAMENAME:-app id ${SteamAppId}}"
-		echo ""
-		echo "cmd.echo('cfgfs: script_${SteamAppId}.lua loaded')"
-		} >>"$CFGFS_SCRIPT"
-	fi
 fi
 
 export CFGFS_RUN_PID=$$

@@ -60,7 +60,7 @@ run() {
 	mkdir -p -- "$1" || return
 
 	trap '' INT
-	( trap - INT; . ./env.sh; exec ./cfgfs "$1" )
+	( trap - INT; [ ! -e env.sh ] || . ./env.sh; exec "${CFGFS_DIR}/cfgfs" "$1" )
 	rv=$?
 	trap - INT
 

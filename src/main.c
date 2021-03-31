@@ -503,36 +503,11 @@ static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) 
 
 // -----------------------------------------------------------------------------
 
-static const struct fuse_operations cfgfs_oper = {
-	.getattr = cfgfs_getattr,
-	.open = cfgfs_open,
-	.read = cfgfs_read,
-	.write = cfgfs_write,
-	.release = cfgfs_release,
-	.init = cfgfs_init,
-};
-
-// https://github.com/libfuse/libfuse/blob/f54eb86/include/fuse.h#L852
-enum fuse_main_rv {
-	rv_ok                 = 0,
-	rv_invalid_argument   = 1,
-	rv_missing_mountpoint = 2,
-	rv_fuse_setup_failed  = 3,
-	rv_mount_failed       = 4,
-	rv_daemonize_failed   = 5,
-	rv_signal_failed      = 6,
-	rv_fs_error           = 7,
-	// cfgfs-specific
-	rv_cfgfs_lua_failed    = 10,
-	rv_cfgfs_reexec_failed = 11,
-};
-
 static void check_env(void) {
 	static const struct var {
 		const char *name, *what;
 	} vars[] = {
 		{"CFGFS_MOUNTPOINT", "path to the directory cfgfs was mounted in"},
-		{"CFGFS_SCRIPT", "path to the script to load"},
 		{"GAMEDIR", "path to mod directory containing gameinfo.txt"},
 		{"GAMEROOT", "path to parent directory of GAMEDIR"},
 		{"GAMENAME", "game title from gameinfo.txt"},
@@ -560,6 +535,129 @@ static void check_env(void) {
 	}
 }
 
+// -----------------------------------------------------------------------------
+
+// locate script.lua
+
+// 1. $CFGFS_SCRIPT
+// 2a. ./script_440.lua  (SteamAppId set)
+// 2b. ./script.lua  (SteamAppId not set)
+
+typedef bool (*path_callback)(const char *);
+
+static bool test_paths(path_callback cb) {
+
+#define ENV_TEST(s) ({ char *s_ = getenv(s); (s_ && cb(s_)); })
+#define STR_TEST(s) (cb(s))
+
+	// 1. $CFGFS_SCRIPT
+	if (ENV_TEST("CFGFS_SCRIPT")) {
+		return true;
+	}
+
+	if (NULL != getenv("SteamAppId")) {
+
+		char buf[32];
+		int appid = atoi(getenv("SteamAppId"));
+
+		// 2a. ./script_440.lua
+		snprintf(buf, sizeof(buf), "./script_%d.lua", appid);
+		if (STR_TEST(buf)) {
+			return true;
+		}
+
+	} else {
+
+		// 2b. ./script.lua
+		if (STR_TEST("./script.lua")) {
+			return true;
+		}
+
+	}
+
+#undef ENV_TEST
+#undef STR_TEST
+
+	return false;
+
+}
+
+static bool check_existing_script(const char *path) {
+	if (-1 == access(path, R_OK)) {
+VV		eprintln("access %s: %s", path, strerror(errno));
+		return false;
+	}
+	setenv("CFGFS_SCRIPT", path, 1);
+	return true;
+}
+
+static bool check_create_script(const char *path) {
+	FILE *f = fopen(path, "a");
+	if (f == NULL) {
+VV		eprintln("fopen %s: %s", path, strerror(errno));
+		return false;
+	}
+	char *s;
+
+	fprintf(f, "--\n");
+	if (NULL != (s = getenv("GAMENAME"))) {
+		fprintf(f, "-- cfgfs script for %s\n", s);
+	} else if (NULL != (s = getenv("SteamAppId"))) {
+		fprintf(f, "-- cfgfs script for app id %s\n", s);
+	} else {
+		fprintf(f, "-- cfgfs script for unknown game\n");
+	}
+	fprintf(f, "--\n");
+	fprintf(f, "\n");
+	fprintf(f, "bind('f11', 'cfgfs_click')\n");
+	fprintf(f, "\n");
+	fprintf(f, "cmd.echo('script.lua loaded')\n");
+	fclose(f);
+
+	setenv("CFGFS_SCRIPT", path, 1);
+
+	println("No cfgfs script was found for this game. A blank one has been created at:");
+	if (path[0] == '/') {
+		println("  %s", path);
+	} else {
+		char *cwd = get_current_dir_name();
+		if (path[0] == '.' && path[1] == '/') {
+			println("  %s/%s", cwd, path+2);
+		} else {
+			println("  %s/%s", cwd, path);
+		}
+		free(cwd);
+	}
+
+	return true;
+}
+
+// -----------------------------------------------------------------------------
+
+static const struct fuse_operations cfgfs_oper = {
+	.getattr = cfgfs_getattr,
+	.open = cfgfs_open,
+	.read = cfgfs_read,
+	.write = cfgfs_write,
+	.release = cfgfs_release,
+	.init = cfgfs_init,
+};
+
+// https://github.com/libfuse/libfuse/blob/f54eb86/include/fuse.h#L852
+enum fuse_main_rv {
+	rv_ok                 = 0,
+	rv_invalid_argument   = 1,
+	rv_missing_mountpoint = 2,
+	rv_fuse_setup_failed  = 3,
+	rv_mount_failed       = 4,
+	rv_daemonize_failed   = 5,
+	rv_signal_failed      = 6,
+	rv_fs_error           = 7,
+	// cfgfs-specific
+	rv_cfgfs_lua_failed    = 10,
+	rv_cfgfs_reexec_failed = 11,
+};
+
 int main(int argc, char **argv) {
 
 	one_true_entry();
@@ -582,9 +680,18 @@ D	eprintln("NOTE: debug checks are enabled");
 V	eprintln("NOTE: verbose messages are enabled");
 VV	eprintln("NOTE: very verbose messages are enabled");
 
+	enum fuse_main_rv rv;
+
 	check_env();
 
-	enum fuse_main_rv rv;
+	if (!test_paths(check_existing_script)) {
+		if (!test_paths(check_create_script)) {
+			eprintln("error: couldn't find or create a cfgfs script!");
+			rv = rv_cfgfs_lua_failed;
+			goto out_no_nothing;
+		}
+	}
+D	assert(NULL != getenv("CFGFS_SCRIPT"));
 
 	// ~ init fuse ~
 
@@ -665,7 +772,6 @@ out_fuse_newed_and_mounted:
 out_fuse_newed:
 	fuse_destroy(fuse);
 out_no_fuse:
-	one_true_exit();
 	lua_deinit();
 	attention_deinit();
 	cli_input_deinit();
@@ -673,6 +779,8 @@ out_no_fuse:
 	reloader_deinit();
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
+out_no_nothing:
+	one_true_exit();
 	if (0 == unlink(".cfgfs_reexec")) {
 		setenv("CFGFS_RESTARTED", "1", 1);
 		execvp(argv[0], argv);

@@ -107,7 +107,12 @@ bool lua_init(void) {
 
 	lua_define_builtins(L);
 
-	if (LUA_OK != luaL_loadfile(L, "./builtin.lua")) {
+	// CFGFS_DIR: set by cfgfs_run
+	char path[256];
+	snprintf(path, sizeof(path), "%s/builtin.lua",
+	    getenv("CFGFS_DIR") ?: ".");
+
+	if (LUA_OK != luaL_loadfile(L, path)) {
 		eprintln("error: %s", lua_tostring(L, -1));
 		eprintln("failed to load builtin.lua!");
 		goto err;
