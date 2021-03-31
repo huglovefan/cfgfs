@@ -279,13 +279,17 @@ buildinfo:
 	    }\
 	'
 
-# count how many instructions each function has and write the counts to a file
+# count the size in bytes of each function and write the counts to a file
 .fndata: cfgfs
 	@mv -f .fndata .fndata.old 2>/dev/null; \
-	objdump --disassemble --no-addresses --no-show-raw-insn --section=.text $(EXE) | \
+	objdump --disassemble --no-addresses --section=.text $(EXE) | \
 	    awk ' \
 	        /^<.*>:$$/ { fn=substr($$0,2,length($$0)-3); next; } \
-	        /^\t/ && $$1!="int3" { cnt[fn]++; } \
+	        !fn || $$1=="cc"&&$$2=="int3" { next; } \
+	        /^\t/ { \
+	            s = match($$0, /^([\t ][0-9a-f][0-9a-f])+/); \
+	            if (s != 0) cnt[fn] += length(substr($$0, s, RLENGTH))/3; \
+	        } \
 	        END { for (fn in cnt) print(fn, cnt[fn]); } \
 	    ' | \
 	    sort >.fndata
@@ -300,11 +304,13 @@ compare_fndata:
 	        /^-/ { old[fn]=$$2; next; } \
 	        /^\+/ { new[fn]=$$2; next; } \
 	        END { \
+	            total = 0; changed = 0; \
 	            for (fn in fns) { \
-	                printf("%s: %di -> %di\n", fn, old[fn], new[fn]); \
+	                printf("%s: %db -> %db\n", fn, old[fn], new[fn]); \
 	                total += int(new[fn])-int(old[fn]); \
+	                if (int(new[fn]) != int(old[fn])) changed = 1; \
 	            } \
-	            if (total != 0) printf("total %c%di\n", total>=0 ?"+":"",total); \
+	            if (changed) printf("total %s%db\n", total>=0 ?"+":"",total); \
 	        } \
 	    '
 
