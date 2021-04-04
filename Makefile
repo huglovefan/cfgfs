@@ -340,6 +340,7 @@ start: $(EXE)
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
 	ln -fs $(TF2MNT) $(MNTLNK); \
+	export CFGFS_DIR=$$PWD; \
 	export CFGFS_MOUNTPOINT=$$PWD/mnt; \
 	export GAMEDIR=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf; \
 	export GAMEROOT=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2; \
@@ -347,4 +348,4 @@ start: $(EXE)
 	export NO_LISTUPDATE=1; \
 	export SteamAppId=440; \
 	[ ! -e env.sh ] || . ./env.sh; \
-	exec ./$(EXE) $(CFGFS_FLAGS) "$${GAMEDIR}/custom/!cfgfs/cfg"
+	exec "$$CFGFS_DIR"/$(EXE) $(CFGFS_FLAGS) "$${GAMEDIR}/custom/!cfgfs/cfg"
