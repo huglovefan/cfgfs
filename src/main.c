@@ -781,12 +781,11 @@ out_no_fuse:
 	fuse_opt_free_args(&args);
 out_no_nothing:
 	one_true_exit();
-	if (0 == unlink(".cfgfs_reexec")) {
+	if (0 == unlink("/tmp/.cfgfs_reexec")) {
 		setenv("CFGFS_RESTARTED", "1", 1);
 		execvp(argv[0], argv);
 		perror("cfgfs: exec");
 		rv = rv_cfgfs_reexec_failed;
 	}
 	return (int)rv;
-
 }

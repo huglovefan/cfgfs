@@ -221,7 +221,7 @@ clean:
 	@$(CFGFS_RM) -f -- $(EXE) $(OBJS) $(DEPS)
 
 watch:
-	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >.cfgfs_reexec;pkill -INT cfgfs||rm .cfgfs_reexec;make -s postbuild'; do\
+	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >/tmp/.cfgfs_reexec;pkill -INT cfgfs||rm /tmp/.cfgfs_reexec;make -s postbuild'; do\
 		continue;\
 	done
 
