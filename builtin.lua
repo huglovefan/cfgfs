@@ -1726,6 +1726,13 @@ local colorize_game_message = function (line)
 		return line
 	end
 
+	-- ah yes, the ol' reddit switcharoo
+	if line == 'Teams have been switched.' then
+		for name in pairs(name2team) do
+			name2team[name] = team2opposite[name2team[name]]
+		end
+	end
+
 	return false
 end
 
