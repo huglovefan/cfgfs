@@ -130,6 +130,9 @@ D	 assert(lua_type(L, GET_CONTENTS_IDX) == LUA_TFUNCTION);
 	  lua_getglobal(L, "_game_console_output");
 D	  assert(lua_gettop(L) == GAME_CONSOLE_OUTPUT_IDX);
 D	  assert(lua_type(L, GAME_CONSOLE_OUTPUT_IDX) == LUA_TFUNCTION);
+	   lua_getglobal(L, "_message");
+D	   assert(lua_gettop(L) == MESSAGE_IDX);
+D	   assert(lua_type(L, MESSAGE_IDX) == LUA_TFUNCTION);
 
 	buffer_list_swap(&buffers, &init_cfg);
 
