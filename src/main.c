@@ -41,6 +41,7 @@ static pthread_t g_main_thread;
 static bool main_quit_called;
 
 __attribute__((cold))
+__attribute__((minsize))
 void main_quit(void) {
 	pthread_t main_thread = g_main_thread;
 	if (main_thread) {
@@ -204,6 +205,7 @@ D	assert(pathlen >= 1);
 }
 
 __attribute__((cold))
+__attribute__((minsize))
 int l_notify_list_set(void *L) {
 	struct optstring *os = NULL;
 	const char *errmsg;
@@ -465,6 +467,7 @@ V	eprintln("cfgfs_release: %s", path);
 // ~
 
 __attribute__((cold))
+__attribute__((minsize))
 static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	// https://github.com/libfuse/libfuse/blob/0105e06/include/fuse_common.h#L421
 	(void)conn;
@@ -494,6 +497,7 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 // -----------------------------------------------------------------------------
 
 __attribute__((cold))
+__attribute__((minsize))
 static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) {
 	(void)level;
 	cli_lock_output();
@@ -503,6 +507,7 @@ static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) 
 
 // -----------------------------------------------------------------------------
 
+__attribute__((minsize))
 static void check_env(void) {
 	static const struct var {
 		const char *name, *what;
@@ -545,6 +550,7 @@ static void check_env(void) {
 
 typedef bool (*path_callback)(const char *);
 
+__attribute__((minsize))
 static bool test_paths(path_callback cb) {
 
 #define ENV_TEST(s) ({ char *s_ = getenv(s); (s_ && cb(s_)); })
@@ -582,6 +588,7 @@ static bool test_paths(path_callback cb) {
 
 }
 
+__attribute__((minsize))
 static bool check_existing_script(const char *path) {
 	if (-1 == access(path, R_OK)) {
 VV		eprintln("access %s: %s", path, strerror(errno));
@@ -591,6 +598,7 @@ VV		eprintln("access %s: %s", path, strerror(errno));
 	return true;
 }
 
+__attribute__((minsize))
 static bool check_create_script(const char *path) {
 	FILE *f = fopen(path, "a");
 	if (f == NULL) {
@@ -658,6 +666,7 @@ enum fuse_main_rv {
 	rv_cfgfs_reexec_failed = 11,
 };
 
+__attribute__((minsize))
 int main(int argc, char **argv) {
 
 	one_true_entry();
