@@ -21,14 +21,13 @@ enum wordflags {
 
 static unsigned char charflags[256];
 
-#define set(c, flag) charflags[c] |= flag
+#define set(c, flag) charflags[c] = flag
 #define set_range(f, t, flag) for (int c = f; c <= t; c++) set(c, flag)
 
 __attribute__((constructor))
+__attribute__((minsize))
 static void _init_badchars(void) {
-	set_range(0, 31, wf_needs_quotes);
-	set(9, wf_needs_quotes);
-	set(32, wf_needs_quotes);
+	set_range(0, 32, wf_needs_quotes);
 	set_range(39, 41, wf_needs_quotes);
 	set(47, wf_needs_quotes);
 	set_range(58, 59, wf_needs_quotes);
@@ -38,8 +37,8 @@ static void _init_badchars(void) {
 	// 0: null byte, game can't read this -> replaced with 0x7F (DEL)
 	// 1-31 excluding 9: game treats these as newlines -> replaced with 0x7F (DEL)
 	// 34: double quote, can't be quoted itself -> replaced with a single quote
-	set_range(0, 8, wf_contains_evil_char);
-	set_range(10, 31, wf_contains_evil_char);
+	set_range(0, 31, wf_needs_quotes|wf_contains_evil_char);
+	set(9, wf_needs_quotes);
 	set(34, wf_contains_evil_char);
 }
 
@@ -49,8 +48,8 @@ static void _init_badchars(void) {
 // ~
 
 struct worddata {
-	const char *s;
 	size_t len;
+	const char *s;
 	enum wordflags flags;
 };
 
@@ -144,6 +143,7 @@ error:
 static size_t cmd_preparse(lua_State *restrict L,
                            int argc,
                            struct worddata *restrict words) {
+	unsafe_optimization_hint(argc >= 1);
 	size_t total_len = 0;
 	for (int i = 0; i < argc; i++) {
 		size_t len;
@@ -174,11 +174,13 @@ err:
  */
 static enum quoting_mode cmd_get_quoting_mode(int argc,
                                               const struct worddata *restrict words) {
+	unsafe_optimization_hint(argc >= 1);
 	enum quoting_mode mode = qm_default;
-	if (argc >= 2) {
-		if (words[0].len == 3 && memcmp(words[0].s, "say", 3) == 0) mode = qm_say;
-		else if (words[0].len == 4 && memcmp(words[0].s, "echo", 4) == 0) mode = qm_echo;
-		else if (words[0].len == 8 && memcmp(words[0].s, "say_team", 8) == 0) mode = qm_say;
+	if (argc >= 2 && words[0].len <= 8) {
+		const char *s = words[0].s;
+		if (words[0].len == 3 && memcmp(s, "say", 3) == 0) mode = qm_say;
+		else if (words[0].len == 4 && memcmp(s, "echo", 4) == 0) mode = qm_echo;
+		else if (words[0].len == 8 && memcmp(s, "say_team", 8) == 0) mode = qm_say;
 	}
 	return mode;
 }
@@ -190,6 +192,7 @@ static size_t cmd_get_outsize(int argc,
                               const struct worddata *restrict words,
                               size_t total_len,
                               enum quoting_mode mode) {
+	unsafe_optimization_hint(argc >= 1);
 	switch (mode) {
 	case qm_default:
 		for (int i = 0; i < argc; i++) {
@@ -213,7 +216,6 @@ static size_t cmd_get_outsize(int argc,
 	case qm_echo:
 		// same as qm_say but without the last quote
 		// +1 for the \x7f to tell where the line ends
-D		assert(argc >= 1);
 		total_len += (size_t)(argc-1) + 1;
 		break;
 	}
@@ -225,17 +227,14 @@ __attribute__((noinline))
 static void cmd_replace_evil_chars(unsigned char *restrict buf,
                                    size_t sz,
                                    enum quoting_mode mode) {
+	unsafe_optimization_hint(sz != 0);
 	switch (mode) {
 	case qm_default:
 	case qm_echo:
-		for (size_t i = 0; i < sz; i++) {
-			if (buf[i] < 32 && buf[i] != 9) buf[i] = /*DEL*/ 0x7f;
-			if (buf[i] == '"') buf[i] = '\'';
-		}
-		break;
 	case qm_say:
 		for (size_t i = 0; i < sz; i++) {
 			if (buf[i] < 32 && buf[i] != 9) buf[i] = /*DEL*/ 0x7f;
+			if (buf[i] == '"' && mode != qm_say) buf[i] = '\'';
 		}
 		break;
 	}
@@ -249,45 +248,48 @@ static size_t cmd_stringify(char *restrict buf,
 	char *bufstart = buf;
 	switch (mode) {
 	case qm_default:
-		for (int i = 0; i < argc; i++) {
-			if (!(words[i].flags&wf_needs_quotes)) {
-				if (i > 0 && *(buf-1) != '"') {
+		for (const struct worddata *w = words; w != words+argc; w++) {
+			const char *s = w->s;
+			if (!(w->flags&wf_needs_quotes)) {
+				if (w != words && *(buf-1) != '"') {
 					*buf++ = ' ';
 				}
-				memcpy(buf, words[i].s, words[i].len);
-				buf += words[i].len;
+				memcpy(buf, s, w->len);
+				buf += w->len;
 			} else {
 				*buf++ = '"';
-				memcpy(buf, words[i].s, words[i].len);
-				buf += words[i].len;
-				if (i != argc-1) {
+				memcpy(buf, s, w->len);
+				buf += w->len;
+				if (w != words+(argc-1)) {
 					*buf++ = '"';
 				}
 			}
-			if (unlikely(words[i].flags&wf_contains_evil_char)) {
-				char *buf_ = buf-words[i].len;
-				if (i != argc-1 && words[i].flags&wf_needs_quotes) {
+			if (unlikely(w->flags&wf_contains_evil_char)) {
+				char *buf_ = buf-w->len;
+				if (w != words+(argc-1) && w->flags&wf_needs_quotes) {
 					buf_ -= 1; // closing quote
 				}
-				cmd_replace_evil_chars((unsigned char *)buf_, words[i].len, mode);
+				cmd_replace_evil_chars((unsigned char *)buf_, w->len, mode);
 			}
 		}
 		break;
 	case qm_say:
 	case qm_echo: {
-		char sep = '"';
-		for (int i = 0; i < argc; i++) {
-			memcpy(buf, words[i].s, words[i].len);
-			if (unlikely(words[i].flags&wf_contains_evil_char)) {
-				cmd_replace_evil_chars((unsigned char *)buf, words[i].len, mode);
+		for (const struct worddata *w = words; w != words+argc; w++) {
+			memcpy(buf, w->s, w->len);
+			buf += w->len;
+			*buf++ = (w == words) ? '"' : ' ';
+			if (unlikely(w->flags&wf_contains_evil_char)) {
+				cmd_replace_evil_chars(
+				    (unsigned char *)buf-(1+w->len),
+				    w->len,
+				    mode);
 			}
-			buf += words[i].len;
-			*buf++ = sep;
-			sep = ' ';
 		}
 		buf -= 1; // rewind to the last separator
+D		assert(mode == qm_say || mode == qm_echo);
 		if (mode == qm_say) *buf++ = '"';
-		if (mode == qm_echo) *buf++ = '\x7f';
+		else /*if (mode == qm_echo)*/ *buf++ = '\x7f';
 		break;
 	}
 	}
