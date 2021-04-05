@@ -422,11 +422,15 @@ VV	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 		return (int)size;
 	}
 	case sft_message: {
-		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
+		size_t pathlen = strlen(path);
+		assert(pathlen > strlen(MESSAGE_DIR_PREFIX));
+D		assert(0 == memcmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
 		lua_State *L = lua_get_state("cfgfs_write/sft_message");
 		if (unlikely(L == NULL)) return -errno;
 		 lua_pushvalue(L, MESSAGE_IDX);
-		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));
+		  lua_pushlstring(L,
+		      path+strlen(MESSAGE_DIR_PREFIX),
+		      pathlen-strlen(MESSAGE_DIR_PREFIX));
 		   lua_pushlstring(L, data, size);
 		lua_call(L, 2, 0);
 		lua_release_state(L);
@@ -448,11 +452,15 @@ V	eprintln("cfgfs_release: %s", path);
 	case sft_none:
 		return 0;
 	case sft_message: {
-		assert(0 == strncmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
+		size_t pathlen = strlen(path);
+		assert(pathlen > strlen(MESSAGE_DIR_PREFIX));
+D		assert(0 == memcmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
 		lua_State *L = lua_get_state("cfgfs_release/sft_message");
 		if (unlikely(L == NULL)) return -errno;
 		 lua_pushvalue(L, MESSAGE_IDX);
-		  lua_pushstring(L, path+strlen(MESSAGE_DIR_PREFIX));
+		  lua_pushlstring(L,
+		      path+strlen(MESSAGE_DIR_PREFIX),
+		      pathlen-strlen(MESSAGE_DIR_PREFIX));
 		   lua_pushnil(L);
 		lua_call(L, 2, 0);
 		lua_release_state(L);
