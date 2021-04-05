@@ -769,7 +769,7 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 		.max_idle_threads = 5,
 	});
 	rv = rv_ok;
-	if (loop_rv != 0 && !main_quit_called) {
+	if (loop_rv != 0 && !(loop_rv == SIGINT && main_quit_called)) {
 		rv = rv_fs_error;
 	}
 
