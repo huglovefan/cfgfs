@@ -86,6 +86,7 @@ void click_deinit(void) {
 // NOTE: assumes click_lock is held
 __attribute__((cold))
 static bool click_set_key(const char *name) {
+	if (!display) return false;
 	KeySym ks = keys_name2keysym(name);
 	if (ks == 0) {
 		eprintln("click_set_key: key '%s' not supported", name);
