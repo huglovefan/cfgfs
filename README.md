@@ -77,9 +77,6 @@ it reads a config file from cfgfs.
 - xterm (for `cfgfs_run`)
 - standard development tools (`clang` or `gcc`, `git`, `make`)
 
-At the moment only GNU/Linux is supported. I don't have a Windows computer to
-test with and I don't <del>want one</del> know if this will even work on it.
-
 ### Gentoo
 
 ```
@@ -94,6 +91,20 @@ the `liblua5.4-dev` package.
 ```sh
 sudo apt install build-essential liblua5.4-dev libfuse3-dev libreadline-dev libx11-dev libxtst-dev xterm
 ```
+
+### Windows
+
+cfgfs works on GNU/Linux only. Just about everything in this repository is done
+differently on Windows so most of the code would have to be rewritten for it.
+
+Most importantly, the virtual filesystem library [`libfuse`] doesn't support
+Windows. There exist Windows-native alternatives like [WinFsp] that could work
+for making a cfgfs clone, but the work of figuring that out and writing the code
+will have to be done by [someone who's actually interested in using Windows].
+
+[`libfuse`]: https://github.com/libfuse/libfuse
+[WinFsp]: https://github.com/billziss-gh/winfsp
+[someone who's actually interested in using Windows]: https://github.com/you
 
 ## Installation
 
