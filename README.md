@@ -75,20 +75,51 @@ it reads a config file from cfgfs.
 - `libreadline`
 - `libx11`, `libxtst`
 - xterm (for `cfgfs_run`)
+- standard development tools (`clang` or `gcc`, `git`, `make`)
 
 At the moment only GNU/Linux is supported. I don't have a Windows computer to
 test with and I don't <del>want one</del> know if this will even work on it.
 
+### Gentoo
+
+```
+sudo emerge -an lua:5.4 fuse:3 readline libX11 libXtst xterm git
+```
+
+### Ubuntu and derivatives
+
+At least Ubuntu 20.10 or newer is required due to older versions not having
+the `liblua5.4-dev` package.
+
+```sh
+sudo apt install build-essential liblua5.4-dev libfuse3-dev libreadline-dev libx11-dev libxtst-dev xterm
+```
+
 ## Installation
 
-1. Run `make && make install` to compile cfgfs and install the `cfgfs_run`
+1. Clone the repository and `cd` to it:
+   `git clone https://github.com/huglovefan/cfgfs && cd cfgfs`
+2. Run `make && make install` to compile cfgfs and install the `cfgfs_run`
    script
-2. Add `cfgfs_run %command%` to the beginning of the game's launch options.  
+3. Add `cfgfs_run %command%` to the beginning of the game's launch options.  
    If you already have something using `%command%` there, add only `cfgfs_run`.
 
-The cfgfs "config" will be loaded from `script_APPID.lua` where `APPID` is the
-Steam App ID of the game. If it doesn't exist, then an empty one will be
-automatically created.
+The cfgfs "config" will be loaded from `script_APPID.lua` in the `cfgfs`
+directory, with `APPID` replaced by the game's App ID. If the file doesn't
+exist, then an empty one will be automatically created.
+
+Note that the `cfgfs_run` script will stop working if the `cfgfs` directory is
+moved or renamed. In that event, the script will need to be reinstalled using
+`make install` in the new directory.
+
+### Updating
+
+(in the `cfgfs` directory)
+
+1. Pull the latest changes: `git pull`
+2. Clean up the old version and recompile cfgfs: `make clean && make`
+
+If any of the steps fail, please [open an issue].
 
 ## What else?
 
