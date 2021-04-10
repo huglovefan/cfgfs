@@ -34,7 +34,7 @@ enum msg {
 
 static Display *display;
 static const char *game_window_title = NULL;
-#define window_title_suffix " - OpenGL"
+#define window_title_fmt "%s - OpenGL"
 
 static bool wait_for_event(int conn) {
 	switch (rdselect(msgpipe[0], conn)) {
@@ -112,16 +112,11 @@ static void *attention_main(void *ud) {
 	int conn = ConnectionNumber(display);
 	assert(conn >= 0);
 
-	const char *gamename = getenv("GAMENAME");
-	size_t gnlen = strlen(gamename);
-	char *title = malloc(gnlen+strlen(window_title_suffix)+1);
-	if (title == NULL) {
+	char *title;
+	if (unlikely(-1 == asprintf(&title, window_title_fmt, getenv("GAMENAME")))) {
 		perror("attention: malloc");
-		goto out;
+		goto out_no_title;
 	}
-	memcpy(title, gamename, gnlen);
-	memcpy(title+gnlen, window_title_suffix, strlen(window_title_suffix));
-	title[gnlen+strlen(window_title_suffix)] = '\0';
 	game_window_title = title;
 VV	eprintln("attention: game_window_title=\"%s\"", game_window_title);
 
@@ -131,9 +126,9 @@ VV	eprintln("attention: game_window_title=\"%s\"", game_window_title);
 			check_attention(net_wm_name);
 		}
 	}
-out:
-	game_window_title = NULL;
 	free(exchange(title, NULL));
+	game_window_title = NULL;
+out_no_title:
 
 	return NULL;
 }
