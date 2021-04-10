@@ -97,7 +97,6 @@ static bool did_active_window_change(Atom net_active_window) {
 	return attention_changed;
 }
 
-__attribute__((cold))
 static void *attention_main(void *ud) {
 	(void)ud;
 	set_thread_name("attention");

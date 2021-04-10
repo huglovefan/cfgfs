@@ -46,7 +46,6 @@ enum msg {
 // true if we're exiting because the user typed ^D at the terminal
 static _Atomic(bool) cli_got_eof;
 
-__attribute__((cold))
 static void linehandler(char *line) {
 	cli_reading_line = false;
 
@@ -88,7 +87,6 @@ static void linehandler(char *line) {
 
 // -----------------------------------------------------------------------------
 
-__attribute__((cold))
 static void winch_handler(int signal) {
 	(void)signal;
 	writech(msgpipe[1], msg_winch);
@@ -96,7 +94,6 @@ static void winch_handler(int signal) {
 
 // -----------------------------------------------------------------------------
 
-__attribute__((cold))
 static void *cli_main(void *ud) {
 	(void)ud;
 	set_thread_name("cli");

@@ -57,7 +57,7 @@ void do_click(void) {
 
 static bool click_set_key(const char *name);
 
-__attribute__((cold))
+__attribute__((minsize))
 void click_init(void) {
 	pthread_mutex_lock(&click_lock);
 
@@ -73,7 +73,7 @@ out:
 	pthread_mutex_unlock(&click_lock);
 }
 
-__attribute__((cold))
+__attribute__((minsize))
 void click_deinit(void) {
 	pthread_mutex_lock(&click_lock);
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
@@ -84,7 +84,7 @@ void click_deinit(void) {
 // -----------------------------------------------------------------------------
 
 // NOTE: assumes click_lock is held
-__attribute__((cold))
+__attribute__((minsize))
 static bool click_set_key(const char *name) {
 	if (!display) return false;
 	KeySym ks = keys_name2keysym(name);
@@ -192,7 +192,7 @@ static int l_click_received(lua_State *L) {
 	return 0;
 }
 
-__attribute__((cold))
+__attribute__((minsize))
 static int l_click_set_key(lua_State *L) {
 	const char *s = lua_tostring(L, 1);
 	if (s == NULL) {
@@ -204,7 +204,7 @@ static int l_click_set_key(lua_State *L) {
 	return 1;
 }
 
-__attribute__((cold))
+__attribute__((minsize))
 void click_init_lua(void *L) {
 	 lua_pushcfunction(L, l_click);
 	lua_setglobal(L, "_click");

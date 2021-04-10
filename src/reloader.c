@@ -186,7 +186,6 @@ typeerr:
 
 // -----------------------------------------------------------------------------
 
-__attribute__((cold))
 static void *reloader_main(void *ud) {
 	(void)ud;
 	set_thread_name("reloader");

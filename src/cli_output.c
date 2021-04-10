@@ -39,7 +39,7 @@ void eprintln(const char *fmt, ...) {
 	cli_unlock_output();
 }
 
-__attribute__((cold))
+__attribute__((minsize))
 void perror(const char *s) {
 	if (likely(s != NULL && *s != '\0')) {
 		eprintln("%s: %s", s, strerror(errno));

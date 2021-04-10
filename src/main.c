@@ -40,7 +40,6 @@ static pthread_t g_main_thread;
 // true if main_quit() has been called (checked during exit)
 static bool main_quit_called;
 
-__attribute__((cold))
 __attribute__((minsize))
 void main_quit(void) {
 	pthread_t main_thread = g_main_thread;
@@ -204,7 +203,6 @@ D	assert(pathlen >= 1);
 	compiler_enforced_unreachable();
 }
 
-__attribute__((cold))
 __attribute__((minsize))
 int l_notify_list_set(void *L) {
 	struct optstring *os = NULL;
@@ -474,7 +472,6 @@ D		assert(0 == memcmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
 
 // ~
 
-__attribute__((cold))
 __attribute__((minsize))
 static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	// https://github.com/libfuse/libfuse/blob/0105e06/include/fuse_common.h#L421
@@ -504,7 +501,6 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 
 // -----------------------------------------------------------------------------
 
-__attribute__((cold))
 __attribute__((minsize))
 static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) {
 	(void)level;
