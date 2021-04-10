@@ -26,22 +26,6 @@
 
 // -----------------------------------------------------------------------------
 
-__attribute__((noreturn))
-static int l_fatal(lua_State *L) {
-	lua_CFunction pfn = lua_atpanic(L, NULL);
-	if (pfn != NULL) {
-		lua_atpanic(L, pfn);
-		pfn(L);
-		abort();
-	} else {
-		eprintln("fatal error!");
-		eprintln("(panic function not set, skipping backtrace)");
-		abort();
-	}
-}
-
-// -----------------------------------------------------------------------------
-
 // string functions
 
 static int l_string_starts_with(lua_State *L) {
@@ -246,7 +230,7 @@ void lua_define_builtins(void *L) {
 
 	assert(0 == lua_gettop(L));
 
-	 lua_pushcfunction(L, l_fatal);
+	 lua_pushcfunction(L, (lua_CFunction)l_panic);
 	lua_setglobal(L, "_fatal");
 
 	 lua_pushcfunction(L, l_print);

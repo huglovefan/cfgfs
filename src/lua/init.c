@@ -51,7 +51,7 @@ static struct reqval {
 
 static void lua_print_backtrace(lua_State *L);
 
-static int l_panic(lua_State *L) {
+int l_panic(void *L) {
 	if (cli_trylock_output_nosave()) {
 		cli_save_prompt_locked();
 	}
@@ -62,7 +62,7 @@ static int l_panic(lua_State *L) {
 	}
 	lua_print_backtrace(L);
 	print_c_backtrace_unlocked();
-	return 0;
+	abort();
 }
 
 static void lua_print_backtrace(lua_State *L) {
@@ -86,7 +86,7 @@ bool lua_init(void) {
 	lua_State *L = luaL_newstate();
 	luaL_openlibs(L);
 
-	lua_atpanic(L, l_panic);
+	lua_atpanic(L, (lua_CFunction)l_panic);
 
 	lua_define_builtins(L);
 
