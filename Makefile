@@ -17,26 +17,31 @@ CFLAGS ?= -O2 -g
 
 EXE := $(shell basename -- "$$PWD")
 
-OBJS = \
+HOT_OBJS = \
        src/main.o \
-       src/buffers.o \
        src/buffer_list.o \
        src/lua/state.o \
+       src/cfg.o \
        src/lua/builtins.o \
        src/cli_output.o \
-       src/cfg.o \
        src/click.o \
+       src/buffers.o \
+
+COLD_OBJS = \
        src/pipe_io.o \
        src/attention.o \
        src/reloader.o \
        src/cli_input.o \
        src/keys.o \
        src/lua/init.o \
-       src/error.o \
        src/xlib.o \
+       src/error.o \
 
+OBJS = $(HOT_OBJS) $(COLD_OBJS)
 DEPS = $(OBJS:.o=.d)
 SRCS = $(OBJS:.o=.c)
+
+$(COLD_OBJS): CFLAGS += $(SIZE_OPT_CFLAGS)
 
 # make it make dependency files for make
 CPPFLAGS += -MMD -MP
@@ -49,7 +54,8 @@ CPPFLAGS += -D_GNU_SOURCE
 ## compiler-specific flags
 
 ifneq (,$(findstring clang,$(CC)))
-# warnings for clang
+# clang
+SIZE_OPT_CFLAGS = -Oz
 CFLAGS += \
           -Weverything \
           -Werror=conditional-uninitialized \
@@ -77,7 +83,8 @@ CFLAGS += \
           -Wframe-larger-than=512 \
 # end
 else
-# warnings for gcc
+# gcc
+SIZE_OPT_CFLAGS = -Os
 CFLAGS += \
           -Wall \
           -Wextra \
