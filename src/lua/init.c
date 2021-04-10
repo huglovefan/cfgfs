@@ -107,6 +107,8 @@ bool lua_init(void) {
 
 	lua_define_builtins(L);
 
+	lua_set_state_unchecked(L);
+
 	// CFGFS_DIR: set by cfgfs_run
 	char path[256];
 	snprintf(path, sizeof(path), "%s/builtin.lua",
@@ -138,7 +140,6 @@ D	   assert(lua_type(L, MESSAGE_IDX) == LUA_TFUNCTION);
 
 	assert(stack_is_clean(L));
 
-	lua_set_state_unchecked(L);
 	return true;
 err:
 	lua_set_state_unchecked(NULL);
