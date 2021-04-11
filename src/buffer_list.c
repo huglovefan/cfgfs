@@ -35,10 +35,7 @@ void buffer_make_full(struct buffer *self) {
 D	assert(!self->full);
 	self->full = true;
 
-	char *p = ((char *)self->data)+self->size;
-	self->size += strlen(cfg_exec_next_cmd "\n");
-	memcpy(p, cfg_exec_next_cmd "\n", strlen(cfg_exec_next_cmd "\n"));
-	// i think this should just use buffer_add_line() after all
+	buffer_add_line(self, cfg_exec_next_cmd, strlen(cfg_exec_next_cmd));
 }
 
 __attribute__((cold))
@@ -62,9 +59,11 @@ void buffer_list_swap(struct buffer_list *self, struct buffer_list *bl) {
 
 __attribute__((cold)) // only used by reloader
 void buffer_list_reset(struct buffer_list *self) {
-	for (struct buffer *next, *ent = self->first; ent != NULL; ent = next) {
-		next = ent->next;
+	struct buffer *ent = self->first;
+	while (ent != NULL) {
+		struct buffer *next = ent->next;
 		buffer_free(ent);
+		ent = next;
 	}
 	memset(self, 0, sizeof(struct buffer_list));
 }
@@ -99,32 +98,26 @@ static inline struct buffer *buffer_new(void) {
 	return _new_ent;
 }
 
+static struct buffer *buffer_list_get_nonfull_alloc(struct buffer_list *self);
 static struct buffer *buffer_list_get_nonfull(struct buffer_list *self) {
 	struct buffer *rv = self->nonfull;
-
-D	if (rv) assert(!rv->full);
-
-	// on a second thought does the "list is all full" case ever happen?
-	// when does the list only contain full buffers?
-D	if (self->nonfull == NULL) assert(self->first == NULL);
-
-	if (unlikely(rv == NULL)) {
-		// 1. list is empty
-//		// 2. list is all full
-		rv = buffer_new();
-//		if (likely(self->first == NULL)) {
-D			assert(self->first == NULL);
-D			assert(self->last == NULL);
-D			assert(self->nonfull == NULL);
-			self->first = rv;
-			self->last = rv;
-			self->nonfull = rv;
-//		} else {
-//			self->last->next = rv;
-//			self->nonfull = rv;
-//		}
+	if (likely(rv != NULL)) {
+D		assert(!rv->full);
+		return rv;
+	} else {
+		return buffer_list_get_nonfull_alloc(self);
 	}
-
+}
+__attribute__((noinline))
+static struct buffer *buffer_list_get_nonfull_alloc(struct buffer_list *self) {
+	// no non-full buffer, so the list must've been empty
+D	assert(self->first == NULL);
+D	assert(self->last == NULL);
+D	assert(self->nonfull == NULL);
+	struct buffer *rv = buffer_new();
+	self->first = rv;
+	self->last = rv;
+	self->nonfull = rv;
 	return rv;
 }
 
@@ -132,15 +125,19 @@ __attribute__((cold))
 __attribute__((noinline))
 static struct buffer *buffer_list_get_next_for(struct buffer_list *self,
                                                struct buffer *ent) {
+D	assert(ent->full);
 	struct buffer *rv = ent->next;
 	if (likely(rv == NULL)) {
-D		assert(self->first != NULL); // (old) can't be empty, has at least `ent` somewhere
-D		assert(ent == self->last); // (old) only last's next is null
+		// list must not have been empty if it has at least ent somewhere
+D		assert(self->first != NULL);
+		// ent must be the last one if it doesn't have a next
+D		assert(ent == self->last);
 		rv = buffer_new();
 		ent->next = rv;
 		self->last = rv;
 		if (likely(self->nonfull == NULL)) self->nonfull = rv;
 	}
+D	assert(!rv->full);
 	return rv;
 }
 
@@ -163,13 +160,18 @@ void buffer_list_remove_fake_buf(struct buffer_list *self, struct buffer *buf) {
 D	assert(self->first == buf);
 	self->first = buf->next;
 	if (likely(buf->next == NULL)) {
+		// this was the only buffer in the list
+		// there wasn't a next one, so it must not have gotten full
+D		assert(!buf->full);
+D		assert(self->nonfull == buf);
+D		assert(self->last == buf);
 		self->nonfull = NULL;
 		self->last = NULL;
 	} else {
-		// if there's another, then this one must've gotten full
+		// there was another buffer in the list
+		// that means this one must've gotten full
 D		assert(buf->full);
 D		assert(self->nonfull != buf);
-		// it's also not the last one in that case
 D		assert(self->last != buf);
 	}
 }
@@ -200,18 +202,16 @@ void buffer_list_append_from_that_to_this(struct buffer_list *self,
 
 // -----------------------------------------------------------------------------
 
+struct buffer *buffer_list_write_wont_fit(struct buffer_list *self);
+
 void buffer_list_write_line(struct buffer_list *self, const char *s, size_t sz) {
-	if (unlikely(sz == 0)) return;
+D	assert(sz > 0); // caller checks this
 D	assert(sz <= max_line_length); // caller checks this
 	bool did_allocate = (self->nonfull == NULL); // optimization hint
 	struct buffer *buf = buffer_list_get_nonfull(self);
 	if (unlikely(!did_allocate && !buffer_may_add_line(buf, sz))) {
-D		assert(buf->next == NULL); // wasn't full so couldn't have had a next one
-D		assert(self->last == buf); // nonfull so must've been the last one
-
-		self->nonfull = buf->next;
-		buffer_make_full(buf);
-		buf = buffer_list_get_next_for(self, buf);
+		buf = buffer_list_write_wont_fit(self);
+D		assert(buffer_may_add_line(buf, sz));
 	}
 	buffer_add_line(buf, s, sz);
 }
@@ -221,14 +221,20 @@ D	assert(sz != 0);
 	bool did_allocate = (self->nonfull == NULL); // optimization hint
 	struct buffer *buf = buffer_list_get_nonfull(self);
 	if (unlikely(!did_allocate && !buffer_may_add_line(buf, sz))) {
-D		assert(buf->next == NULL); // wasn't full so couldn't have had a next one
-D		assert(self->last == buf); // nonfull so must've been the last one
-
-		self->nonfull = buf->next;
-		buffer_make_full(buf);
-		buf = buffer_list_get_next_for(self, buf);
+		buf = buffer_list_write_wont_fit(self);
+D		assert(buffer_may_add_line(buf, sz));
 	}
 	return (char *)buf->data+buf->size;
+}
+
+__attribute__((cold, minsize, noinline))
+struct buffer *buffer_list_write_wont_fit(struct buffer_list *self) {
+	struct buffer *buf = self->nonfull;
+D	assert(buf->next == NULL); // wasn't full so couldn't have had a next one
+D	assert(self->last == buf); // nonfull so must've been the last one
+	self->nonfull = buf->next;
+	buffer_make_full(buf);
+	return buffer_list_get_next_for(self, buf);
 }
 
 void buffer_list_commit_write(struct buffer_list *self, size_t sz) {
