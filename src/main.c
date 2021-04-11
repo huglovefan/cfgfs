@@ -516,6 +516,7 @@ static void check_env(void) {
 	static const struct var {
 		const char *name, *what;
 	} vars[] = {
+		{"CFGFS_DIR", "path to the directory containing the cfgfs executable"},
 		{"CFGFS_MOUNTPOINT", "path to the directory cfgfs was mounted in"},
 		{"GAMEDIR", "path to mod directory containing gameinfo.txt"},
 		{"GAMEROOT", "path to parent directory of GAMEDIR"},
