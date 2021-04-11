@@ -179,6 +179,8 @@ static inline void check_format_string(const char *fmt, ...) {
 		asm("hlt"); \
 		__builtin_unreachable(); \
 	})
+// ^ hlt: make cutter's graph view understand that control flow ends here
+// otherwise it would fall through into whatever code comes after
 
 #define assert2(v, s) \
 	({ \
