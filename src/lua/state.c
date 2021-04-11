@@ -195,8 +195,9 @@ int l_get_locker(lua_State *L) {
 }
 
 const char *lua_get_locker(lua_State *L) {
+	// note: L may be the lua_State of a different coroutine here
 D	assert(L != NULL);
-D	assert(L == g_L);
+D	assert(g_L != NULL);
 	// note: may be null if it's locked using the unchecked functions
 	return locked_by;
 }
