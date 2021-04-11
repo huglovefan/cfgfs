@@ -146,6 +146,10 @@ ifeq ($(WE),1)
  endif
 endif
 
+ifneq ($(REPORTED_CFG_SIZE),)
+ CFLAGS += -DREPORTED_CFG_SIZE="$(REPORTED_CFG_SIZE)"
+endif
+
 # gcc analyzer
 ifeq ($(A),1)
  CFLAGS += --analyzer
