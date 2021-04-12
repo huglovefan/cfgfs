@@ -226,53 +226,42 @@ typeerr:
 
 // -----------------------------------------------------------------------------
 
+static const luaL_Reg fns_g[] = {
+	{"_fatal", (lua_CFunction)l_panic},
+	{"_print", l_print},
+	{"_eprint", l_eprint},
+	{"printv", l_printv},
+	{"eprintv", l_eprintv},
+	{"_ms", l_ms},
+	{"_get_locker", l_get_locker},
+	// main.c
+	{"_notify_list_set", (lua_CFunction)l_notify_list_set},
+	// reloader.c
+	{"_reloader_add_watch", (lua_CFunction)l_reloader_add_watch},
+	{NULL, NULL},
+};
+static const luaL_Reg fns_s[] = {
+	{"starts_with", l_string_starts_with},
+	{"ends_with", l_string_ends_with},
+	{"after", l_string_after},
+	{"before", l_string_before},
+	{"between", l_string_between},
+	{"trim", l_string_trim},
+	{"frobnicate", l_string_frobnicate},
+	{"chomp", l_string_chomp},
+	{NULL, NULL},
+};
+
 void lua_define_builtins(void *L) {
 
 	assert(0 == lua_gettop(L));
 
-	 lua_pushcfunction(L, (lua_CFunction)l_panic);
-	lua_setglobal(L, "_fatal");
-
-	 lua_pushcfunction(L, l_print);
-	lua_setglobal(L, "_print");
-	 lua_pushcfunction(L, l_eprint);
-	lua_setglobal(L, "_eprint");
-
-	 lua_pushcfunction(L, l_printv);
-	lua_setglobal(L, "printv");
-	 lua_pushcfunction(L, l_eprintv);
-	lua_setglobal(L, "eprintv");
-
-	 lua_pushcfunction(L, l_ms);
-	lua_setglobal(L, "_ms");
-
-	 lua_pushcfunction(L, l_get_locker);
-	lua_setglobal(L, "_get_locker");
-
-	// main.c
-	 lua_pushcfunction(L, (lua_CFunction)l_notify_list_set);
-	lua_setglobal(L, "_notify_list_set");
-	// reloader.c
-	 lua_pushcfunction(L, (lua_CFunction)l_reloader_add_watch);
-	lua_setglobal(L, "_reloader_add_watch");
+	 lua_getglobal(L, "_G");
+	 luaL_setfuncs(L, fns_g, 0);
+	lua_pop(L, 1);
 
 	 lua_getglobal(L, "string");
-	  lua_pushcfunction(L, l_string_starts_with);
-	 lua_setfield(L, -2, "starts_with");
-	  lua_pushcfunction(L, l_string_ends_with);
-	 lua_setfield(L, -2, "ends_with");
-	  lua_pushcfunction(L, l_string_after);
-	 lua_setfield(L, -2, "after");
-	  lua_pushcfunction(L, l_string_before);
-	 lua_setfield(L, -2, "before");
-	  lua_pushcfunction(L, l_string_between);
-	 lua_setfield(L, -2, "between");
-	  lua_pushcfunction(L, l_string_trim);
-	 lua_setfield(L, -2, "trim");
-	  lua_pushcfunction(L, l_string_frobnicate);
-	 lua_setfield(L, -2, "frobnicate");
-	  lua_pushcfunction(L, l_string_chomp);
-	 lua_setfield(L, -2, "chomp");
+	 luaL_setfuncs(L, fns_s, 0);
 	lua_pop(L, 1);
 
 	lua_newtable(L); lua_setglobal(L, "num2key");
