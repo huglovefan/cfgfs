@@ -1757,7 +1757,7 @@ local gco_unjumble = linereader(function (line)
 	end
 end)
 _game_console_output = function (line, complete, was_jumbled)
-	if complete then
+	if complete == true then
 		if not was_jumbled then
 			our_logfile:write(line, '\n')
 			if fire_event('game_console_output', line) < 0 then
@@ -1788,7 +1788,7 @@ _game_console_output = function (line, complete, was_jumbled)
 		-- this might cause it to printed too early but that's not much
 		--  different from how it would be printed in the in-game console
 		return gco_unjumble(nil)
-	else
+	elseif complete == false then
 		if line ~= '\n' then
 			local contents = line:before('\x7f ')
 			if contents then
@@ -1815,6 +1815,12 @@ _game_console_output = function (line, complete, was_jumbled)
 			-- writing the newline
 			return gco_unjumble(nil)
 		end
+	elseif complete == nil then
+		-- line written to us manually
+		our_logfile:write(line, '\n')
+		return _println(line)
+	else
+		fatal('_game_console_output: bad value for "complete"')
 	end
 end
 
