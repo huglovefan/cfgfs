@@ -156,13 +156,19 @@ out:
 	signal(SIGWINCH, SIG_DFL);
 
 	cli_lock_output_nosave();
-	 // put the next thing on its own line again
-	 // for some reason, stdout here doesn't print it if you did ^C
-	 fputc('\n', stderr);
-	 // clean up readline and reset terminal state (important)
-	 rl_callback_handler_remove();
-	 // write the prompt with any typed text to the scrollback file
-	 if (rl_end != 0) cli_scrollback_add_input(rl_prompt, rl_line_buffer);
+	// clean up readline and reset terminal state (important)
+	rl_callback_handler_remove();
+	// is there any text typed on the prompt?
+	if (rl_end != 0) {
+		// make the next line go on its own line again
+		fputc_unlocked('\n', stderr);
+		// write the prompt and text to the scrollback file
+		cli_scrollback_add_input(rl_prompt, rl_line_buffer);
+	} else {
+		// no text, remove the empty prompt
+		rl_save_prompt();
+		rl_redisplay();
+	}
 	cli_unlock_output_norestore();
 
 	// save any modified history items
