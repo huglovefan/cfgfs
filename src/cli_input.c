@@ -19,6 +19,7 @@
 
 #include "buffers.h"
 #include "cli_output.h"
+#include "cli_scrollback.h"
 #include "click.h"
 #include "lua.h"
 #include "macros.h"
@@ -50,6 +51,10 @@ static void linehandler(char *line) {
 	cli_reading_line = false;
 
 	if (likely(line != NULL)) {
+		cli_lock_output_nosave();
+		 cli_scrollback_add_input(rl_prompt, line);
+		cli_unlock_output_norestore();
+
 		if (likely(*line != '\0')) {
 			// write the history item first so that it's saved even
 			//  if the command causes cfgfs to crash
@@ -156,6 +161,8 @@ out:
 	 fputc('\n', stderr);
 	 // clean up readline and reset terminal state (important)
 	 rl_callback_handler_remove();
+	 // write the prompt with any typed text to the scrollback file
+	 if (rl_end != 0) cli_scrollback_add_input(rl_prompt, rl_line_buffer);
 	cli_unlock_output_norestore();
 
 	// save any modified history items

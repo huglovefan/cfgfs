@@ -12,6 +12,7 @@
 #pragma GCC diagnostic pop
 
 #include "cli_input.h"
+#include "cli_scrollback.h"
 #include "lua.h"
 #include "macros.h"
 
@@ -20,22 +21,36 @@ static pthread_mutex_t output_lock = PTHREAD_MUTEX_INITIALIZER;
 // -----------------------------------------------------------------------------
 
 void println(const char *fmt, ...) {
-	cli_lock_output();
 	va_list args;
+	char *line;
+
 	va_start(args, fmt);
-	 vfprintf(stdout, fmt, args);
+	 int len = vasprintf(&line, fmt, args);
 	va_end(args);
-	fputc_unlocked('\n', stdout);
+
+	if (unlikely(len == -1)) return;
+
+	cli_lock_output();
+	 fwrite_unlocked(line, 1, (size_t)len, stdout);
+	 fputc_unlocked('\n', stdout);
+	 cli_scrollback_add_output(line);
 	cli_unlock_output();
 }
 
 void eprintln(const char *fmt, ...) {
-	cli_lock_output();
 	va_list args;
+	char *line;
+
 	va_start(args, fmt);
-	 vfprintf(stderr, fmt, args);
+	 int len = vasprintf(&line, fmt, args);
 	va_end(args);
-	fputc_unlocked('\n', stderr);
+
+	if (unlikely(len == -1)) return;
+
+	cli_lock_output();
+	 fwrite_unlocked(line, 1, (size_t)len, stderr);
+	 fputc_unlocked('\n', stderr);
+	 cli_scrollback_add_output(line);
 	cli_unlock_output();
 }
 

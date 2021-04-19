@@ -12,6 +12,7 @@ trap 'fusermount -u test/mnt 2>/dev/null &' EXIT
 trap 'exit 1' HUP INT TERM
 
 {
+export CFGFS_NO_SCROLLBACK=1
 ./cfgfs test/mnt
 echo $? >test/rv
 } &

@@ -26,6 +26,7 @@ HOT_OBJS = \
        src/cli_output.o \
        src/click.o \
        src/buffers.o \
+       src/cli_scrollback.o \
 
 COLD_OBJS = \
        src/pipe_io.o \
@@ -353,6 +354,7 @@ start: $(EXE)
 	ln -fs $(TF2MNT) $(MNTLNK); \
 	export CFGFS_DIR=$$PWD; \
 	export CFGFS_MOUNTPOINT=$$PWD/mnt; \
+	export CFGFS_NO_SCROLLBACK=1; \
 	export GAMEDIR=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf; \
 	export GAMEROOT=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \

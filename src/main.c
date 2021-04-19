@@ -27,6 +27,7 @@
 #include "buffers.h"
 #include "cli_input.h"
 #include "cli_output.h"
+#include "cli_scrollback.h"
 #include "click.h"
 #include "lua.h"
 #include "macros.h"
@@ -682,6 +683,8 @@ int main(int argc, char **argv) {
 	mallopt(M_TRIM_THRESHOLD, 20*1024*1000);
 	mlockall(MCL_CURRENT|MCL_FUTURE);
 
+	cli_scrollback_load_and_print();
+
 #if defined(SANITIZER)
 	eprintln("NOTE: cfgfs was built with %s", SANITIZER);
 #endif
@@ -794,6 +797,9 @@ out_no_fuse:
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
 out_no_nothing:
+	cli_lock_output_nosave();
+	 cli_scrollback_flush_and_free();
+	cli_unlock_output_norestore();
 	one_true_exit();
 	if (0 == unlink("/tmp/.cfgfs_reexec")) {
 		setenv("CFGFS_RESTARTED", "1", 1);

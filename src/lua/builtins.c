@@ -17,6 +17,7 @@
 #include "../cfg.h"
 #include "../cli_input.h"
 #include "../cli_output.h"
+#include "../cli_scrollback.h"
 #include "../click.h"
 #include "../keys.h"
 #include "../lua.h"
@@ -162,6 +163,15 @@ static int l_ms(lua_State *L) {
 
 // -----------------------------------------------------------------------------
 
+#define cfgfs_memdup(s, sz) \
+	({ \
+		const char *_memdup_s = (s); \
+		size_t _memdup_sz = (sz); \
+		char *_memdup_p = malloc(_memdup_sz); \
+		memcpy(_memdup_p, _memdup_s, _memdup_sz); \
+		_memdup_p; \
+	})
+
 // printing
 
 static int l_print(lua_State *L) {
@@ -169,8 +179,9 @@ static int l_print(lua_State *L) {
 	const char *s = lua_tolstring(L, 1, &sz);
 	if (unlikely(s == NULL)) return 0;
 	cli_lock_output();
-	fwrite_unlocked(s, 1, sz, stdout);
-	fputc_unlocked('\n', stdout);
+	 fwrite_unlocked(s, 1, sz, stdout);
+	 fputc_unlocked('\n', stdout);
+	 cli_scrollback_add_output(cfgfs_memdup(s, sz+1));
 	cli_unlock_output();
 	return 0;
 }
@@ -179,8 +190,9 @@ static int l_eprint(lua_State *L) {
 	const char *s = lua_tolstring(L, 1, &sz);
 	if (unlikely(s == NULL)) return 0;
 	cli_lock_output();
-	fwrite_unlocked(s, 1, sz, stderr);
-	fputc_unlocked('\n', stderr);
+	 fwrite_unlocked(s, 1, sz, stderr);
+	 fputc_unlocked('\n', stderr);
+	 cli_scrollback_add_output(cfgfs_memdup(s, sz+1));
 	cli_unlock_output();
 	return 0;
 }
