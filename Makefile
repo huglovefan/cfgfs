@@ -33,6 +33,7 @@ COLD_OBJS = \
        src/attention.o \
        src/reloader.o \
        src/cli_input.o \
+       src/misc/caretesc.o \
        src/keys.o \
        src/lua/init.o \
        src/xlib.o \

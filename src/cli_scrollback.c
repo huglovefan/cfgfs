@@ -9,6 +9,7 @@
 
 #include "cli_output.h"
 #include "macros.h"
+#include "misc/caretesc.h"
 
 #define SCROLLBACK_MSG_FMT "=== scrollback: %.*s ===\n\n"
 
@@ -81,11 +82,24 @@ void cli_scrollback_add_output(char *line) {
 }
 
 __attribute__((minsize))
-void cli_scrollback_add_input(const char *prompt, const char *text) {
-	char *line;
-	if (-1 != asprintf(&line, "%s%s", prompt, text)) {
-		cli_scrollback_add_output(line);
-	}
+void cli_scrollback_add_input(const char *prompt, const char *text, size_t textlen) {
+	size_t promptlen = strlen(prompt);
+
+	char *buf = malloc(promptlen+textlen*2+1);
+	char *bufstart = buf;
+
+	memcpy(buf, prompt, promptlen);
+	buf += promptlen;
+
+	buf += caretesc(text, buf);
+D	assert(*buf == '\0');
+
+	size_t buflen = (size_t)(buf-bufstart);
+	buf = NULL;
+
+	bufstart = realloc(bufstart, buflen+1);
+
+	cli_scrollback_add_output(bufstart);
 }
 
 #if defined(SANITIZER) || defined(WITH_D)

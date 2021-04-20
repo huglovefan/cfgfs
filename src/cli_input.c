@@ -24,6 +24,7 @@
 #include "lua.h"
 #include "macros.h"
 #include "main.h"
+#include "misc/caretesc.h"
 #include "pipe_io.h"
 
 _Atomic(bool) cli_reading_line;
@@ -51,37 +52,36 @@ static void linehandler(char *line) {
 	cli_reading_line = false;
 
 	if (likely(line != NULL)) {
+		if (unlikely(*line == '\0')) goto line_done;
+
+		size_t linelen = strlen(line);
+
+		// add the line to readline history
+		// do this first so commands that crash/exit cfgfs are saved too
+		bool same_as_last_history_item =
+		    (history_length != 0 &&
+		     0 == strcmp(line, history_get(history_length)->line));
+		if (!same_as_last_history_item) {
+			add_history(line);
+			append_history(1, HISTORY_FILE);
+		}
+
+		// add the line to the scrollback file
 		cli_lock_output_nosave();
-		 cli_scrollback_add_input(rl_prompt, line);
+		 cli_scrollback_add_input(rl_prompt, line, linelen);
 		cli_unlock_output_norestore();
 
-		if (likely(*line != '\0')) {
-			// write the history item first so that it's saved even
-			//  if the command causes cfgfs to crash
-			// (convenient for testing)
-
-			bool same_as_last_history_item =
-			    (history_length != 0 &&
-			     0 == strcmp(line, history_get(history_length)->line));
-
-			if (!same_as_last_history_item) {
-				add_history(line);
-				append_history(1, HISTORY_FILE);
-			}
-
-			lua_State *L = lua_get_state("cli_input");
-			if (likely(L != NULL)) {
-				 lua_getglobal(L, "_cli_input");
-				  lua_pushstring(L, line);
-				lua_call(L, 1, 0);
-				lua_release_state(L);
-			}
-		}
+		lua_State *L = lua_get_state("cli_input");
+		if (unlikely(L == NULL)) goto line_done;
+		 lua_getglobal(L, "_cli_input");
+		  lua_pushlstring(L, line, linelen);
+		lua_call(L, 1, 0);
+		lua_release_state(L);
 	} else {
 		cli_got_eof = true;
 		writech(msgpipe[1], msg_exit);
 	}
-
+line_done:
 	if (unlikely(cli_got_eof)) {
 		// has to be called from here so it doesn't print the prompt again
 		rl_callback_handler_remove();
@@ -163,7 +163,7 @@ out:
 		// make the next line go on its own line again
 		fputc_unlocked('\n', stderr);
 		// write the prompt and text to the scrollback file
-		cli_scrollback_add_input(rl_prompt, rl_line_buffer);
+		cli_scrollback_add_input(rl_prompt, rl_line_buffer, (size_t)rl_end);
 	} else {
 		// no text, remove the empty prompt
 		rl_save_prompt();
