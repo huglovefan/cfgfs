@@ -53,13 +53,14 @@ end
 - `libfuse3`
 - `libreadline`
 - `libx11`, `libxtst`
+- `libbsd`
 - xterm (for `cfgfs_run`)
 - standard development tools (`clang` or `gcc`, `git`, `make`)
 
 #### Gentoo
 
 ```
-sudo emerge -an lua:5.4 fuse:3 readline libX11 libXtst xterm git
+sudo emerge -an lua:5.4 fuse:3 readline libX11 libXtst libbsd xterm git
 ```
 
 #### Ubuntu and derivatives
@@ -68,7 +69,7 @@ At least Ubuntu 20.10 or newer is required due to older versions not having
 the `liblua5.4-dev` package.
 
 ```sh
-sudo apt install build-essential liblua5.4-dev libfuse3-dev libreadline-dev libx11-dev libxtst-dev xterm
+sudo apt install build-essential liblua5.4-dev libfuse3-dev libreadline-dev libx11-dev libxtst-dev libbsd-dev xterm
 ```
 
 #### Windows

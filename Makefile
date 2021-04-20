@@ -29,6 +29,9 @@ HOT_OBJS = \
        src/cli_scrollback.o \
 
 COLD_OBJS = \
+       src/lua/rcon.o \
+       src/rcon/session.o \
+       src/rcon/srcrcon.o \
        src/pipe_io.o \
        src/attention.o \
        src/reloader.o \
@@ -82,7 +85,7 @@ CFLAGS += \
           -Wno-language-extension-token \
           -Wno-padded \
           -Wno-reserved-id-macro \
-          -Wframe-larger-than=512 \
+          -Wframe-larger-than=1024 \
 # end
 else
 # gcc
@@ -215,6 +218,9 @@ ifeq ($(STATIC_LIBFUSE),)
 else
  LDLIBS += -l:libfuse3.a
 endif
+
+# src/rcon/srcrcon.c (arc4random_uniform)
+LDLIBS += -lbsd
 
 # ------------------------------------------------------------------------------
 

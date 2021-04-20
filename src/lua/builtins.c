@@ -25,6 +25,8 @@
 #include "../main.h"
 #include "../reloader.h"
 
+#include "rcon.h"
+
 // -----------------------------------------------------------------------------
 
 // string functions
@@ -270,6 +272,7 @@ void lua_define_builtins(void *L) {
 
 	 lua_getglobal(L, "_G");
 	 luaL_setfuncs(L, fns_g, 0);
+	 luaL_setfuncs(L, l_rcon_fns, 0);
 	lua_pop(L, 1);
 
 	 lua_getglobal(L, "string");

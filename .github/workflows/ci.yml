@@ -10,6 +10,6 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: deps
-      run: sudo apt-get install build-essential clang libfuse3-dev libx11-dev libxtst-dev
+      run: sudo apt-get install build-essential clang libfuse3-dev libx11-dev libxtst-dev libbsd-dev
     - name: ci.sh
       run: sh .github/ci.sh
