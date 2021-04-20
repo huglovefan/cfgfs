@@ -2,71 +2,50 @@
 
 <!-- marketing speech -->
 
-For Source games - `cfgfs` allows writing configs in the
-[Lua scripting language].
+`cfgfs` is a utility for Source games that extends the game's client-side
+scripting capabilities.
 
-Keybinds and aliases can be defined, with full access to game commands,
-variables and external Lua libraries.
+It effectively augments the config system so that you can use [Lua] instead of
+the clunky config language.
 
-Some of the other features available for `cfgfs` configs are:
+Aside from everything Lua and regular configs can do, `cfgfs` scripts can also
+do things like
 
-- Reading messages written to the game console
-- Waiting independently of the `sv_allow_wait_command` setting
+- Getting values of cvars (in addition to setting them)
+- Reacting to messages written to the game console (chat messages, kill
+  notifications)
+- Running commands and retrieving their console output
+- Waiting regardless of the `sv_allow_wait_command` setting
 
 No modifications to game files are needed: `cfgfs` is implemented using a
-[virtual filesystem]. <sup>[\(tell me more\)]</sup>
+[virtual filesystem].
 
-[Lua scripting language]: https://www.lua.org/
+[Lua]: https://www.lua.org/
 [virtual filesystem]: https://en.wikipedia.org/wiki/Filesystem_in_Userspace
-[\(tell me more\)]: #how-does-it-work
 
 ```lua
 -- add a keybind
 bind('f5', function ()
 	cmd.say('Why did the chicken cross the road?')
-	wait(2000)
+	wait(1000)
 	cmd.say('example test test 123 abc')
 end)
 
--- define an alias (can be called from the game console)
+-- define an alias (can be called from the in-game console)
 cmd.greet = function ()
 	local name = cvar.name
 	cmd.echo('Hello ' .. name .. '!')
 end
 ```
 
-## How does it work?
-
-As you might already know, binds and aliases in Source games can be made to
-execute config files from the disk.
-
-The epic trick is to combine this with a [virtual filesystem]. What this does is
-let cfgfs handle all filesystem operations like file reads in the
-*mount directory* <sup>[\(explain: mount point\)]</sup> that the virtual
-filesystem is set up in.
-
-By using `<game>/custom/!cfgfs/cfg/cfgfs` <sup>(`cfg/cfgfs` inside the
-*custom folder* `!cfgfs`)</sup> as the mount directory, cfgfs will be able to
-detect when the game tries to execute any config beginning with `cfgfs/`.
-
-When the cfgfs filesystem gets a *read request* for a config file like
-`cfgfs/aliases/greet.cfg`, it knows based on the path that it should look up the
-function assigned to the `greet` alias and call it. Any console commands called
-by the function are then returned to the game as the contents of the `greet.cfg`
-file.
-
-Aliases defined in the *cfgfs script* are automatically converted to ones like
-`alias greet "exec cfgfs/aliases/greet.cfg"` and sent to the game the next time
-it reads a config file from cfgfs.
-
-[virtual filesystem]: https://en.wikipedia.org/wiki/Filesystem_in_Userspace
-[\(explain: mount point\)]: http://www.linfo.org/mount_point.html
-
 ## Supported games
+
+*This list is incomplete; you can help by [expanding it].*
 
 - [Team Fortress 2](https://arch-img.b4k.co/vg/1607779368100.png)
 - Fistful of Frags
-- *probably others if you test them*
+
+[expanding it]: https://github.com/huglovefan/cfgfs/edit/master/README.md
 
 ## System requirements
 
@@ -77,13 +56,13 @@ it reads a config file from cfgfs.
 - xterm (for `cfgfs_run`)
 - standard development tools (`clang` or `gcc`, `git`, `make`)
 
-### Gentoo
+#### Gentoo
 
 ```
 sudo emerge -an lua:5.4 fuse:3 readline libX11 libXtst xterm git
 ```
 
-### Ubuntu and derivatives
+#### Ubuntu and derivatives
 
 At least Ubuntu 20.10 or newer is required due to older versions not having
 the `liblua5.4-dev` package.
@@ -92,7 +71,7 @@ the `liblua5.4-dev` package.
 sudo apt install build-essential liblua5.4-dev libfuse3-dev libreadline-dev libx11-dev libxtst-dev xterm
 ```
 
-### Windows
+#### Windows
 
 cfgfs works on GNU/Linux only. Just about everything in this repository is done
 differently on Windows so most of the code would have to be rewritten for it.
@@ -100,11 +79,12 @@ differently on Windows so most of the code would have to be rewritten for it.
 Most importantly, the virtual filesystem library [`libfuse`] doesn't support
 Windows. There exist Windows-native alternatives like [WinFsp] that could work
 for making a cfgfs clone, but the work of figuring that out and writing the code
-will have to be done by [someone who's actually interested in using Windows].
+will have to be done by
+[someone who's actually interested in using this thing on Windows].
 
 [`libfuse`]: https://github.com/libfuse/libfuse
 [WinFsp]: https://github.com/billziss-gh/winfsp
-[someone who's actually interested in using Windows]: https://github.com/you
+[someone who's actually interested in using this thing on Windows]: https://github.com/you
 
 ## Installation
 
@@ -113,17 +93,18 @@ will have to be done by [someone who's actually interested in using Windows].
 2. Run `make && make install` to compile cfgfs and install the `cfgfs_run`
    script
 3. Add `cfgfs_run %command%` to the beginning of the game's launch options.  
-   If you already have something using `%command%` there, add only `cfgfs_run`.
+   If you already have something using `%command%` there, then add only
+   `cfgfs_run`.
 
 The cfgfs "config" will be loaded from `script_APPID.lua` in the `cfgfs`
-directory, with `APPID` replaced by the game's App ID. If the file doesn't
+directory where `APPID` is the Steam App ID of the game. If the file doesn't
 exist, then an empty one will be automatically created.
 
 Note that the `cfgfs_run` script will stop working if the `cfgfs` directory is
-moved or renamed. In that event, the script will need to be reinstalled using
-`make install` in the new directory.
+moved or renamed. In that event, the script will need to be reinstalled by
+running `make install` again in the new directory.
 
-### Updating
+#### Updating
 
 (in the `cfgfs` directory)
 
