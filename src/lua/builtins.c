@@ -54,9 +54,10 @@ static int l_string_after(lua_State *L) {
 	const char *s2 = luaL_checklstring(L, 2, &l2);
 	if (likely(l1 >= l2 && memcmp(s1, s2, l2) == 0)) {
 		lua_pushlstring(L, s1+l2, l1-l2);
-		return 1;
+	} else {
+		lua_pushnil(L);
 	}
-	return 0;
+	return 1;
 }
 
 // string.before('buffer.cfg', '.cfg') -> 'buffer'
@@ -66,9 +67,10 @@ static int l_string_before(lua_State *L) {
 	const char *s2 = luaL_checklstring(L, 2, &l2);
 	if (likely(l1 >= l2 && memcmp(s1+l1-l2, s2, l2) == 0)) {
 		lua_pushlstring(L, s1, l1-l2);
-		return 1;
+	} else {
+		lua_pushnil(L);
 	}
-	return 0;
+	return 1;
 }
 
 // string.between('/cfgfs/buffer.cfg', '/cfgfs/', '.cfg') -> 'buffer'
@@ -79,9 +81,10 @@ static int l_string_between(lua_State *L) {
 	const char *s3 = luaL_checklstring(L, 3, &l3);
 	if (likely(l1 >= l2+l3 && memcmp(s1, s2, l2) == 0 && memcmp(s1+l1-l3, s3, l3) == 0)) {
 		lua_pushlstring(L, s1+l2, l1-l2-l3);
-		return 1;
+	} else {
+		lua_pushnil(L);
 	}
-	return 0;
+	return 1;
 }
 
 // removes whitespace from the start and end
