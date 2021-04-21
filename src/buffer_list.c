@@ -21,17 +21,17 @@ static size_t buffer_space(const struct buffer *self) {
 	return reported_cfg_size - self->size;
 }
 
-static bool buffer_may_add_line(const struct buffer *self, size_t sz) {
-	return buffer_space(self) >= sz+1+strlen(cfg_exec_next_cmd)+1;
+static bool buffer_may_add_line(const struct buffer *self, size_t len) {
+	return buffer_space(self) >= len+1+strlen(cfg_exec_next_cmd)+1;
 }
 
 static void buffer_add_line(struct buffer *restrict self,
                             const char *buf,
-                            size_t sz) {
+                            size_t len) {
 	char *p = ((char *)self->data)+self->size;
-	self->size += sz+1;
-	p[sz] = '\n';
-	memcpy(p, buf, sz);
+	self->size += len+1;
+	p[len] = '\n';
+	memcpy(p, buf, len);
 }
 
 __attribute__((cold))
@@ -209,25 +209,26 @@ void buffer_list_append_from_that_to_this(struct buffer_list *self,
 
 struct buffer *buffer_list_write_wont_fit(struct buffer_list *self);
 
-void buffer_list_write_line(struct buffer_list *self, const char *s, size_t sz) {
-D	assert(sz > 0); // caller checks this
-D	assert(sz <= max_line_length); // caller checks this
+void buffer_list_write_line(struct buffer_list *self, const char *s, size_t len) {
+D	assert(len > 0); // caller checks this
+D	assert(len <= max_line_length); // caller checks this
 	bool did_allocate = (self->nonfull == NULL); // optimization hint
 	struct buffer *buf = buffer_list_get_nonfull(self);
-	if (unlikely(!did_allocate && !buffer_may_add_line(buf, sz))) {
+	if (unlikely(!did_allocate && !buffer_may_add_line(buf, len))) {
 		buf = buffer_list_write_wont_fit(self);
-D		assert(buffer_may_add_line(buf, sz));
+D		assert(buffer_may_add_line(buf, len));
 	}
-	buffer_add_line(buf, s, sz);
+	buffer_add_line(buf, s, len);
 }
 
-char *buffer_list_get_write_buffer(struct buffer_list *self, size_t sz) {
-D	assert(sz != 0);
+// note: len does not include the newline
+char *buffer_list_get_write_buffer(struct buffer_list *self, size_t len) {
+D	assert(len != 0);
 	bool did_allocate = (self->nonfull == NULL); // optimization hint
 	struct buffer *buf = buffer_list_get_nonfull(self);
-	if (unlikely(!did_allocate && !buffer_may_add_line(buf, sz))) {
+	if (unlikely(!did_allocate && !buffer_may_add_line(buf, len))) {
 		buf = buffer_list_write_wont_fit(self);
-D		assert(buffer_may_add_line(buf, sz));
+D		assert(buffer_may_add_line(buf, len));
 	}
 	return (char *)buf->data+buf->size;
 }
@@ -242,6 +243,7 @@ D	assert(self->last == buf); // nonfull so must've been the last one
 	return buffer_list_get_next_for(self, buf);
 }
 
+// note: sz here includes the newline
 void buffer_list_commit_write(struct buffer_list *self, size_t sz) {
 	self->nonfull->size += sz;
 }

@@ -66,12 +66,12 @@ int l_panic(void *L) {
 }
 
 static void lua_print_backtrace(lua_State *L) {
-	size_t sz;
+	size_t len;
 	const char *s;
 	if (lua_checkstack(L, 1)) {
 		luaL_traceback(L, L, NULL, 0);
-		s = lua_tolstring(L, -1, &sz);
-		if (s != NULL && sz != strlen("stack traceback:")) {
+		s = lua_tolstring(L, -1, &len);
+		if (s != NULL && len != strlen("stack traceback:")) {
 			fprintf(stderr, "%s\n", s);
 		}
 		lua_pop(L, 1);

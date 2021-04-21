@@ -211,10 +211,10 @@ int l_notify_list_set(void *L) {
 
 	if (unlikely(lua_type(L, 1) != LUA_TTABLE)) goto nontable;
 	lua_len(L, 1);
-	lua_Integer len = lua_tointeger(L, -1);
+	lua_Integer tlen = lua_tointeger(L, -1);
 	lua_pop(L, 1);
 
-	if (unlikely(len == 0)) {
+	if (unlikely(tlen == 0)) {
 		pthread_rwlock_wrlock(&notify_list_lock);
 		free(exchange(notify_list, NULL));
 		pthread_rwlock_unlock(&notify_list_lock);
@@ -223,14 +223,14 @@ int l_notify_list_set(void *L) {
 
 	os = optstring_new();
 
-	for (int i = 1; i <= len; i++) {
+	for (int i = 1; i <= tlen; i++) {
 		lua_geti(L, 1, i);
-		size_t sz;
-		const char *s = lua_tolstring(L, -1, &sz);
+		size_t len;
+		const char *s = lua_tolstring(L, -1, &len);
 		if (unlikely(s == NULL)) goto nonstring;
-		if (unlikely(sz > 0xff)) goto toolong;
+		if (unlikely(len > 0xff)) goto toolong;
 
-		if (likely(sz != 0)) optstring_append(os, s, sz);
+		if (likely(len != 0)) optstring_append(os, s, len);
 		lua_pop(L, 1);
 	}
 

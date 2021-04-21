@@ -54,7 +54,7 @@ static inline bool buffer_list_is_empty(const struct buffer_list *self) {
 
 // -----------------------------------------------------------------------------
 
-void buffer_list_write_line(struct buffer_list *self, const char *s, size_t sz);
+void buffer_list_write_line(struct buffer_list *self, const char *s, size_t len);
 
-char *buffer_list_get_write_buffer(struct buffer_list *self, size_t sz);
+char *buffer_list_get_write_buffer(struct buffer_list *self, size_t len);
 void buffer_list_commit_write(struct buffer_list *self, size_t sz);

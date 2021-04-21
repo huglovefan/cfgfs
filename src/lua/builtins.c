@@ -112,11 +112,11 @@ static int l_string_trim(lua_State *L) {
 
 // https://linux.die.net/man/3/memfrob
 static int l_string_frobnicate(lua_State *L) {
-	size_t sz;
-	const char *s = luaL_checklstring(L, 1, &sz);
-	char *newstr = malloc(sz+1);
-	memcpy(newstr, s, sz+1);
-	memfrob(newstr, sz);
+	size_t len;
+	const char *s = luaL_checklstring(L, 1, &len);
+	char *newstr = malloc(len+1);
+	memcpy(newstr, s, len+1);
+	memfrob(newstr, len);
 	lua_pushstring(L, newstr);
 	free(newstr);
 	return 1;
@@ -125,10 +125,10 @@ static int l_string_frobnicate(lua_State *L) {
 // https://perldoc.perl.org/functions/chomp
 // (this does just the newline thing)
 static int l_string_chomp(lua_State *L) {
-	size_t sz;
-	const char *s = luaL_checklstring(L, 1, &sz);
-	if (likely(sz != 0 && s[sz-1] == '\n')) {
-		lua_pushlstring(L, s, sz-1);
+	size_t len;
+	const char *s = luaL_checklstring(L, 1, &len);
+	if (likely(len != 0 && s[len-1] == '\n')) {
+		lua_pushlstring(L, s, len-1);
 	} else {
 		lua_settop(L, 1); // ignore excess arguments
 	}
@@ -156,22 +156,22 @@ static int l_ms(lua_State *L) {
 // printing
 
 static int l_print(lua_State *L) {
-	size_t sz;
-	const char *s = luaL_checklstring(L, 1, &sz);
+	size_t len;
+	const char *s = luaL_checklstring(L, 1, &len);
 	cli_lock_output();
-	 fwrite_unlocked(s, 1, sz, stdout);
+	 fwrite_unlocked(s, 1, len, stdout);
 	 fputc_unlocked('\n', stdout);
-	 cli_scrollback_add_output(cfgfs_memdup(s, sz+1));
+	 cli_scrollback_add_output(cfgfs_memdup(s, len+1));
 	cli_unlock_output();
 	return 0;
 }
 static int l_eprint(lua_State *L) {
-	size_t sz;
-	const char *s = luaL_checklstring(L, 1, &sz);
+	size_t len;
+	const char *s = luaL_checklstring(L, 1, &len);
 	cli_lock_output();
-	 fwrite_unlocked(s, 1, sz, stderr);
+	 fwrite_unlocked(s, 1, len, stderr);
 	 fputc_unlocked('\n', stderr);
-	 cli_scrollback_add_output(cfgfs_memdup(s, sz+1));
+	 cli_scrollback_add_output(cfgfs_memdup(s, len+1));
 	cli_unlock_output();
 	return 0;
 }
@@ -185,9 +185,9 @@ static int l_printv(lua_State *L) {
 	int i, top = lua_gettop(L);
 	for (i = 1; i <= top; i++) {
 		if (unlikely(lua_type(L, i) != LUA_TSTRING)) goto typeerr;
-		size_t sz;
-		const char *s = lua_tolstring(L, i, &sz);
-		fwrite_unlocked(s, 1, sz, stdout);
+		size_t len;
+		const char *s = lua_tolstring(L, i, &len);
+		fwrite_unlocked(s, 1, len, stdout);
 	}
 	fputc_unlocked('\n', stdout);
 	cli_unlock_output();
@@ -202,9 +202,9 @@ static int l_eprintv(lua_State *L) {
 	int i, top = lua_gettop(L);
 	for (i = 1; i <= top; i++) {
 		if (unlikely(lua_type(L, i) != LUA_TSTRING)) goto typeerr;
-		size_t sz;
-		const char *s = lua_tolstring(L, i, &sz);
-		fwrite_unlocked(s, 1, sz, stderr);
+		size_t len;
+		const char *s = lua_tolstring(L, i, &len);
+		fwrite_unlocked(s, 1, len, stderr);
 	}
 	fputc_unlocked('\n', stderr);
 	cli_unlock_output();

@@ -298,10 +298,10 @@ D		assert(mode == qm_say || mode == qm_echo);
 
 // -----------------------------------------------------------------------------
 
-static void cfg(lua_State *L, const char *s, size_t sz) {
-	if (unlikely(sz == 0)) return;
-	if (unlikely(sz > max_line_length)) goto toolong;
-	buffer_list_write_line(&buffers, s, sz);
+static void cfg(lua_State *L, const char *s, size_t len) {
+	if (unlikely(len == 0)) return;
+	if (unlikely(len > max_line_length)) goto toolong;
+	buffer_list_write_line(&buffers, s, len);
 	return;
 toolong:
 	luaL_error(L, "cfg: line too long");
@@ -309,10 +309,10 @@ toolong:
 }
 
 static int l_cfg(lua_State *L) {
-	size_t sz;
-	const char *s = luaL_checklstring(L, 1, &sz);
-	if (likely(sz <= max_line_length)) {
-		cfg(L, s, sz);
+	size_t len;
+	const char *s = luaL_checklstring(L, 1, &len);
+	if (likely(len <= max_line_length)) {
+		cfg(L, s, len);
 		return 0;
 	} else {
 		// doesn't fit, is it multiple lines?
