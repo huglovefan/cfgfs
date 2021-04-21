@@ -159,7 +159,7 @@ static bool click_at(double ms, pthread_t *thread) {
 // -----------------------------------------------------------------------------
 
 static int l_click(lua_State *L) {
-	double ms = lua_tonumber(L, 1);
+	double ms = luaL_checknumber(L, 1);
 	if (ms > 0) {
 		pthread_t thread;
 		if (click_at(mono_ms()+ms, &thread)) {
@@ -194,10 +194,7 @@ static int l_click_received(lua_State *L) {
 
 __attribute__((minsize))
 static int l_click_set_key(lua_State *L) {
-	const char *s = lua_tostring(L, 1);
-	if (s == NULL) {
-		return luaL_error(L, "click_set_key: invalid key name");
-	}
+	const char *s = luaL_checkstring(L, 1);
 	pthread_mutex_lock(&click_lock);
 	lua_pushboolean(L, click_set_key(s));
 	pthread_mutex_unlock(&click_lock);

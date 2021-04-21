@@ -33,77 +33,61 @@
 
 static int l_string_starts_with(lua_State *L) {
 	size_t l1, l2;
-	const char *s1 = lua_tolstring(L, 1, &l1);
-	const char *s2 = lua_tolstring(L, 2, &l2);
-	if (unlikely(!s1 || !s2)) goto error;
+	const char *s1 = luaL_checklstring(L, 1, &l1);
+	const char *s2 = luaL_checklstring(L, 2, &l2);
 	lua_pushboolean(L, (l1 >= l2 && memcmp(s1, s2, l2) == 0));
 	return 1;
-error:
-	return luaL_error(L, "invalid argument");
 }
 
 static int l_string_ends_with(lua_State *L) {
 	size_t l1, l2;
-	const char *s1 = lua_tolstring(L, 1, &l1);
-	const char *s2 = lua_tolstring(L, 2, &l2);
-	if (unlikely(!s1 || !s2)) goto error;
+	const char *s1 = luaL_checklstring(L, 1, &l1);
+	const char *s2 = luaL_checklstring(L, 2, &l2);
 	lua_pushboolean(L, (l1 >= l2 && memcmp(s1+l1-l2, s2, l2) == 0));
 	return 1;
-error:
-	return luaL_error(L, "invalid argument");
 }
 
 // string.after('/cfgfs/buffer.cfg', '/cfgfs/') -> 'buffer.cfg'
 static int l_string_after(lua_State *L) {
 	size_t l1, l2;
-	const char *s1 = lua_tolstring(L, 1, &l1);
-	const char *s2 = lua_tolstring(L, 2, &l2);
-	if (unlikely(!s1 || !s2)) goto error;
+	const char *s1 = luaL_checklstring(L, 1, &l1);
+	const char *s2 = luaL_checklstring(L, 2, &l2);
 	if (likely(l1 >= l2 && memcmp(s1, s2, l2) == 0)) {
 		lua_pushlstring(L, s1+l2, l1-l2);
 		return 1;
 	}
 	return 0;
-error:
-	return luaL_error(L, "string.after: invalid argument");
 }
 
 // string.before('buffer.cfg', '.cfg') -> 'buffer'
 static int l_string_before(lua_State *L) {
 	size_t l1, l2;
-	const char *s1 = lua_tolstring(L, 1, &l1);
-	const char *s2 = lua_tolstring(L, 2, &l2);
-	if (unlikely(!s1 || !s2)) goto error;
+	const char *s1 = luaL_checklstring(L, 1, &l1);
+	const char *s2 = luaL_checklstring(L, 2, &l2);
 	if (likely(l1 >= l2 && memcmp(s1+l1-l2, s2, l2) == 0)) {
 		lua_pushlstring(L, s1, l1-l2);
 		return 1;
 	}
 	return 0;
-error:
-	return luaL_error(L, "string.before: invalid argument");
 }
 
 // string.between('/cfgfs/buffer.cfg', '/cfgfs/', '.cfg') -> 'buffer'
 static int l_string_between(lua_State *L) {
 	size_t l1, l2, l3;
-	const char *s1 = lua_tolstring(L, 1, &l1);
-	const char *s2 = lua_tolstring(L, 2, &l2);
-	const char *s3 = lua_tolstring(L, 3, &l3);
-	if (unlikely(!s1 || !s2 || !s3)) goto error;
+	const char *s1 = luaL_checklstring(L, 1, &l1);
+	const char *s2 = luaL_checklstring(L, 2, &l2);
+	const char *s3 = luaL_checklstring(L, 3, &l3);
 	if (likely(l1 >= l2+l3 && memcmp(s1, s2, l2) == 0 && memcmp(s1+l1-l3, s3, l3) == 0)) {
 		lua_pushlstring(L, s1+l2, l1-l2-l3);
 		return 1;
 	}
 	return 0;
-error:
-	return luaL_error(L, "string.between: invalid argument");
 }
 
 // removes whitespace from the start and end
 static int l_string_trim(lua_State *L) {
-	const char *s = lua_tostring(L, 1);
+	const char *s = luaL_checkstring(L, 1);
 	const char *first, *last;
-	if (unlikely(!s)) goto error;
 
 	first = NULL;
 	last = s;
@@ -121,39 +105,31 @@ static int l_string_trim(lua_State *L) {
 	}
 
 	return 1;
-error:
-	return luaL_error(L, "string.trim: invalid argument");
 }
 
 // https://linux.die.net/man/3/memfrob
 static int l_string_frobnicate(lua_State *L) {
 	size_t sz;
-	const char *s = lua_tolstring(L, 1, &sz);
-	if (unlikely(s == NULL)) goto typeerr;
+	const char *s = luaL_checklstring(L, 1, &sz);
 	char *newstr = malloc(sz+1);
 	memcpy(newstr, s, sz+1);
 	memfrob(newstr, sz);
 	lua_pushstring(L, newstr);
 	free(newstr);
 	return 1;
-typeerr:
-	return luaL_error(L, "string.frobnicate: invalid argument");
 }
 
 // https://perldoc.perl.org/functions/chomp
 // (this does just the newline thing)
 static int l_string_chomp(lua_State *L) {
 	size_t sz;
-	const char *s = lua_tolstring(L, 1, &sz);
-	if (unlikely(s == NULL)) goto typeerr;
+	const char *s = luaL_checklstring(L, 1, &sz);
 	if (likely(sz != 0 && s[sz-1] == '\n')) {
 		lua_pushlstring(L, s, sz-1);
 	} else {
 		lua_settop(L, 1); // ignore excess arguments
 	}
 	return 1;
-typeerr:
-	return luaL_error(L, "string.chomp: invalid argument");
 }
 
 // -----------------------------------------------------------------------------
@@ -178,8 +154,7 @@ static int l_ms(lua_State *L) {
 
 static int l_print(lua_State *L) {
 	size_t sz;
-	const char *s = lua_tolstring(L, 1, &sz);
-	if (unlikely(s == NULL)) return 0;
+	const char *s = luaL_checklstring(L, 1, &sz);
 	cli_lock_output();
 	 fwrite_unlocked(s, 1, sz, stdout);
 	 fputc_unlocked('\n', stdout);
@@ -189,8 +164,7 @@ static int l_print(lua_State *L) {
 }
 static int l_eprint(lua_State *L) {
 	size_t sz;
-	const char *s = lua_tolstring(L, 1, &sz);
-	if (unlikely(s == NULL)) return 0;
+	const char *s = luaL_checklstring(L, 1, &sz);
 	cli_lock_output();
 	 fwrite_unlocked(s, 1, sz, stderr);
 	 fputc_unlocked('\n', stderr);

@@ -310,8 +310,7 @@ toolong:
 
 static int l_cfg(lua_State *L) {
 	size_t sz;
-	const char *s = lua_tolstring(L, 1, &sz);
-	if (unlikely(s == NULL)) goto typeerr;
+	const char *s = luaL_checklstring(L, 1, &sz);
 	if (likely(sz <= max_line_length)) {
 		cfg(L, s, sz);
 		return 0;
@@ -326,8 +325,6 @@ static int l_cfg(lua_State *L) {
 		return 0;
 	}
 	compiler_enforced_unreachable();
-typeerr:
-	return luaL_error(L, "cfg: argument is not a string");
 }
 
 // -----------------------------------------------------------------------------

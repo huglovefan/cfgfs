@@ -171,8 +171,7 @@ V		eprintln("l_reloader_watch_file: lua not locked by us, ignoring add of %s",
 		goto out;
 	}
 
-	const char *path = lua_tostring(L, 1);
-	if (unlikely(path == NULL)) goto typeerr;
+	const char *path = luaL_checkstring(L, 1);
 
 	if (likely(watch_file(path))) {
 		ok = true;
@@ -180,8 +179,6 @@ V		eprintln("l_reloader_watch_file: lua not locked by us, ignoring add of %s",
 out:
 	lua_pushboolean(L, ok);
 	return 1;
-typeerr:
-	return luaL_error(L, "l_reloader_watch_file: argument is not a string");
 }
 
 // -----------------------------------------------------------------------------
