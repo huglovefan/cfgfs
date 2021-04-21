@@ -47,7 +47,9 @@ static void byte_array_remove_range(struct byte_array *self, size_t start, size_
 
 static int send_message(struct rcon_session *sess, src_rcon_message_t *msg);
 static int wait_auth(struct rcon_session *sess, src_rcon_message_t *auth);
-static int send_command(struct rcon_session *sess, char const *cmd, bool nowait);
+
+static int send_command_nowait(struct rcon_session *sess, char const *cmd);
+static int send_command_dowait(struct rcon_session *sess, char const *cmd);
 
 struct rcon_session {
 	src_rcon_t *r;
@@ -62,7 +64,6 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	}
 
 	int sock = -1;
-	src_rcon_t *r = NULL;
 	src_rcon_message_t *auth = NULL;
 
 	char portstr[8];
@@ -84,16 +85,17 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 
 	for (struct addrinfo *ai = info; ai != NULL; ai = ai->ai_next) {
 		sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-		if (sock < 0) {
+		if (-1 == sock) {
 			continue;
 		}
 
-		if (connect(sock, ai->ai_addr, ai->ai_addrlen) == 0) {
-			break;
+		if (-1 == connect(sock, ai->ai_addr, ai->ai_addrlen)) {
+			close(sock);
+			sock = -1;
+			continue;
 		}
 
-		close(sock);
-		sock = -1;
+		break;
 	}
 
 	if (sock < 0) {
@@ -105,7 +107,7 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	sess->r = src_rcon_new();
 
 	if (password != NULL) {
-		auth = src_rcon_auth(r, password);
+		auth = src_rcon_auth(sess->r, password);
 		if (send_message(sess, auth)) {
 			goto err;
 		}
@@ -133,7 +135,11 @@ err:
 }
 
 int rcon_run_cfg(struct rcon_session *sess, const char *cfg, int nowait) {
-	return send_command(sess, cfg, nowait);
+	if (nowait) {
+		return send_command_nowait(sess, cfg);
+	} else {
+		return send_command_dowait(sess, cfg);
+	}
 }
 
 void rcon_disconnect(struct rcon_session *sess) {
@@ -148,17 +154,15 @@ void rcon_disconnect(struct rcon_session *sess) {
 
 static int send_message(struct rcon_session *sess, src_rcon_message_t *msg) {
 	uint8_t *data = NULL;
-	uint8_t *p = NULL;
 	size_t size = 0;
-
 	if (src_rcon_serialize(sess->r, msg, &data, &size)) {
 		return -1;
 	}
 
-	p = data;
+	uint8_t *p = data;
 	do {
 		ssize_t ret = write(sess->conn, p, size);
-		if (ret == 0 || ret < 0) {
+		if (ret == 0 || ret == -1) {
 			free(data);
 			perror("Failed to communicate");
 			return -2;
@@ -177,7 +181,7 @@ static int wait_auth(struct rcon_session *sess, src_rcon_message_t *auth) {
 	for (;;) {
 		char tmp[512];
 		ssize_t ret = read(sess->conn, tmp, sizeof(tmp));
-		if (ret < 0) {
+		if (ret == -1) {
 			perror("Failed to receive data");
 			return -1;
 		}
@@ -193,29 +197,34 @@ static int wait_auth(struct rcon_session *sess, src_rcon_message_t *auth) {
 	}
 }
 
-static int send_command(struct rcon_session *sess, char const *cmd, bool nowait) {
-	src_rcon_message_t *command = NULL, *end = NULL;
-	src_rcon_message_t **commandanswers = NULL;
-	src_rcon_message_t **p = NULL;
-	char tmp[512];
-	ssize_t ret = 0;
-	rcon_error_t status;
-	size_t off = 0;
+static int send_command_nowait(struct rcon_session *sess, char const *cmd) {
 	int ec = -1;
-	bool done = false;
 
-	/* Send command
-	*/
-	command = src_rcon_command(sess->r, cmd);
+	src_rcon_message_t *command = src_rcon_command(sess->r, cmd);
 	if (command == NULL) {
 		goto cleanup;
 	}
-
 	if (send_message(sess, command)) {
 		goto cleanup;
 	}
 
-	if (nowait == true) {
+	ec = 0;
+cleanup:
+	src_rcon_message_free(command);
+
+	return ec;
+}
+
+static int send_command_dowait(struct rcon_session *sess, char const *cmd) {
+	src_rcon_message_t *command = NULL, *end = NULL;
+	src_rcon_message_t **commandanswers = NULL;
+	int ec = -1;
+
+	command = src_rcon_command(sess->r, cmd);
+	if (command == NULL) {
+		goto cleanup;
+	}
+	if (send_message(sess, command)) {
 		goto cleanup;
 	}
 
@@ -227,40 +236,43 @@ static int send_command(struct rcon_session *sess, char const *cmd, bool nowait)
 		goto cleanup;
 	}
 
+	size_t off = 0;
+	bool done = false;
 	do {
-		ret = read(sess->conn, tmp, sizeof(tmp));
-		if (ret < 0) {
+		char tmp[512];
+		ssize_t ret = read(sess->conn, tmp, sizeof(tmp));
+		if (ret == -1) {
 			perror("Failed to receive data");
-			return -1;
+			goto cleanup;
 		}
-
 		if (ret == 0) {
 			eprintln("Peer: connection closed");
 			done = true;
 		}
 
 		byte_array_append(&sess->response, tmp, (size_t)ret);
-		status = src_rcon_command_wait(sess->r, command, &commandanswers, &off, sess->response.data, sess->response.len);
+		rcon_error_t status = src_rcon_command_wait(sess->r, command, &commandanswers, &off, sess->response.data, sess->response.len);
 		if (status != rcon_error_moredata) {
 			byte_array_remove_range(&sess->response, 0, off);
 		}
 
-		if (status == rcon_error_success) {
-			if (commandanswers != NULL) {
-				for (p = commandanswers; *p != NULL; p++) {
-					if ((*p)->id == end->id) {
-						done = true;
-					} else {
-						size_t bodylen = strlen((char const*)(*p)->body);
+		if (status == rcon_error_success && commandanswers != NULL) {
+			bool locked = false;
+			for (src_rcon_message_t **p = commandanswers; *p != NULL; p++) {
+				if ((*p)->id == end->id) {
+					done = true;
+					continue;
+				}
+				size_t bodylen = strlen((char *)(*p)->body);
 
-						fprintf(stderr, "%s", (char const*)(*p)->body);
+				if (!locked++) cli_lock_output();
+				fwrite((*p)->body, 1, bodylen, stderr);
 
-						if (bodylen > 0 && (*p)->body[bodylen-1] != '\n') {
-							fprintf(stderr, "\n");
-						}
-					}
+				if (bodylen != 0 && (*p)->body[bodylen-1] != '\n') {
+					fputc('\n', stderr);
 				}
 			}
+			if (locked--) cli_unlock_output();
 		}
 
 		src_rcon_message_freev(commandanswers);
@@ -268,9 +280,7 @@ static int send_command(struct rcon_session *sess, char const *cmd, bool nowait)
 	} while (!done);
 
 	ec = 0;
-
 cleanup:
-
 	src_rcon_message_free(command);
 	src_rcon_message_free(end);
 	src_rcon_message_freev(commandanswers);
