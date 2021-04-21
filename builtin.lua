@@ -1481,6 +1481,7 @@ local is_spam = function (line)
 		if c == 'F' and #line >= 67 and line:find('^Failed to load sound ".*", file probably missing from disk/repository$') then goto match end
 		if c == 'F' and #line >= 72 and line:find('^For FCVAR_REPLICATED, ConVar must be defined in client and game %.dlls %(.*%)$') then goto match end
 		if c == 'F' and #line >= 130 and line:find('^Failed to find attachment point specified for AE_CL_CREATE_PARTICLE_EFFECT event%. Trying to spawn effect \'.*\' on attachment named \'.*\'$') then goto match end
+		if c == 'I' and #line >= 69 and line:find('^Ignoring unreasonable position %(%-?[0-9]+%.[0-9]+,%-?[0-9]+%.[0-9]+,%-?[0-9]+%.[0-9]+%) from vphysics! %(entity .*%)$') then goto match end
 		if c == 'M' and #line >= 25 and line:find('^Missing RecvProp for .* %- .*/.*$') then goto match end
 		if c == 'M' and #line >= 39 and line:find('^MDLCache: Failed load of %.PHY data for .*$') then goto match end
 		if c == 'M' and #line >= 65 and line:find('^MP3 initialized with no sound cache, this may cause janking%. %[ .* %]$') then goto match end
