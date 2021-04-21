@@ -23,10 +23,14 @@ static int l_rcon_new(lua_State *L) {
 
 static int l_rcon_run_cfg(lua_State *L) {
 	struct rcon_session *sess = luaL_checkudata(L, 1, "cfgfs_rcon");
-	const char *cfg = luaL_checkstring(L, 2);
+	size_t len;
+	const char *cfg = luaL_checklstring(L, 2, &len);
 	int nowait = lua_toboolean(L, 3);
+	if (len > max_cfg_size_rcon) goto toolong;
 	lua_pushinteger(L, rcon_run_cfg(sess, cfg, nowait));
 	return 1;
+toolong:
+	return luaL_error(L, "command string too long for rcon");
 }
 
 static int l_rcon_delete(lua_State *L) {
