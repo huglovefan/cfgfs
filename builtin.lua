@@ -1826,6 +1826,39 @@ end
 
 --------------------------------------------------------------------------------
 
+do
+
+local rcon_lr = linereader(function (line)
+	if fire_event('rcon_output', line) >= 0 then
+		our_logfile:write(line, '\n')
+		return _println(line)
+	end
+end)
+_rcon_data = function (buf, id)
+	return rcon_lr(buf)
+end
+
+local sess = nil
+rcon = function (cfg)
+	if sess then
+		return not not _rcon_run_cfg(sess, cfg)
+	else
+		local host = (os.getenv('CFGFS_RCON_HOST') or 'localhost')
+		local port = (tonumber(os.getenv('CFGFS_RCON_PORT')) or 27015)
+		local password = os.getenv('CFGFS_RCON_PASSWORD')
+		sess = _rcon_new(host, port, password)
+		if sess then
+			return not not _rcon_run_cfg(sess, cfg)
+		else
+			return nil
+		end
+	end
+end
+
+end
+
+--------------------------------------------------------------------------------
+
 local startup_fired = false
 add_listener('startup', function ()
 	startup_fired = true

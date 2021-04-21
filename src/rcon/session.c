@@ -5,11 +5,18 @@
 #include "session.h"
 
 #include <netdb.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <unistd.h>
 
+#include <lua.h>
+#include <lualib.h>
+#include <lauxlib.h>
+
 #include "../cli_output.h"
+#include "../lua.h"
 #include "../macros.h"
 
 #include "srcrcon.h"
@@ -48,8 +55,9 @@ static void byte_array_remove_range(struct byte_array *self, size_t start, size_
 static int send_message(struct rcon_session *sess, src_rcon_message_t *msg);
 static int wait_auth(struct rcon_session *sess, src_rcon_message_t *auth);
 
-static int send_command_nowait(struct rcon_session *sess, char const *cmd);
-static int send_command_dowait(struct rcon_session *sess, char const *cmd);
+static int send_command_nowait(struct rcon_session *sess, char const *cmd, int32_t *id_out);
+
+static void *rcon_reader_main(void *ud);
 
 struct rcon_session {
 	src_rcon_t *r;
@@ -120,6 +128,13 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	if (auth) src_rcon_message_free(auth);
 	if (info) freeaddrinfo(info);
 
+	pthread_t thread;
+	check_errcode(
+	    pthread_create(&thread, NULL, rcon_reader_main, (void *)sess),
+	    "rcon: pthread_create",
+	    goto err);
+	pthread_detach(thread);
+
 	return sess;
 err:
 	if (auth) src_rcon_message_free(auth);
@@ -134,12 +149,8 @@ err:
 	return NULL;
 }
 
-int rcon_run_cfg(struct rcon_session *sess, const char *cfg, int nowait) {
-	if (nowait) {
-		return send_command_nowait(sess, cfg);
-	} else {
-		return send_command_dowait(sess, cfg);
-	}
+int rcon_run_cfg(struct rcon_session *sess, const char *cfg, int32_t *id_out) {
+	return send_command_nowait(sess, cfg, id_out);
 }
 
 void rcon_disconnect(struct rcon_session *sess) {
@@ -197,7 +208,7 @@ static int wait_auth(struct rcon_session *sess, src_rcon_message_t *auth) {
 	}
 }
 
-static int send_command_nowait(struct rcon_session *sess, char const *cmd) {
+static int send_command_nowait(struct rcon_session *sess, char const *cmd, int32_t *id_out) {
 	int ec = -1;
 
 	src_rcon_message_t *command = src_rcon_command(sess->r, cmd);
@@ -209,36 +220,59 @@ static int send_command_nowait(struct rcon_session *sess, char const *cmd) {
 	}
 
 	ec = 0;
+	if (id_out) *id_out = command->id;
 cleanup:
 	src_rcon_message_free(command);
 
 	return ec;
 }
 
-static int send_command_dowait(struct rcon_session *sess, char const *cmd) {
-	src_rcon_message_t *command = NULL, *end = NULL;
-	src_rcon_message_t **commandanswers = NULL;
-	int ec = -1;
+// -----------------------------------------------------------------------------
 
-	command = src_rcon_command(sess->r, cmd);
-	if (command == NULL) {
-		goto cleanup;
-	}
-	if (send_message(sess, command)) {
-		goto cleanup;
-	}
+static void *rcon_reader_main(void *ud) {
+	set_thread_name("rcon_reader");
+	struct rcon_session *sess = ud;
 
-	end = src_rcon_command(sess->r, "");
-	if (end == NULL) {
-		goto cleanup;
-	}
-	if (send_message(sess, end)) {
-		goto cleanup;
-	}
+	if (!sess->response.data) goto read;
 
-	size_t off = 0;
-	bool done = false;
-	do {
+	for (;;) {
+		src_rcon_message_t *command = NULL;
+		src_rcon_message_t **commandanswers = NULL;
+		size_t off = 0;
+		rcon_error_t status = src_rcon_command_wait(sess->r, command, &commandanswers, &off, sess->response.data, sess->response.len);
+		if (status != rcon_error_moredata) {
+			byte_array_remove_range(&sess->response, 0, off);
+		}
+
+		if (status == rcon_error_success && commandanswers != NULL) {
+			lua_State *L = NULL;
+			bool nonewline = false;
+			for (src_rcon_message_t **p = commandanswers; *p != NULL; p++) {
+				size_t bodylen = strlen((char *)(*p)->body);
+
+				if (!L) L = lua_get_state("rcon_reader");
+				if (!L) goto nolua;
+
+				 lua_getglobal(L, "_rcon_data");
+				  lua_pushlstring(L, (char *)(*p)->body, bodylen);
+				   lua_pushinteger(L, (*p)->id);
+				lua_call(L, 2, 0);
+				nonewline = (bodylen != 0 && (*p)->body[bodylen-1] != '\n');
+			}
+			if (L) {
+				if (nonewline) {
+					 lua_getglobal(L, "_rcon_data");
+					  lua_pushnil(L);
+					lua_call(L, 1, 0);
+				}
+				lua_release_state_no_click(L);
+			}
+nolua:;
+		}
+
+		src_rcon_message_freev(commandanswers);
+		commandanswers = NULL;
+read:;
 		char tmp[512];
 		ssize_t ret = read(sess->conn, tmp, sizeof(tmp));
 		if (ret == -1) {
@@ -247,43 +281,11 @@ static int send_command_dowait(struct rcon_session *sess, char const *cmd) {
 		}
 		if (ret == 0) {
 			eprintln("Peer: connection closed");
-			done = true;
+			break;
 		}
 
 		byte_array_append(&sess->response, tmp, (size_t)ret);
-		rcon_error_t status = src_rcon_command_wait(sess->r, command, &commandanswers, &off, sess->response.data, sess->response.len);
-		if (status != rcon_error_moredata) {
-			byte_array_remove_range(&sess->response, 0, off);
-		}
-
-		if (status == rcon_error_success && commandanswers != NULL) {
-			bool locked = false;
-			for (src_rcon_message_t **p = commandanswers; *p != NULL; p++) {
-				if ((*p)->id == end->id) {
-					done = true;
-					continue;
-				}
-				size_t bodylen = strlen((char *)(*p)->body);
-
-				if (!locked++) cli_lock_output();
-				fwrite((*p)->body, 1, bodylen, stderr);
-
-				if (bodylen != 0 && (*p)->body[bodylen-1] != '\n') {
-					fputc('\n', stderr);
-				}
-			}
-			if (locked--) cli_unlock_output();
-		}
-
-		src_rcon_message_freev(commandanswers);
-		commandanswers = NULL;
-	} while (!done);
-
-	ec = 0;
+	}
 cleanup:
-	src_rcon_message_free(command);
-	src_rcon_message_free(end);
-	src_rcon_message_freev(commandanswers);
-
-	return ec;
+	return NULL;
 }
