@@ -8,3 +8,9 @@
 
 # if your cfgfs scripts are in a different directory, "cd" to it here
 #cd ~/src/cfgfs-scripts/ || exit
+
+# if you have rcon enabled, set these to be able to use rcon() from lua
+# launch options to enable rcon: -usercon +rcon_password changeme +net_start
+#export CFGFS_RCON_HOST=localhost
+#export CFGFS_RCON_PORT=27015
+#export CFGFS_RCON_PASSWORD="changeme"
