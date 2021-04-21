@@ -164,8 +164,6 @@ static int l_click(lua_State *L) {
 		pthread_t thread;
 		if (click_at(mono_ms()+ms, &thread)) {
 			lua_pushlightuserdata(L, (void *)thread);
-			luaL_newmetatable(L, "cfgfs_click_thread");
-			lua_setmetatable(L, -2);
 			return 1;
 		} else {
 			return 0;
@@ -178,7 +176,7 @@ static int l_click(lua_State *L) {
 }
 
 static int l_cancel_click(lua_State *L) {
-	pthread_t thread = (pthread_t)(luaL_checkudata(L, 1, "cfgfs_click_thread"));
+	pthread_t thread = (pthread_t)(lua_touserdata(L, 1));
 	int err = pthread_cancel(thread);
 	if (err != 0 && err != ESRCH) {
 		eprintln("cancel_click: pthread_cancel: %s", strerror(err));

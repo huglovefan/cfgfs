@@ -11,8 +11,6 @@ static int l_rcon_new(lua_State *L) {
 	struct rcon_session *sess = rcon_connect(host, (int)port, password);
 	if (sess) {
 		lua_pushlightuserdata(L, sess);
-		luaL_newmetatable(L, "cfgfs_rcon");
-		lua_setmetatable(L, -2);
 		return 1;
 	} else {
 		luaL_pushfail(L);
@@ -21,7 +19,7 @@ static int l_rcon_new(lua_State *L) {
 }
 
 static int l_rcon_run_cfg(lua_State *L) {
-	struct rcon_session *sess = luaL_checkudata(L, 1, "cfgfs_rcon");
+	struct rcon_session *sess = lua_touserdata(L, 1);
 
 	size_t len;
 	const char *cfg = luaL_checklstring(L, 2, &len);
@@ -40,7 +38,7 @@ toolong:
 }
 
 static int l_rcon_delete(lua_State *L) {
-	struct rcon_session *sess = luaL_checkudata(L, 1, "cfgfs_rcon");
+	struct rcon_session *sess = lua_touserdata(L, 1);
 	rcon_disconnect(sess);
 	return 0;
 }
