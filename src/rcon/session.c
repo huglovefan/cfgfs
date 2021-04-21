@@ -58,6 +58,10 @@ static int wait_auth(struct rcon_session *sess, src_rcon_message_t *auth);
 static int send_command_nowait(struct rcon_session *sess, char const *cmd, int32_t *id_out);
 
 static void *rcon_reader_main(void *ud);
+struct rcon_threaddata {
+	struct rcon_session *sess;
+	char *password;
+};
 
 struct rcon_session {
 	src_rcon_t *r;
@@ -72,7 +76,6 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	}
 
 	int sock = -1;
-	src_rcon_message_t *auth = NULL;
 
 	char portstr[8];
 	sprintf(portstr, "%hu", (unsigned short)port);
@@ -114,30 +117,21 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	sess->conn = sock;
 	sess->r = src_rcon_new();
 
-	if (password != NULL) {
-		auth = src_rcon_auth(sess->r, password);
-		if (send_message(sess, auth)) {
-			goto err;
-		}
-		if (wait_auth(sess, auth)) {
-			eprintln("Invalid auth reply, valid password?");
-			goto err;
-		}
-	}
-
-	if (auth) src_rcon_message_free(auth);
 	if (info) freeaddrinfo(info);
+
+	struct rcon_threaddata *td = malloc(sizeof(struct rcon_threaddata));
+	td->sess = sess;
+	td->password = (password) ? strdup(password) : NULL;
 
 	pthread_t thread;
 	check_errcode(
-	    pthread_create(&thread, NULL, rcon_reader_main, (void *)sess),
+	    pthread_create(&thread, NULL, rcon_reader_main, (void *)td),
 	    "rcon: pthread_create",
 	    goto err);
 	pthread_detach(thread);
 
 	return sess;
 err:
-	if (auth) src_rcon_message_free(auth);
 	if (info) freeaddrinfo(info);
 
 	if (sock != -1) close(sock);
@@ -231,17 +225,43 @@ cleanup:
 
 static void *rcon_reader_main(void *ud) {
 	set_thread_name("rcon_reader");
-	struct rcon_session *sess = ud;
+	struct rcon_threaddata *td = ud;
 
-	if (!sess->response.data) goto read;
+	src_rcon_message_t *auth = NULL;
+	bool auth_ok = false;
+	if (td->password != NULL) {
+		auth = src_rcon_auth(td->sess->r, td->password);
+		free(td->password); td->password = NULL;
+		if (send_message(td->sess, auth)) {
+			assert(false, "Out of memory");
+		}
+		if (wait_auth(td->sess, auth)) {
+			goto auth_done;
+		}
+		auth_ok = true;
+	} else {
+		auth_ok = true;
+	}
+auth_done:
+	{
+		lua_State *L = lua_get_state("rcon_reader");
+		 lua_getglobal(L, "_rcon_status");
+		  lua_pushstring(L, auth_ok ? "auth_ok" : "auth_fail");
+		lua_call(L, 1, 0);
+		lua_release_state(L);
+	}
+	if (auth) src_rcon_message_free(auth);
+	if (!auth_ok) goto cleanup;
+
+	if (!td->sess->response.data) goto read;
 
 	for (;;) {
 		src_rcon_message_t *command = NULL;
 		src_rcon_message_t **commandanswers = NULL;
 		size_t off = 0;
-		rcon_error_t status = src_rcon_command_wait(sess->r, command, &commandanswers, &off, sess->response.data, sess->response.len);
+		rcon_error_t status = src_rcon_command_wait(td->sess->r, command, &commandanswers, &off, td->sess->response.data, td->sess->response.len);
 		if (status != rcon_error_moredata) {
-			byte_array_remove_range(&sess->response, 0, off);
+			byte_array_remove_range(&td->sess->response, 0, off);
 		}
 
 		if (status == rcon_error_success && commandanswers != NULL) {
@@ -273,19 +293,27 @@ nolua:;
 		src_rcon_message_freev(commandanswers);
 		commandanswers = NULL;
 read:;
-		char tmp[512];
-		ssize_t ret = read(sess->conn, tmp, sizeof(tmp));
-		if (ret == -1) {
-			perror("Failed to receive data");
-			goto cleanup;
+		{
+			char tmp[512];
+			ssize_t ret = read(td->sess->conn, tmp, sizeof(tmp));
+			if (ret == -1) {
+				perror("Failed to receive data");
+				goto cleanup;
+			}
+			if (ret == 0) {
+				lua_State *L = lua_get_state("rcon_reader");
+				if (L) {
+					 lua_getglobal(L, "_rcon_status");
+					  lua_pushstring(L, "disconnect");
+					lua_call(L, 1, 0);
+					lua_release_state(L);
+				}
+				break;
+			}
+			byte_array_append(&td->sess->response, tmp, (size_t)ret);
 		}
-		if (ret == 0) {
-			eprintln("Peer: connection closed");
-			break;
-		}
-
-		byte_array_append(&sess->response, tmp, (size_t)ret);
 	}
 cleanup:
+	free(td);
 	return NULL;
 }

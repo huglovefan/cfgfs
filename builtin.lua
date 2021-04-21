@@ -1847,11 +1847,30 @@ rcon = function (cfg)
 		local port = (tonumber(os.getenv('CFGFS_RCON_PORT')) or 27015)
 		local password = os.getenv('CFGFS_RCON_PASSWORD')
 		sess = _rcon_new(host, port, password)
+		wait_for_event('_rcon_auth')
 		if sess then
 			return not not _rcon_run_cfg(sess, cfg)
 		else
 			return nil
 		end
+	end
+end
+
+_rcon_status = function (s)
+	if s == 'auth_ok' then
+		return fire_event('_rcon_auth')
+	end
+	if s == 'auth_fail' then
+		_rcon_delete(sess)
+		sess = nil
+		return fire_event('_rcon_auth')
+	end
+	if s == 'disconnect' then
+		if sess then
+			_rcon_delete(sess)
+			sess = nil
+		end
+		return
 	end
 end
 
