@@ -1528,7 +1528,7 @@ end
 
 local bright = function (s) return string.format('\27[34;38;2;251;236;203m%s\27[0m', s) end
 
-local colorize_game_message = function (line)
+local parse_game_message = function (line)
 	-- chat message
 	local name, message = line:match('^(.+) :  (.+)$')
 	if name then
@@ -1734,6 +1734,17 @@ local colorize_game_message = function (line)
 		end
 	end
 
+	-- message output by "net_start"
+	-- try connecting to rcon if credentials are set
+	if #line >= 50 and line:find('^Network: IP .*, mode .*, dedicated .*, ports %-?[0-9]+ SV / %-?[0-9]+ CL$') then
+		if  not rcon_connected
+		and (   (os.getenv('CFGFS_RCON_HOST') and os.getenv('CFGFS_RCON_PORT'))
+		     or  os.getenv('CFGFS_RCON_PASSWORD'))
+		then
+			ev_call(rcon, '')
+		end
+	end
+
 	return false
 end
 
@@ -1767,7 +1778,7 @@ _game_console_output = function (line, complete, was_jumbled)
 			if is_spam(line) then
 				return
 			end
-			line = colorize_game_message(line)
+			line = parse_game_message(line)
 			    or colorize_sourcemod_thing(line)
 			    or dim_clutter(line)
 			    or line
@@ -1839,15 +1850,21 @@ _rcon_data = function (buf, id)
 	return rcon_lr(buf)
 end
 
+rcon_connected = false
+local rcon_connecting = false
+
 local sess = nil
 rcon = function (cfg)
 	if sess then
 		return not not _rcon_run_cfg(sess, cfg)
 	else
-		local host = (os.getenv('CFGFS_RCON_HOST') or 'localhost')
-		local port = (tonumber(os.getenv('CFGFS_RCON_PORT')) or 27015)
-		local password = os.getenv('CFGFS_RCON_PASSWORD')
-		sess = _rcon_new(host, port, password)
+		if not rcon_connecting then
+			sess = _rcon_new(
+			    (os.getenv('CFGFS_RCON_HOST') or 'localhost'),
+			    (tonumber(os.getenv('CFGFS_RCON_PORT')) or 27015),
+			    (os.getenv('CFGFS_RCON_PASSWORD') or nil))
+			rcon_connecting = true
+		end
 		wait_for_event('_rcon_auth')
 		if sess then
 			return not not _rcon_run_cfg(sess, cfg)
@@ -1859,14 +1876,20 @@ end
 
 _rcon_status = function (s)
 	if s == 'auth_ok' then
+		rcon_connected = true
+		rcon_connecting = false
 		return fire_event('_rcon_auth')
 	end
 	if s == 'auth_fail' then
+		rcon_connected = false
+		rcon_connecting = false
 		_rcon_delete(sess)
 		sess = nil
 		return fire_event('_rcon_auth')
 	end
 	if s == 'disconnect' then
+		rcon_connected = false
+		rcon_connecting = false
 		if sess then
 			_rcon_delete(sess)
 			sess = nil
