@@ -46,4 +46,5 @@ int cfgfs_handle_xerror(Display *display, XErrorEvent *error) {
 	fprintf(stderr, "error: thread %s got an X error: %s\n", thread, msgbuf);
 D	print_c_backtrace_unlocked();
 	abort();
+	cfgfs_noreturn();
 }

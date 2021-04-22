@@ -25,6 +25,7 @@
 #include "attention.h"
 #include "buffer_list.h"
 #include "buffers.h"
+#include "cfg.h"
 #include "cli_input.h"
 #include "cli_output.h"
 #include "cli_scrollback.h"
@@ -682,6 +683,9 @@ int main(int argc, char **argv) {
 	mallopt(M_TOP_PAD, 10*1024*1000);
 	mallopt(M_TRIM_THRESHOLD, 20*1024*1000);
 	mlockall(MCL_CURRENT|MCL_FUTURE);
+
+	cfg_init_badchars();
+	click_init_threadattr();
 
 	cli_scrollback_load_and_print();
 

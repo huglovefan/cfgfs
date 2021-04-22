@@ -5,3 +5,5 @@
 #define max_argc        (63)
 
 void cfg_init_lua(void *L);
+
+void cfg_init_badchars(void);

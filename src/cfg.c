@@ -24,9 +24,8 @@ static unsigned char charflags[256];
 #define set(c, flag) charflags[c] = flag
 #define set_range(f, t, flag) for (int c = f; c <= t; c++) set(c, flag)
 
-__attribute__((constructor))
 __attribute__((minsize))
-static void _init_badchars(void) {
+void cfg_init_badchars(void) {
 	set_range(0, 32, wf_needs_quotes);
 	set_range(39, 41, wf_needs_quotes);
 	set(47, wf_needs_quotes);

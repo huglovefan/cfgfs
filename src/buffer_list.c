@@ -11,10 +11,11 @@
 // -----------------------------------------------------------------------------
 
 #define cfg_exec_next_cmd "exec cfgfs/buffer"
+#define cfg_exec_next_cmd_len (sizeof(cfg_exec_next_cmd)-1)
 
 // make sure reported_cfg_size is big enough that we'll always be able to put at
 //  least one command in a single buffer
-_Static_assert(reported_cfg_size >= max_line_length+1+strlen(cfg_exec_next_cmd)+1,
+_Static_assert(reported_cfg_size >= max_line_length+1+cfg_exec_next_cmd_len+1,
     "reported_cfg_size is too low (not enough space to reliably fit one command)");
 
 static size_t buffer_space(const struct buffer *self) {

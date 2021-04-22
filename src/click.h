@@ -15,3 +15,5 @@ void click_init(void);
 void click_deinit(void);
 
 void click_init_lua(void *L);
+
+void click_init_threadattr(void);

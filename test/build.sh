@@ -2,7 +2,7 @@ unset CC CFLAGS CPPFLAGS LDFLAGS
 works=
 broken=
 untested=
-for cc in clang gcc; do
+for cc in clang gcc tcc; do
 	if ! command -v "$cc" >/dev/null; then
 		>&2 echo "skipping tests for cc $cc"
 		untested="$untested $cc"

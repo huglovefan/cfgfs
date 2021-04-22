@@ -63,6 +63,7 @@ int l_panic(void *L) {
 	lua_print_backtrace(L);
 	print_c_backtrace_unlocked();
 	abort();
+	cfgfs_noreturn();
 }
 
 static void lua_print_backtrace(lua_State *L) {

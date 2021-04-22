@@ -3,7 +3,6 @@
 --
 
 
-
 assert(cmd_stringify('test') == 'test')
 assert(cmd_stringify('test', 'test') == 'test test')
 
@@ -53,6 +52,8 @@ add_listener('ping.2', function (data)
 		cfg('pong2')
 	end
 end)
+
+
 
 
 -- shut up the warning

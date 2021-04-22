@@ -32,8 +32,7 @@ static KeyCode keycode;
 
 static pthread_attr_t thread_attr;
 
-__attribute__((constructor))
-static void _init_attr(void) {
+void click_init_threadattr(void) {
 	pthread_attr_init(&thread_attr);
 	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_DETACHED);
 	pthread_attr_setschedpolicy(&thread_attr, SCHED_FIFO); // placebo

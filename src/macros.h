@@ -13,19 +13,43 @@
 #define likely(x)   __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
+// -----------------------------------------------------------------------------
+
+// tcc support corner
+
+#if defined(__TINYC__)
+ #define __builtin_unreachable() do asm("hlt"); while (1)
+#endif
+
+#if defined(__TINYC__)
+ #define cfgfs_noreturn() __builtin_unreachable()
+#else
+ #define cfgfs_noreturn() compiler_enforced_unreachable()
+#endif
+
+// the provided _Static_assert() doesn't work outside functions
+#if defined(__TINYC__)
+ #undef _Static_assert
+ // https://stackoverflow.com/a/1667564
+ #define MERGE_(a,b)  a##b
+ #define LABEL_(a) MERGE_(unique_name_, a)
+ #define _Static_assert(c, s) struct LABEL_(__LINE__) { int static_assert_failed : (c)?1:-1; }
+#endif
+
+// -----------------------------------------------------------------------------
+
 // https://en.cppreference.com/w/cpp/utility/exchange
 #define exchange(var, newval) \
 	({ \
-		__auto_type _exchange_p = &(var); \
-		__auto_type _exchange_oldval = *_exchange_p; \
-		*_exchange_p = (newval); \
+		typeof(var) _exchange_oldval = var; \
+		var = newval; \
 		_exchange_oldval; \
 	})
 
 // #include <sys/prctl.h>
 #define set_thread_name(s) \
 	({ \
-		_Static_assert(__builtin_strlen(s) <= 15, "thread name too long"); \
+D		assert(strlen(s) <= 15, "thread name too long"); \
 		prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
 	})
 #define get_thread_name(buf) \
@@ -72,7 +96,7 @@
 // do not use
 #define unsafe_optimization_hint(v) \
 	({ \
-		__auto_type _assume_v = (v); \
+		typeof(v) _assume_v = (v); \
 		if (unlikely(!_assume_v)) { \
 			D ASSERT_FAIL_WITH_FMT("Wrong unsafe_optimization_hint(): %s", #v); \
 			__builtin_unreachable(); \
@@ -101,6 +125,13 @@
 
 __attribute__((noreturn))
 extern void ERROR_this_call_to_AssertCompilerKnows_could_not_be_proven_true(void);
+
+// tcc doesn't know much
+// just make it a real assert. better than not checking it at all
+#if defined(__TINYC__)
+ #undef assert_compiler_knows
+ #define assert_compiler_knows(x) assert(x)
+#endif
 
 // -----------------------------------------------------------------------------
 
@@ -136,7 +167,7 @@ static inline void check_otx(const int *v) {
 
 // -----------------------------------------------------------------------------
 
-#define assert_unreachable() ({ ASSERT_FAIL_NO_FMT("Unreachable code hit"); })
+#define assert_unreachable() ASSERT_FAIL_NO_FMT("Unreachable code hit")
 
 // -----------------------------------------------------------------------------
 
@@ -170,7 +201,7 @@ static inline void check_format_string(const char *fmt, ...) {
 
 #define ASSERT_FAIL_NO_FMT(s) ASSERT_FAIL_WITH_FMT("%s", s)
 #define ASSERT_FAIL_WITH_FMT(fmt, s) \
-	({ \
+	do { \
 		MAKE_ASSERTDATA(assertdata, \
 		    EXE ": " __FILE__ ":" STRINGIZE(__LINE__) ": %s: " fmt "\n", \
 		    __func__, \
@@ -178,7 +209,7 @@ static inline void check_format_string(const char *fmt, ...) {
 		assert_fail(&assertdata); \
 		asm("hlt"); \
 		__builtin_unreachable(); \
-	})
+	} while (0)
 // ^ hlt: make cutter's graph view understand that control flow ends here
 // otherwise it would fall through into whatever code comes after
 
@@ -211,7 +242,7 @@ static inline void check_format_string(const char *fmt, ...) {
 // if it is, do "perror(what)" and execute the statement in "orelse" (should be goto or return)
 #define check_minus1(v, what, orelse) \
 	({ \
-		__auto_type _check_v = (v); \
+		typeof(v) _check_v = (v); \
 		if (unlikely(_check_v == -1)) { \
 			perror(what); \
 			orelse; \
@@ -223,7 +254,7 @@ static inline void check_format_string(const char *fmt, ...) {
 // same as above, but for functions that return an errno value instead of setting it globally
 #define check_errcode(v, what, orelse) \
 	({ \
-		__auto_type _check_v = (v); \
+		typeof(v) _check_v = (v); \
 		if (unlikely(_check_v != 0)) { \
 			eprintln(what ": %s", strerror(_check_v)); \
 			orelse; \
@@ -233,7 +264,7 @@ static inline void check_format_string(const char *fmt, ...) {
 
 #define check_nonnull(v, what, orelse) \
 	({ \
-		__auto_type _check_v = (v); \
+		typeof(v) _check_v = (v); \
 		if (unlikely(_check_v == NULL)) { \
 			perror(what); \
 			orelse; \

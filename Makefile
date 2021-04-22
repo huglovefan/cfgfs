@@ -48,9 +48,6 @@ SRCS = $(OBJS:.o=.c)
 
 $(COLD_OBJS): CFLAGS += $(SIZE_OPT_CFLAGS)
 
-# make it make dependency files for make
-CPPFLAGS += -MMD -MP
-
 CFLAGS += -std=gnu11
 CPPFLAGS += -D_GNU_SOURCE
 
@@ -58,8 +55,9 @@ CPPFLAGS += -D_GNU_SOURCE
 
 ## compiler-specific flags
 
-ifneq (,$(findstring clang,$(CC)))
 # clang
+ifneq (,$(findstring clang,$(CC)))
+CPPFLAGS += -MMD -MP
 SIZE_OPT_CFLAGS = -Oz
 CFLAGS += \
           -Weverything \
@@ -86,9 +84,19 @@ CFLAGS += \
           -Wno-padded \
           -Wno-reserved-id-macro \
           -Wframe-larger-than=1024 \
-# end
-else
+# .
+endif
+
+# tcc
+ifneq (,$(findstring tcc,$(CC)))
+CFLAGS += \
+          -Wall \
+# .
+endif
+
 # gcc
+ifneq (,$(findstring gcc,$(CC)))
+CPPFLAGS += -MMD -MP
 SIZE_OPT_CFLAGS = -Os
 CFLAGS += \
           -Wall \
@@ -98,7 +106,7 @@ CFLAGS += \
           -Werror=implicit-function-declaration \
           -Wno-bool-operation \
           -Wno-misleading-indentation \
-# end
+# .
 endif
 
 # set thinlto-cache-dir if using clang + lld + -flto=thin
