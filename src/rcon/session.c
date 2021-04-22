@@ -290,7 +290,7 @@ auth_done:
 					  lua_pushnil(L);
 					lua_call(L, 1, 0);
 				}
-				lua_release_state_no_click(L);
+				lua_release_state(L);
 			}
 nolua:;
 		}
