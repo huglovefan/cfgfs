@@ -689,10 +689,7 @@ cmdp = setmetatable({--[[ empty ]]}, {
 	end,
 })
 
-local get_cvars_classic
-local get_cvars_rcon
-
-get_cvars_classic = function (t)
+local get_cvars = function (t)
 	if #t == 0 then
 		return {}
 	end
@@ -738,68 +735,6 @@ get_cvars_classic = function (t)
 		    incnt, outcnt)
 	end
 	return rv
-end
-
-get_cvars_rcon = function (t)
-	if #t == 0 then
-		return {}
-	end
-	local rv = {}
-	local incnt, outcnt = 0, 0
-	local msgids = {}
-	for _, k in ipairs(t) do
-		if rv[k] == nil then
-			local id = rcon(cmd_stringify('help', k))
-			assert(id, 'cvar: failed to send rcon command')
-			msgids[id] = true
-			rv[k] = false
-			outcnt = outcnt+1
-		end
-	end
-	local id_end = rcon('echo .')
-	assert(id_end, 'cvar: failed to send rcon command')
-	msgids[id_end] = true
-	for _, line, id in wait_for_events({'rcon_output'}, 1000) do
-		if not msgids[id] then
-			goto next
-		end
-		cancel_event('l')
-		local mk, mv = line:match('"([^"]+)" = "(.-)"')
-		if mk then
-			if rv[mk] == false then
-				rv[mk] = mv
-				incnt = incnt+1
-				if mk == 'name' then -- hehe
-					own_name_known(mv)
-				end
-			end
-		end
-		local mk = line:match('^help:  no cvar or command named (.*)$')
-		if mk then
-			if rv[mk] == false then
-				rv[mk] = nil
-				incnt = incnt+1
-			end
-		end
-		if id == id_end then
-			cancel_event(true)
-			break
-		end
-		::next::
-	end
-	if incnt ~= outcnt then
-		eprintln('warning: could only read %d of %d cvar(s)',
-		    incnt, outcnt)
-	end
-	return rv
-end
-
-local get_cvars = function (...)
-	if rcon_connected then
-		return get_cvars_rcon(...)
-	else
-		return get_cvars_classic(...)
-	end
 end
 
 cvar = setmetatable({--[[ empty ]]}, {
