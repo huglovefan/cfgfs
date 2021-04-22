@@ -528,12 +528,12 @@ remove_listener = function (name, cb)
 end
 
 local last_event_name = nil
-local event_was_cancelled = false
-local may_cancel_event = false
+
+local in_event = false
+local canceldata = nil
 
 fire_event = function (name, ...)
 	local rv = 0
-	local cancelled = false
 	local t = events[name]
 	if t then
 		local copy = {table.unpack(t)}
@@ -541,37 +541,34 @@ fire_event = function (name, ...)
 			if t[cb] then
 				last_event_name = name
 
-				-- note: this may already be true if it's an
-				--  event handler firing this event
-				local old_m_c_e = may_cancel_event
-				may_cancel_event = true
+				local old_in_event = in_event
+				local old_canceldata = canceldata
+				in_event = true
+				canceldata = nil
 
 				if type(cb) == 'function' then
 					ev_call(cb, ...)
 				elseif type(cb) == 'thread' then
 					ev_resume(cb, ...)
 				end
-
 				rv = rv+1
-				may_cancel_event = old_m_c_e
 
-				if event_was_cancelled then
-					cancelled = true
-					event_was_cancelled = false
-					break
+				local my_canceldata = canceldata
+				in_event = old_in_event
+				canceldata = old_canceldata
+
+				if my_canceldata then
+					return -rv, my_canceldata
 				end
 			end
 		end
 	end
-	if cancelled then
-		rv = -rv
-	end
 	return rv
 end
 
-cancel_event = function ()
-	if may_cancel_event then
-		event_was_cancelled = true
+cancel_event = function (data)
+	if in_event then
+		canceldata = data or true
 	else
 		return error('tried to cancel_event() outside an event handler', 2)
 	end
@@ -692,7 +689,10 @@ cmdp = setmetatable({--[[ empty ]]}, {
 	end,
 })
 
-local get_cvars = function (t)
+local get_cvars_classic
+local get_cvars_rcon
+
+get_cvars_classic = function (t)
 	if #t == 0 then
 		return {}
 	end
@@ -738,6 +738,66 @@ local get_cvars = function (t)
 		    incnt, outcnt)
 	end
 	return rv
+end
+
+get_cvars_rcon = function (t)
+	if #t == 0 then
+		return {}
+	end
+	local rv = {}
+	local incnt, outcnt = 0, 0
+	local msgids = {}
+	for _, k in ipairs(t) do
+		if rv[k] == nil then
+			local id = rcon(cmd_stringify('help', k))
+			assert(id, 'cvar: failed to send rcon command')
+			msgids[id] = true
+			rv[k] = false
+			outcnt = outcnt+1
+		end
+	end
+	local id_end = rcon('echo .')
+	assert(id_end, 'cvar: failed to send rcon command')
+	msgids[id_end] = true
+	for _, line, id in wait_for_events({'rcon_output'}, 1000) do
+		local mk, mv = line:match('^"([^"]+)" = "(.*)" %( ')
+		if mk then
+			if rv[mk] == false then
+				rv[mk] = mv
+				incnt = incnt+1
+				if mk == 'name' then -- hehe
+					own_name_known(mv)
+				end
+			end
+		end
+		local mk = line:match('^help:  no cvar or command named (.*)$')
+		if mk then
+			if rv[mk] == false then
+				rv[mk] = nil
+				incnt = incnt+1
+			end
+		end
+		if msgids[id] then
+			cancel_event('l')
+		end
+		if id == id_end then
+			cancel_event(true)
+			break
+		end
+	end
+	if incnt ~= outcnt then
+		eprintln('warning: could only read %d of %d cvar(s)',
+		    incnt, outcnt)
+	end
+	return rv
+end
+
+local get_cvars = function (...)
+	if rcon_connected then
+		return get_cvars_rcon(...)
+	else
+		return get_cvars_classic(...)
+	end
 end
 
 cvar = setmetatable({--[[ empty ]]}, {
@@ -1840,13 +1900,31 @@ end
 
 do
 
+local rcon_curr_id = 0
 local rcon_lr = linereader(function (line)
-	if fire_event('rcon_output', line) >= 0 then
+	local cnt, data = fire_event('rcon_output', line, rcon_curr_id)
+	local shall_log = true
+	local shall_print = true
+	if cnt < 0 then
+		if type(data) == 'string' then
+			shall_log = data:find('l')
+			shall_print = data:find('p')
+		else
+			shall_log = false
+			shall_print = false
+		end
+	end
+	if shall_log then
 		our_logfile:write(line, '\n')
-		return _println(line)
+	end
+	if shall_print then
+		_println(line)
 	end
 end)
 _rcon_data = function (buf, id)
+	if id then
+		rcon_curr_id = id
+	end
 	return rcon_lr(buf)
 end
 
@@ -1856,7 +1934,7 @@ local rcon_connecting = false
 local sess = nil
 rcon = function (cfg)
 	if sess then
-		return not not _rcon_run_cfg(sess, cfg)
+		return _rcon_run_cfg(sess, cfg)
 	else
 		if not rcon_connecting then
 			sess = _rcon_new(
@@ -1867,7 +1945,7 @@ rcon = function (cfg)
 		end
 		wait_for_event('_rcon_auth')
 		if sess then
-			return not not _rcon_run_cfg(sess, cfg)
+			return _rcon_run_cfg(sess, cfg)
 		else
 			return nil
 		end
