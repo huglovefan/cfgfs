@@ -93,6 +93,7 @@ SIZE_OPT_CFLAGS = -Os
 CFLAGS += \
           -Wall \
           -Wextra \
+          -Wmissing-prototypes \
           -Wstrict-overflow=5 \
           -Werror=implicit-function-declaration \
           -Wno-bool-operation \
