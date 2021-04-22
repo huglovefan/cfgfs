@@ -5,6 +5,7 @@
 #include "session.h"
 
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -98,6 +99,10 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 		sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 		if (-1 == sock) {
 			continue;
+		}
+
+		if (-1 == setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &(int){1}, sizeof(int))) {
+			perror("rcon: setsockopt(TCP_NODELAY)");
 		}
 
 		if (-1 == connect(sock, ai->ai_addr, ai->ai_addrlen)) {
