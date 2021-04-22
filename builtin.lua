@@ -1944,6 +1944,9 @@ rcon = function (cfg)
 			    (os.getenv('CFGFS_RCON_HOST') or 'localhost'),
 			    (tonumber(os.getenv('CFGFS_RCON_PORT')) or 27015),
 			    (os.getenv('CFGFS_RCON_PASSWORD') or nil))
+			if not sess then
+				return nil
+			end
 			rcon_connecting = true
 		end
 		wait_for_event('_rcon_auth')
