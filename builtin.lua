@@ -760,7 +760,11 @@ get_cvars_rcon = function (t)
 	assert(id_end, 'cvar: failed to send rcon command')
 	msgids[id_end] = true
 	for _, line, id in wait_for_events({'rcon_output'}, 1000) do
-		local mk, mv = line:match('^"([^"]+)" = "(.*)" %( ')
+		if not msgids[id] then
+			goto next
+		end
+		cancel_event('l')
+		local mk, mv = line:match('"([^"]+)" = "(.-)"')
 		if mk then
 			if rv[mk] == false then
 				rv[mk] = mv
@@ -777,13 +781,11 @@ get_cvars_rcon = function (t)
 				incnt = incnt+1
 			end
 		end
-		if msgids[id] then
-			cancel_event('l')
-		end
 		if id == id_end then
 			cancel_event(true)
 			break
 		end
+		::next::
 	end
 	if incnt ~= outcnt then
 		eprintln('warning: could only read %d of %d cvar(s)',
@@ -1902,6 +1904,7 @@ do
 
 local rcon_curr_id = 0
 local rcon_lr = linereader(function (line)
+	if not line then return end
 	local cnt, data = fire_event('rcon_output', line, rcon_curr_id)
 	local shall_log = true
 	local shall_print = true
