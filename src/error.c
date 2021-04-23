@@ -1,9 +1,11 @@
 #include "error.h"
 
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "cli_output.h"
 
@@ -37,8 +39,45 @@ fail:
 	abort();
 }
 
+#if defined(__clang__) || defined(__GNUC__)
+ #define try_sanitizer 1
+#else
+ #define try_sanitizer 0
+#endif
+
+#if defined(__TINYC__)
+ #define try_tcc 1
+#else
+ #define try_tcc 0
+#endif
+
 void print_c_backtrace_unlocked(void) {
-	typedef void (*print_backtrace_t)(void);
-	print_backtrace_t fn = (print_backtrace_t)dlsym(RTLD_DEFAULT, "__sanitizer_print_stack_trace");
-	if (fn != NULL) fn();
+	// try the backtrace function from the sanitizer runtime
+	// exists if cfgfs was linked with a sanitizer
+	typedef void (*sanitizer_backtrace_t)(void);
+	if (try_sanitizer) {
+		sanitizer_backtrace_t san_bt = (sanitizer_backtrace_t)dlsym(RTLD_DEFAULT, "__sanitizer_print_stack_trace");
+		if (san_bt != NULL) {
+			san_bt();
+			return;
+		}
+	}
+
+	// try tcc's backtrace function
+	// exists if cfgfs was linked by tcc with -bt
+	typedef int (*tcc_backtrace_t)(const char *fmt, ...);
+	if (try_tcc) {
+		tcc_backtrace_t tcc_bt = (tcc_backtrace_t)dlsym(RTLD_DEFAULT, "tcc_backtrace");
+		if (tcc_bt != NULL) {
+			tcc_bt("");
+			return;
+		}
+	}
+
+#define bt_depth 64
+	void *buffer[bt_depth];
+	int nptrs = backtrace(buffer, bt_depth);
+	if (1 != nptrs) fprintf(stderr, "backtrace() returned %d addresses\n", nptrs);
+	else            fprintf(stderr, "backtrace() returned 1 address\n");
+	backtrace_symbols_fd(buffer, nptrs, STDERR_FILENO);
 }

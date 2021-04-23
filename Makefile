@@ -89,6 +89,7 @@ endif
 
 # tcc
 ifneq (,$(findstring tcc,$(CC)))
+LDFLAGS += -rdynamic # keep tcc_backtrace() even if no direct calls
 CFLAGS += \
           -Wall \
 # .
