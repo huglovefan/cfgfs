@@ -198,14 +198,10 @@ static int l_click_set_key(lua_State *L) {
 	return 1;
 }
 
-__attribute__((minsize))
-void click_init_lua(void *L) {
-	 lua_pushcfunction(L, l_click);
-	lua_setglobal(L, "_click");
-	 lua_pushcfunction(L, l_cancel_click);
-	lua_setglobal(L, "_click_cancel");
-	 lua_pushcfunction(L, l_click_set_key);
-	lua_setglobal(L, "_click_set_key");
-	 lua_pushcfunction(L, l_click_received);
-	lua_setglobal(L, "_click_received");
-}
+const luaL_Reg l_click_fns[] = {
+	{"_click", l_click},
+	{"_click_cancel", l_cancel_click},
+	{"_click_set_key", l_click_set_key},
+	{"_click_received", l_click_received},
+	{NULL, NULL},
+};

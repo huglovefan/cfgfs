@@ -249,6 +249,10 @@ void lua_define_builtins(void *L) {
 
 	 lua_getglobal(L, "_G");
 	 luaL_setfuncs(L, fns_g, 0);
+	 luaL_setfuncs(L, l_buffers_fns, 0);
+	 luaL_setfuncs(L, l_cfg_fns, 0);
+	 luaL_setfuncs(L, l_cli_input_fns, 0);
+	 luaL_setfuncs(L, l_click_fns, 0);
 	 luaL_setfuncs(L, l_rcon_fns, 0);
 	lua_pop(L, 1);
 
@@ -281,11 +285,6 @@ void lua_define_builtins(void *L) {
 		key2num[key] = n\
 	end\
 	")) lua_error(L);
-
-	buffers_init_lua(L);
-	cfg_init_lua(L);
-	cli_input_init_lua(L);
-	click_init_lua(L);
 
 	_Static_assert(sizeof(AGPL_SOURCE_URL) > 1, "AGPL_SOURCE_URL not set to a valid value");
 	lua_pushstring(L, AGPL_SOURCE_URL); lua_setglobal(L, "agpl_source_url");

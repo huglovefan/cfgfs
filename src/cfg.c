@@ -338,11 +338,9 @@ static int l_cfg(lua_State *L) {
 
 // -----------------------------------------------------------------------------
 
-void cfg_init_lua(void *L) {
-	 lua_pushcfunction(L, l_cfg);
-	lua_setglobal(L, "_cfg");
-	 lua_pushcfunction(L, l_cmd);
-	lua_setglobal(L, "_cmd");
-	 lua_pushcfunction(L, l_cmd_stringify);
-	lua_setglobal(L, "cmd_stringify");
-}
+const luaL_Reg l_cfg_fns[] = {
+	{"_cfg", l_cfg},
+	{"_cmd", l_cmd},
+	{"cmd_stringify", l_cmd_stringify},
+	{NULL, NULL},
+};

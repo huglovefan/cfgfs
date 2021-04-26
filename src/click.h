@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lauxlib.h>
+
 // click to make source exec a config at will
 
 // i didn't like this feature at first because it seemed so cheaty compared to
@@ -14,6 +16,6 @@ void do_click(void);
 void click_init(void);
 void click_deinit(void);
 
-void click_init_lua(void *L);
+extern const luaL_Reg l_click_fns[];
 
 void click_init_threadattr(void);

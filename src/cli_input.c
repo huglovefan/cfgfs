@@ -234,7 +234,7 @@ static int l_set_prompt(lua_State *L) {
 	return 0;
 }
 
-void cli_input_init_lua(void *L) {
-	 lua_pushcfunction(L, l_set_prompt);
-	lua_setglobal(L, "_set_prompt");
-}
+const luaL_Reg l_cli_input_fns[] = {
+	{"_set_prompt", l_set_prompt},
+	{NULL, NULL},
+};
