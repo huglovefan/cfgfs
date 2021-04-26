@@ -21,28 +21,38 @@ enum wordflags {
 
 static unsigned char charflags[256];
 
-#define set(c, flag) charflags[c] = flag
-#define set_range(f, t, flag) for (int c = f; c <= t; c++) set(c, flag)
-
 __attribute__((minsize))
 void cfg_init_badchars(void) {
-	set_range(0, 32, wf_needs_quotes);
-	set_range(39, 41, wf_needs_quotes);
-	set(47, wf_needs_quotes);
-	set_range(58, 59, wf_needs_quotes);
-	set(123, wf_needs_quotes);
-	set_range(125, 255, wf_needs_quotes);
+#define set_range(s, e, f) {.first = s, .length = (e-s)+1, .flags = f}
+#define set(n, f) set_range(n, n, f)
+	static const struct spec  {
+		unsigned char first, length, flags;
+	} s[] = {
+		set_range(0, 32, wf_needs_quotes),
+		set_range(39, 41, wf_needs_quotes),
+		set(47, wf_needs_quotes),
+		set_range(58, 59, wf_needs_quotes),
+		set(123, wf_needs_quotes),
+		set_range(125, 255, wf_needs_quotes),
 
-	// 0: null byte, game can't read this -> replaced with 0x7F (DEL)
-	// 1-31 excluding 9: game treats these as newlines -> replaced with 0x7F (DEL)
-	// 34: double quote, can't be quoted itself -> replaced with a single quote
-	set_range(0, 31, wf_needs_quotes|wf_contains_evil_char);
-	set(9, wf_needs_quotes);
-	set(34, wf_contains_evil_char);
-}
-
-#undef set
+		// 0: null byte, game can't read this -> replaced with 0x7F (DEL)
+		// 1-31 excluding 9: game treats these as newlines -> replaced with 0x7F (DEL)
+		// 34: double quote, can't be quoted itself -> replaced with a single quote
+		set_range(0, 31, wf_needs_quotes|wf_contains_evil_char),
+		set(9, wf_needs_quotes),
+		set(34, wf_contains_evil_char),
+	};
 #undef set_range
+#undef set
+
+#define ARRAYEND(a) ((a)+(sizeof(a)/sizeof(*(a))))
+	const struct spec *p = s;
+	while (p != ARRAYEND(s)) {
+		memset(charflags+p->first, p->flags, p->length);
+		p++;
+	}
+#undef ARRAYEND
+}
 
 // ~
 
