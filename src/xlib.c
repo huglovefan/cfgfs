@@ -9,6 +9,12 @@
 #include "error.h"
 #include "macros.h"
 
+#if defined(WITH_D) || defined(WITH_V)
+ #define should_warn 1
+#else
+ #define should_warn 0
+#endif
+
 int cfgfs_handle_xerror(Display *display, XErrorEvent *error) {
 	char msgbuf[128];
 	char thread[16];
@@ -29,10 +35,12 @@ int cfgfs_handle_xerror(Display *display, XErrorEvent *error) {
 		error->request_code == 20 &&
 		error->minor_code == 0
 	)) {
-		cli_lock_output();
-		 fprintf(stderr, "warning: caught harmless X error: %s\n", msgbuf);
-		 print_c_backtrace_unlocked();
-		cli_unlock_output();
+		if (should_warn) {
+			cli_lock_output();
+			 fprintf(stderr, "warning: caught harmless X error: %s\n", msgbuf);
+			 print_c_backtrace_unlocked();
+			cli_unlock_output();
+		}
 		return 0;
 	}
 
