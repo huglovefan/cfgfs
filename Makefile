@@ -83,6 +83,7 @@ CFLAGS += \
           -Wno-language-extension-token \
           -Wno-padded \
           -Wno-reserved-id-macro \
+          -Wno-string-compare \
           -Wframe-larger-than=1024 \
 # .
 endif
@@ -105,6 +106,7 @@ CFLAGS += \
           -Wmissing-prototypes \
           -Wstrict-overflow=5 \
           -Werror=implicit-function-declaration \
+          -Wno-address \
           -Wno-bool-operation \
           -Wno-misleading-indentation \
 # .

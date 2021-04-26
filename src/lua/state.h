@@ -15,12 +15,16 @@ typedef struct lua_State lua_State;
                            lua_type(L, MESSAGE_IDX)             == LUA_TFUNCTION)
 #define stack_is_clean_quick(L) (lua_gettop(L) == MESSAGE_IDX)
 
-lua_State *lua_get_state(const char *who);
+lua_State *lua_get_state_real(const char *who);
+#define lua_get_state(who) lua_get_state_real("" who "")
+
 lua_State *lua_get_state_already_locked(void);
 
 void lua_release_state(lua_State *);
 
-bool lua_lock_state(const char *who);
+bool lua_lock_state_real(const char *who);
+#define lua_lock_state(who) lua_lock_state_real("" who "")
+
 void lua_unlock_state(void);
 
 void lua_unlock_state_no_click(void);

@@ -26,23 +26,59 @@ static double      prev_locked_dur = 0.0;
 static const char *locked_by = NULL;
 static double      locked_at = 0.0;
 
+// note: string comparisons here are done with ==
+// it works if the compiler de-duplicates string constants (clang and gcc do,
+//  tcc doesn't)
+// the lua_lock_state()/lua_get_state() macros ensure that they're only called
+//  with constant strings
+
+#if defined(__clang__) || defined(__GNUC__)
+ #define CHEAP_COMPARE(s1, s2) (s1 == s2)
+#else
+ #define CHEAP_COMPARE(s1, s2) (0 == strcmp(s1, s2))
+#endif
+
+// D only: check that "s" is a known locker name
+// % grep -Phor 'lua_(get|lock)_state\("\K[^"]+' src/ | sort -u
+static inline void check_locker_name(const char *s) {
+	if (CHEAP_COMPARE(s, "attention") ||
+	    CHEAP_COMPARE(s, "cfgfs_init") ||
+	    CHEAP_COMPARE(s, "cfgfs_read") ||
+	    CHEAP_COMPARE(s, "cfgfs_release/sft_message") ||
+	    CHEAP_COMPARE(s, "cfgfs_write/sft_console_log") ||
+	    CHEAP_COMPARE(s, "cfgfs_write/sft_message") ||
+	    CHEAP_COMPARE(s, "cli_input") ||
+	    CHEAP_COMPARE(s, "rcon_reader") ||
+	    CHEAP_COMPARE(s, "reloader")) {
+		return;
+	}
+	eprintln("error: unknown locker name %s", s);
+	abort();
+}
+
 // taking the lock may take up to this long or a warning is printed
 // locker: name of who's trying to take the lock
-static inline double acceptable_lock_delay_for_locker(const char *locker) {
-	if (likely(0 == strcmp(locker, "cfgfs_read"))) {
-		// super critical
+static inline double acceptable_lock_delay_for_locker(const char *me,
+                                                      const char *other) {
+	// non-interactive
+	if (CHEAP_COMPARE(other, "attention")) {
+		return 8.0;
+	}
+
+	// supposed to be fast
+	if (CHEAP_COMPARE(me, "cfgfs_read")) {
 		return 1.0;
 	}
-	// not really critical
+
 	return 4.0;
 }
 
 // the total time holding the lock may be this long or a warning is printed
 // locker: who the lock was held by
-static inline double acceptable_call_delay_for_locker(const char *locker) {
-	if (unlikely(0 == strcmp(locker, "cfgfs_init") ||
-	             0 == strcmp(locker, "reloader"))) {
-		// non-interactive
+static inline double acceptable_call_time_for_locker(const char *me) {
+	if (CHEAP_COMPARE(me, "attention") ||
+	    CHEAP_COMPARE(me, "cfgfs_init") ||
+	    CHEAP_COMPARE(me, "reloader")) {
 		return 16.67*2.0;
 	}
 	return 16.67/2.0;
@@ -50,28 +86,26 @@ static inline double acceptable_call_delay_for_locker(const char *locker) {
 
 static inline bool should_warn_for_contention(const char *me,
                                               const char *other) {
-#if !(defined(WITH_D) || defined(WITH_V))
-	if (likely(0 == strcmp(me, "cfgfs_read"))) {
-		// super critical
+	if (CHEAP_COMPARE(me, "cfgfs_read")) {
+
+		// non-interactive
+		if (CHEAP_COMPARE(other, "attention")) return false;
+
 		return true;
 	}
-	if (likely(other)) {
-		if (0 == strcmp(other, "cfgfs_write/sft_console_log")) {
-			// this needs to be fast
-			return true;
-		}
+
+	// supposed to be fast
+	if (CHEAP_COMPARE(other, "cfgfs_write/sft_console_log")) {
+		return true;
 	}
+
 	return false;
-#else
-	// D and V warn for all contention by default
-	(void)me;
-	(void)other;
-	return true;
-#endif
 }
 
-lua_State *lua_get_state(const char *who) {
-	if (unlikely(!lua_lock_state(who))) {
+#undef CHEAP_COMPARE
+
+lua_State *lua_get_state_real(const char *who) {
+	if (unlikely(!lua_lock_state_real(who))) {
 		return NULL;
 	}
 	return g_L;
@@ -84,7 +118,8 @@ D	assert(L == g_L);
 	lua_unlock_state();
 }
 
-bool lua_lock_state(const char *who) {
+bool lua_lock_state_real(const char *who) {
+D	check_locker_name(who);
 	double lock_start = mono_ms();
 	bool contested = false;
 	int err = pthread_mutex_trylock(&lua_mutex);
@@ -120,7 +155,7 @@ D	assert(stack_is_clean(g_L));
 	locked_by = who;
 	locked_at = lock_end;
 
-	if (lock_dur > acceptable_lock_delay_for_locker(locked_by)) {
+	if (lock_dur > acceptable_lock_delay_for_locker(locked_by, prev_locked_by)) {
 		eprintln("warning: %s: locking lua took %.2f ms while %s held the lock for %.2f ms",
 		    locked_by, lock_dur, prev_locked_by, prev_locked_dur);
 	}
@@ -144,7 +179,7 @@ D	assert(stack_is_clean(g_L));
 else	assert(stack_is_clean_quick(g_L));
 
 	double locked_for = mono_ms()-locked_at;
-	if (locked_for > acceptable_call_delay_for_locker(locked_by)) {
+	if (locked_for > acceptable_call_time_for_locker(locked_by)) {
 		eprintln("warning: %s: lua call took %.2f ms",
 		    locked_by, locked_for);
 	}
