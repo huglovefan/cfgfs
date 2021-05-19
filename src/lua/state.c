@@ -35,7 +35,7 @@ static double      locked_at = 0.0;
 #if defined(__clang__) || defined(__GNUC__)
  #define CHEAP_COMPARE(s1, s2) (s1 == s2)
 #else
- #define CHEAP_COMPARE(s1, s2) (0 == strcmp(s1, s2))
+ #define CHEAP_COMPARE(s1, s2) (s1 && s2 && 0 == strcmp(s1, s2))
 #endif
 
 // D only: check that "s" is a known locker name
