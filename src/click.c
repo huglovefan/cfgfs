@@ -7,11 +7,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/prctl.h>
 #include <unistd.h>
 
-#include <X11/extensions/XTest.h>
-#include <X11/keysym.h>
+#if defined(__linux__)
+ #include <sys/prctl.h>
+#endif
+
+#if defined(__linux__)
+ #include <X11/extensions/XTest.h>
+ #include <X11/keysym.h>
+#else
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+#endif
 
 #include <lua.h>
 #include <lauxlib.h>
@@ -27,8 +35,10 @@
 static double pending_click;
 
 static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
-static Display *display;
 static KeyCode keycode;
+#if defined(__linux__)
+ static Display *display;
+#endif
 
 static pthread_attr_t thread_attr;
 
@@ -45,11 +55,26 @@ void do_click(void) {
 	    (pending_click == 0.0 || (now-pending_click >= 50.0)) &&
 	    (0 == pthread_mutex_trylock(&click_lock))) {
 		pending_click = now;
+#if defined(__linux__)
 		if (display != NULL && keycode != 0) {
 			XTestFakeKeyEvent(display, keycode, True, CurrentTime);
 			XTestFakeKeyEvent(display, keycode, False, CurrentTime);
 			XFlush(display);
 		}
+#else
+		if (keycode != 0) {
+			INPUT inputs[2] = {0};
+			inputs[0].type = INPUT_KEYBOARD;
+			inputs[0].ki.wVk = keycode;
+			inputs[1].type = INPUT_KEYBOARD;
+			inputs[1].ki.wVk = keycode;
+			inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+			UINT sent = SendInput(2, inputs, sizeof(INPUT));
+			if (sent != 2) {
+				eprintln("SendInput: 0x%x", HRESULT_FROM_WIN32(GetLastError()));
+			}
+		}
+#endif
 		pthread_mutex_unlock(&click_lock);
 	}
 }
@@ -60,12 +85,14 @@ __attribute__((minsize))
 void click_init(void) {
 	pthread_mutex_lock(&click_lock);
 
+#if defined(__linux__)
 	display = XOpenDisplay(NULL);
 	if (display == NULL) {
 		eprintln("click: failed to open display!");
 		goto out;
 	}
 	XSetErrorHandler(cfgfs_handle_xerror);
+#endif
 
 	click_set_key("f11");
 out:
@@ -75,7 +102,9 @@ out:
 __attribute__((minsize))
 void click_deinit(void) {
 	pthread_mutex_lock(&click_lock);
+#if defined(__linux__)
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
+#endif
 	keycode = 0;
 	pthread_mutex_unlock(&click_lock);
 }
@@ -91,12 +120,16 @@ static bool click_set_key(const char *name) {
 		eprintln("click_set_key: key '%s' not supported", name);
 		return false;
 	}
+#if defined(__linux__)
 	KeyCode kc = XKeysymToKeycode(display, ks);
 	if (kc == 0) {
 		eprintln("click_set_key: couldn't get key code for '%s'!", name);
 		return false;
 	}
 	keycode = kc;
+#else
+	keycode = ks;
+#endif
 V	eprintln("click_set_key: key set to %s (ks=%ld, kc=%d)", name, ks, kc);
 	return true;
 }

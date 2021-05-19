@@ -6,8 +6,11 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/prctl.h>
 #include <unistd.h>
+
+#if defined(__linux__)
+ #include <sys/prctl.h>
+#endif
 
 #pragma GCC diagnostic push
  #pragma GCC diagnostic ignored "-Wstrict-prototypes"

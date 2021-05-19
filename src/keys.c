@@ -2,47 +2,58 @@
 
 #include <string.h>
 
-#define XK_LATIN1
-#define XK_MISCELLANY
-#include <X11/keysymdef.h>
+#if defined(__linux__)
+ #define XK_LATIN1
+ #define XK_MISCELLANY
+ #include <X11/keysymdef.h>
+#else
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+#endif
+
+#if defined(__linux__)
+ #define WIN_LIN(win, lin) lin
+#else
+ #define WIN_LIN(win, lin) win
+#endif
 
 const struct key_list_entry keys[] = {
-	{ "0", XK_0 },
-	{ "1", XK_1 },
-	{ "2", XK_2 },
-	{ "3", XK_3 },
-	{ "4", XK_4 },
-	{ "5", XK_5 },
-	{ "6", XK_6 },
-	{ "7", XK_7 },
-	{ "8", XK_8 },
-	{ "9", XK_9 },
-	{ "a", XK_a },
-	{ "b", XK_b },
-	{ "c", XK_c },
-	{ "d", XK_d },
-	{ "e", XK_e },
-	{ "f", XK_f },
-	{ "g", XK_g },
-	{ "h", XK_h },
-	{ "i", XK_i },
-	{ "j", XK_j },
-	{ "k", XK_k },
-	{ "l", XK_l },
-	{ "m", XK_m },
-	{ "n", XK_n },
-	{ "o", XK_o },
-	{ "p", XK_p },
-	{ "q", XK_q },
-	{ "r", XK_r },
-	{ "s", XK_s },
-	{ "t", XK_t },
-	{ "u", XK_u },
-	{ "v", XK_v },
-	{ "w", XK_w },
-	{ "x", XK_x },
-	{ "y", XK_y },
-	{ "z", XK_z },
+	{ "0", WIN_LIN(0, XK_0) },
+	{ "1", WIN_LIN(0, XK_1) },
+	{ "2", WIN_LIN(0, XK_2) },
+	{ "3", WIN_LIN(0, XK_3) },
+	{ "4", WIN_LIN(0, XK_4) },
+	{ "5", WIN_LIN(0, XK_5) },
+	{ "6", WIN_LIN(0, XK_6) },
+	{ "7", WIN_LIN(0, XK_7) },
+	{ "8", WIN_LIN(0, XK_8) },
+	{ "9", WIN_LIN(0, XK_9) },
+	{ "a", WIN_LIN(0, XK_a) },
+	{ "b", WIN_LIN(0, XK_b) },
+	{ "c", WIN_LIN(0, XK_c) },
+	{ "d", WIN_LIN(0, XK_d) },
+	{ "e", WIN_LIN(0, XK_e) },
+	{ "f", WIN_LIN(0, XK_f) },
+	{ "g", WIN_LIN(0, XK_g) },
+	{ "h", WIN_LIN(0, XK_h) },
+	{ "i", WIN_LIN(0, XK_i) },
+	{ "j", WIN_LIN(0, XK_j) },
+	{ "k", WIN_LIN(0, XK_k) },
+	{ "l", WIN_LIN(0, XK_l) },
+	{ "m", WIN_LIN(0, XK_m) },
+	{ "n", WIN_LIN(0, XK_n) },
+	{ "o", WIN_LIN(0, XK_o) },
+	{ "p", WIN_LIN(0, XK_p) },
+	{ "q", WIN_LIN(0, XK_q) },
+	{ "r", WIN_LIN(0, XK_r) },
+	{ "s", WIN_LIN(0, XK_s) },
+	{ "t", WIN_LIN(0, XK_t) },
+	{ "u", WIN_LIN(0, XK_u) },
+	{ "v", WIN_LIN(0, XK_v) },
+	{ "w", WIN_LIN(0, XK_w) },
+	{ "x", WIN_LIN(0, XK_x) },
+	{ "y", WIN_LIN(0, XK_y) },
+	{ "z", WIN_LIN(0, XK_z) },
 	{ "kp_ins", 0 },
 	{ "kp_end", 0 },
 	{ "kp_downarrow", 0 },
@@ -98,18 +109,18 @@ const struct key_list_entry keys[] = {
 	{ "leftarrow", 0 },
 	{ "downarrow", 0 },
 	{ "rightarrow", 0 },
-	{ "f1", XK_F1 },
-	{ "f2", XK_F2 },
-	{ "f3", XK_F3 },
-	{ "f4", XK_F4 },
-	{ "f5", XK_F5 },
-	{ "f6", XK_F6 },
-	{ "f7", XK_F7 },
-	{ "f8", XK_F8 },
-	{ "f9", XK_F9 },
-	{ "f10", XK_F10 },
-	{ "f11", XK_F11 },
-	{ "f12", XK_F12 },
+	{ "f1", WIN_LIN(VK_F1, XK_F1) },
+	{ "f2", WIN_LIN(VK_F2, XK_F2) },
+	{ "f3", WIN_LIN(VK_F3, XK_F3) },
+	{ "f4", WIN_LIN(VK_F4, XK_F4) },
+	{ "f5", WIN_LIN(VK_F5, XK_F5) },
+	{ "f6", WIN_LIN(VK_F6, XK_F6) },
+	{ "f7", WIN_LIN(VK_F7, XK_F7) },
+	{ "f8", WIN_LIN(VK_F8, XK_F8) },
+	{ "f9", WIN_LIN(VK_F9, XK_F9) },
+	{ "f10", WIN_LIN(VK_F10, XK_F10) },
+	{ "f11", WIN_LIN(VK_F11, XK_F11) },
+	{ "f12", WIN_LIN(VK_F12, XK_F12) },
 
 	{ "capslocktoggle", 0 },
 	{ "numlocktoggle", 0 },

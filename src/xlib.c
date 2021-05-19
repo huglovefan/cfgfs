@@ -2,8 +2,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/prctl.h>
 #include <string.h>
+
+#if defined(__linux__)
+ #include <sys/prctl.h>
+#endif
 
 #include "cli_output.h"
 #include "error.h"

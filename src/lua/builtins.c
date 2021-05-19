@@ -7,7 +7,10 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/prctl.h>
+
+#if defined(__linux__)
+ #include <sys/prctl.h>
+#endif
 
 #include <lualib.h>
 #include <lauxlib.h>
@@ -116,7 +119,11 @@ static int l_string_frobnicate(lua_State *L) {
 	const char *s = luaL_checklstring(L, 1, &len);
 	char *newstr = malloc(len+1);
 	memcpy(newstr, s, len+1);
+#if defined(__linux__)
 	memfrob(newstr, len);
+#else
+	for (int i = 0; i < len; i++) newstr[i] = newstr[i]^42;
+#endif
 	lua_pushstring(L, newstr);
 	free(newstr);
 	return 1;

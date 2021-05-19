@@ -9,8 +9,11 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/prctl.h>
 #include <unistd.h>
+
+#if defined(__linux__)
+ #include <sys/prctl.h>
+#endif
 
 #include <lua.h>
 #include <lualib.h>

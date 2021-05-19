@@ -17,7 +17,9 @@
  #endif
  #pragma GCC diagnostic ignored "-Wpadded"
   #include <fuse.h>
-  #include <fuse_lowlevel.h>
+  #if !defined(CYGFUSE)
+   #include <fuse_lowlevel.h>
+  #endif
 #pragma GCC diagnostic pop
 
 #include <lauxlib.h>
@@ -266,11 +268,15 @@ V	eprintln("cfgfs_getattr: %s", path);
 	int rv = lookup_path(path, NULL, false);
 
 	if (rv == 0xf) {
-		stbuf->st_mode = 0444|S_IFREG;
+		stbuf->st_mode = 0666|S_IFREG;
 		stbuf->st_size = reported_cfg_size;
+#if defined(CYGFUSE)
+		// required for writing to console.log
+		stbuf->st_uid = geteuid();
+#endif
 		return 0;
 	} else if (rv == 0xd) {
-		stbuf->st_mode = 0555|S_IFDIR;
+		stbuf->st_mode = 0777|S_IFDIR;
 		return 0;
 	} else {
 D		assert(rv < 0);
@@ -299,6 +305,14 @@ D		assert(rv < 0);
 }
 
 // ~
+
+#if !defined(CYGFUSE)
+ #define MANUAL_READ_OPEN_CNT 1
+ #define UNMASK_CNT_TOTAL 3
+#else
+ #define MANUAL_READ_OPEN_CNT 2
+ #define UNMASK_CNT_TOTAL 6
+#endif
 
 __attribute__((hot))
 static int cfgfs_read(const char *restrict path,
@@ -330,7 +344,7 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 	if (unlikely(FH_IS_ORDINARY(fi->fh))) {
 		// catch the game manually reading config.cfg at startup so we don't
 		//  lose any buffer contents to that
-		if (unlikely(last_config_open_cnt <= 1)) {
+		if (unlikely(last_config_open_cnt <= MANUAL_READ_OPEN_CNT)) {
 			if (unlikely(0 != strcmp(path, "/config.cfg"))) {
 				eprintln("cfgfs_read: warning: ignoring manual read of %s",
 				    path+1);
@@ -360,7 +374,7 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 			}
 			memcpy(last_config_name, name, namelen);
 			last_config_name_len = namelen;
-			unmask_cnt = 3;
+			unmask_cnt = UNMASK_CNT_TOTAL;
 			return 0;
 		}
 	}
@@ -503,6 +517,8 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 
 // -----------------------------------------------------------------------------
 
+#if !defined(CYGFUSE)
+
 __attribute__((minsize))
 static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) {
 	(void)level;
@@ -510,6 +526,8 @@ static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) 
 	vfprintf(stderr, fmt, args);
 	cli_unlock_output();
 }
+
+#endif
 
 // -----------------------------------------------------------------------------
 
@@ -682,7 +700,9 @@ int main(int argc, char **argv) {
 	mallopt(M_MMAP_MAX, 0);
 	mallopt(M_TOP_PAD, 10*1024*1000);
 	mallopt(M_TRIM_THRESHOLD, 20*1024*1000);
+#if defined(__linux__)
 	mlockall(MCL_CURRENT|MCL_FUTURE);
+#endif
 
 	cfg_init_badchars();
 	click_init_threadattr();
@@ -716,9 +736,12 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 
 	// ~ init fuse ~
 
+#if !defined(CYGFUSE)
 	fuse_set_log_func(cfgfs_log);
+#endif
 
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+#if !defined(CYGFUSE)
 	struct fuse_cmdline_opts opts;
 	if (0 != fuse_parse_cmdline(&args, &opts)) {
 		rv = rv_invalid_argument;
@@ -744,8 +767,19 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 		rv = rv_missing_mountpoint;
 		goto out_no_fuse;
 	}
-
 	opts.foreground = true;
+#else
+	if (argc != 2) {
+		eprintln("usage: cfgfs <mountpoint>");
+		rv = rv_invalid_argument;
+		goto out_no_fuse;
+	}
+	struct cfgfs_opts {
+		char *mountpoint;
+	} opts = {
+		.mountpoint = strdup(argv[1]),
+	};
+#endif
 
 	struct fuse *fuse = fuse_new(&args, &cfgfs_oper, sizeof(cfgfs_oper), NULL);
 	if (fuse == NULL) {
@@ -776,10 +810,14 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 
 	// ~ boot up fuse ~
 
+#if !defined(CYGFUSE)
 	int loop_rv = fuse_loop_mt(fuse, &(struct fuse_loop_config){
 		.clone_fd = false,
 		.max_idle_threads = 5,
 	});
+#else
+	int loop_rv = fuse_loop(fuse);
+#endif
 	rv = rv_ok;
 	if (loop_rv != 0 && !(loop_rv == SIGINT && main_quit_called)) {
 		rv = rv_fs_error;
@@ -805,11 +843,13 @@ out_no_nothing:
 	 cli_scrollback_flush_and_free();
 	cli_unlock_output_norestore();
 	one_true_exit();
+#if defined(__linux__)
 	if (0 == unlink("/tmp/.cfgfs_reexec")) {
 		setenv("CFGFS_RESTARTED", "1", 1);
 		execvp(argv[0], argv);
 		perror("cfgfs: exec");
 		rv = rv_cfgfs_reexec_failed;
 	}
+#endif
 	return (int)rv;
 }

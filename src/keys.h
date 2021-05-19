@@ -1,6 +1,10 @@
 #pragma once
 
-#include <X11/X.h> // KeySym
+#if defined(__linux__)
+ #include <X11/X.h> // KeySym
+#else
+ typedef unsigned int KeySym;
+#endif
 
 struct key_list_entry {
 	const char *const name;

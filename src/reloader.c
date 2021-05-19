@@ -7,8 +7,11 @@
 #include <string.h>
 #include <sys/inotify.h>
 #include <sys/poll.h>
-#include <sys/prctl.h>
 #include <unistd.h>
+
+#if defined(__linux__)
+ #include <sys/prctl.h>
+#endif
 
 #include <lauxlib.h>
 

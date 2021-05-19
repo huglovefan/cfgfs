@@ -1,11 +1,14 @@
 #include "error.h"
 
 #include <dlfcn.h>
-#include <execinfo.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+
+#if defined(__linux__)
+ #include <execinfo.h>
+#endif
 
 #include "cli_output.h"
 
@@ -74,10 +77,12 @@ void print_c_backtrace_unlocked(void) {
 		}
 	}
 
+#if defined(__linux__)
 #define bt_depth 64
 	void *buffer[bt_depth];
 	int nptrs = backtrace(buffer, bt_depth);
 	if (1 != nptrs) fprintf(stderr, "backtrace() returned %d addresses\n", nptrs);
 	else            fprintf(stderr, "backtrace() returned 1 address\n");
 	backtrace_symbols_fd(buffer, nptrs, STDERR_FILENO);
+#endif
 }
