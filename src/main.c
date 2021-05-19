@@ -769,16 +769,15 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 	}
 	opts.foreground = true;
 #else
+	struct cfgfs_opts {
+		char *mountpoint;
+	} opts = {0};
 	if (argc != 2) {
 		eprintln("usage: cfgfs <mountpoint>");
 		rv = rv_invalid_argument;
 		goto out_no_fuse;
 	}
-	struct cfgfs_opts {
-		char *mountpoint;
-	} opts = {
-		.mountpoint = strdup(argv[1]),
-	};
+	opts.mountpoint = strdup(argv[1]);
 #endif
 
 	struct fuse *fuse = fuse_new(&args, &cfgfs_oper, sizeof(cfgfs_oper), NULL);
@@ -804,9 +803,13 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 		rv = rv_cfgfs_lua_failed;
 		goto out_fuse_newed_and_mounted_and_signals_handled;
 	}
+#if defined(CFGFS_HAVE_ATTENTION)
 	attention_init();
+#endif
 	cli_input_init();
+#if defined(CFGFS_HAVE_RELOADER)
 	reloader_init();
+#endif
 
 	// ~ boot up fuse ~
 
@@ -832,10 +835,14 @@ out_fuse_newed:
 	fuse_destroy(fuse);
 out_no_fuse:
 	lua_deinit();
+#if defined(CFGFS_HAVE_ATTENTION)
 	attention_deinit();
+#endif
 	cli_input_deinit();
 	click_deinit();
+#if defined(CFGFS_HAVE_RELOADER)
 	reloader_deinit();
+#endif
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
 out_no_nothing:

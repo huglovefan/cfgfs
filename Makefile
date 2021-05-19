@@ -13,6 +13,16 @@ CFLAGS ?= -O2 -g
 
 #STATIC_LIBFUSE := 1
 
+ifneq (,$(findstring Cygwin,$(shell uname -o)))
+ IS_CYGWIN := 1
+ LUA_CFLAGS ?= -Ilua-5.4.3/src
+ LUA_LIBS ?= lua-5.4.3/src/liblua.a
+else
+ CPPFLAGS += -DCFGFS_HAVE_ATTENTION
+ CPPFLAGS += -DCFGFS_HAVE_RCON
+ CPPFLAGS += -DCFGFS_HAVE_RELOADER
+endif
+
 # ------------------------------------------------------------------------------
 
 EXE := $(shell basename -- "$$PWD")
@@ -41,6 +51,15 @@ COLD_OBJS = \
        src/lua/init.o \
        src/xlib.o \
        src/error.o \
+
+ifneq (,$(IS_CYGWIN))
+ COLD_OBJS := $(filter-out src/lua/rcon.o,$(COLD_OBJS))
+ COLD_OBJS := $(filter-out src/rcon/session.o,$(COLD_OBJS))
+ COLD_OBJS := $(filter-out src/rcon/srcrcon.o,$(COLD_OBJS))
+ COLD_OBJS := $(filter-out src/attention.o,$(COLD_OBJS))
+ COLD_OBJS := $(filter-out src/reloader.o,$(COLD_OBJS))
+ COLD_OBJS := $(filter-out src/xlib.o,$(COLD_OBJS))
+endif
 
 OBJS = $(HOT_OBJS) $(COLD_OBJS)
 DEPS = $(OBJS:.o=.d)
@@ -213,8 +232,10 @@ CPPFLAGS += -DEXE='"$(EXE)"'
 CPPFLAGS += -I/usr/include/readline
 LDLIBS += -lreadline
 
-# xlib
-LDLIBS += -lX11 -lXtst
+# xlib (linux only)
+ifeq (,$(IS_CYGWIN))
+ LDLIBS += -lX11 -lXtst
+endif
 
 # lua
 LUA_PKG    ?= lua5.4
@@ -224,15 +245,18 @@ CFLAGS += $(LUA_CFLAGS)
 LDLIBS += $(LUA_LIBS)
 
 # fuse
-CPPFLAGS += -I/usr/include/fuse3 -DFUSE_USE_VERSION=35
+CPPFLAGS += -DFUSE_USE_VERSION=35
+CFLAGS += $(shell pkg-config --cflags fuse3)
 ifeq ($(STATIC_LIBFUSE),)
- LDLIBS += -lfuse3
+ LDLIBS += $(shell pkg-config --libs fuse3)
 else
  LDLIBS += -l:libfuse3.a
 endif
 
 # src/rcon/srcrcon.c (arc4random_uniform)
-LDLIBS += -lbsd
+ifeq (,$(IS_CYGWIN))
+ LDLIBS += -lbsd
+endif
 
 # ------------------------------------------------------------------------------
 

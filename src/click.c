@@ -30,7 +30,9 @@
 #include "keys.h"
 #include "lua.h"
 #include "macros.h"
-#include "xlib.h"
+#if defined(__linux__)
+ #include "xlib.h"
+#endif
 
 static double pending_click;
 
@@ -51,7 +53,10 @@ void click_init_threadattr(void) {
 
 void do_click(void) {
 	double now = mono_ms();
-	if (game_window_is_active &&
+	if (
+#if defined(CFGFS_HAVE_ATTENTION)
+	    game_window_is_active &&
+#endif
 	    (pending_click == 0.0 || (now-pending_click >= 50.0)) &&
 	    (0 == pthread_mutex_trylock(&click_lock))) {
 		pending_click = now;
@@ -92,10 +97,12 @@ void click_init(void) {
 		goto out;
 	}
 	XSetErrorHandler(cfgfs_handle_xerror);
-#endif
-
 	click_set_key("f11");
 out:
+#else
+	click_set_key("f11");
+#endif
+
 	pthread_mutex_unlock(&click_lock);
 }
 
@@ -114,7 +121,9 @@ void click_deinit(void) {
 // NOTE: assumes click_lock is held
 __attribute__((minsize))
 static bool click_set_key(const char *name) {
+#if defined(__linux__)
 	if (!display) return false;
+#endif
 	KeySym ks = keys_name2keysym(name);
 	if (ks == 0) {
 		eprintln("click_set_key: key '%s' not supported", name);
@@ -127,10 +136,11 @@ static bool click_set_key(const char *name) {
 		return false;
 	}
 	keycode = kc;
+V	eprintln("click_set_key: key set to %s (ks=%ld, kc=%d)", name, ks, kc);
 #else
 	keycode = ks;
+V	eprintln("click_set_key: key set to %s (ks=%d)", name, ks);
 #endif
-V	eprintln("click_set_key: key set to %s (ks=%ld, kc=%d)", name, ks, kc);
 	return true;
 }
 

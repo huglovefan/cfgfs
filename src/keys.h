@@ -3,6 +3,7 @@
 #if defined(__linux__)
  #include <X11/X.h> // KeySym
 #else
+ typedef unsigned int KeyCode;
  typedef unsigned int KeySym;
 #endif
 

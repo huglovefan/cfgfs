@@ -122,7 +122,7 @@ static int l_string_frobnicate(lua_State *L) {
 #if defined(__linux__)
 	memfrob(newstr, len);
 #else
-	for (int i = 0; i < len; i++) newstr[i] = newstr[i]^42;
+	for (unsigned int i = 0; i < len; i++) newstr[i] = newstr[i]^42;
 #endif
 	lua_pushstring(L, newstr);
 	free(newstr);
@@ -234,8 +234,10 @@ static const luaL_Reg fns_g[] = {
 	{"_get_locker", l_get_locker},
 	// main.c
 	{"_notify_list_set", (lua_CFunction)l_notify_list_set},
+#if defined(CFGFS_HAVE_RELOADER)
 	// reloader.c
 	{"_reloader_add_watch", (lua_CFunction)l_reloader_add_watch},
+#endif
 	{NULL, NULL},
 };
 static const luaL_Reg fns_s[] = {
@@ -260,7 +262,9 @@ void lua_define_builtins(void *L) {
 	 luaL_setfuncs(L, l_cfg_fns, 0);
 	 luaL_setfuncs(L, l_cli_input_fns, 0);
 	 luaL_setfuncs(L, l_click_fns, 0);
+#if defined(CFGFS_HAVE_RCON)
 	 luaL_setfuncs(L, l_rcon_fns, 0);
+#endif
 	lua_pop(L, 1);
 
 	 lua_getglobal(L, "string");
