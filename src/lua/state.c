@@ -62,7 +62,7 @@ static inline double acceptable_lock_delay_for_locker(const char *me,
                                                       const char *other) {
 	// non-interactive
 	if (CHEAP_COMPARE(other, "attention")) {
-		return 8.0;
+		return 16.0;
 	}
 
 	// supposed to be fast
