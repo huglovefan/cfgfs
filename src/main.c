@@ -39,9 +39,8 @@
 
 // -----------------------------------------------------------------------------
 
+#if !defined(CYGFUSE)
 static pthread_t g_main_thread;
-
-// true if main_quit() has been called (checked during exit)
 static bool main_quit_called;
 
 __attribute__((minsize))
@@ -51,11 +50,15 @@ void main_quit(void) {
 		main_quit_called = true;
 		pthread_kill(main_thread, SIGINT);
 	}
-#if !defined(__linux__)
-	// fixme: cygwin doesn't quit properly here
-	exit(0);
-#endif
 }
+#else
+static struct fuse *g_fuse;
+
+__attribute__((minsize))
+void main_quit(void) {
+	if (g_fuse) fuse_exit(g_fuse);
+}
+#endif
 
 // -----------------------------------------------------------------------------
 
@@ -798,7 +801,12 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 		rv = rv_signal_failed;
 		goto out_fuse_newed_and_mounted;
 	}
+
+#if !defined(CYGFUSE)
 	g_main_thread = pthread_self();
+#else
+	g_fuse = fuse;
+#endif
 
 	// ~ init other things ~
 
@@ -822,16 +830,25 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 		.clone_fd = false,
 		.max_idle_threads = 5,
 	});
-#else
-	int loop_rv = fuse_loop(fuse);
-#endif
 	rv = rv_ok;
 	if (loop_rv != 0 && !(loop_rv == SIGINT && main_quit_called)) {
 		rv = rv_fs_error;
 	}
+#else
+	extern int fuse3_loop_mt_31(struct fuse *, struct fuse_loop_config *);
+	int loop_rv = fuse3_loop_mt_31(fuse, &(struct fuse_loop_config){
+		.clone_fd = false,
+		.max_idle_threads = 5,
+	});
+	rv = loop_rv;
+#endif
 
 out_fuse_newed_and_mounted_and_signals_handled:
+#if !defined(CYGFUSE)
 	g_main_thread = 0;
+#else
+	g_fuse = NULL;
+#endif
 	fuse_remove_signal_handlers(se);
 out_fuse_newed_and_mounted:
 	fuse_unmount(fuse);
