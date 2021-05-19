@@ -2287,7 +2287,7 @@ end
 
 -- booby trap require() so that reloader can watch source files loaded using it
 
-do
+if nil ~= rawget(_G, '_reloader_add_watch') then
 	-- modname string -> state bool
 	--   true = successfully watched
 	--   false = tried to add watch but failed

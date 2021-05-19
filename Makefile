@@ -386,7 +386,13 @@ analyze:
 
 MNTLNK := mnt
 
-TF2MNT := ~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg
+ifeq (,$(IS_CYGWIN))
+ STEAMDIR := ~/.local/share/Steam
+else
+ STEAMDIR := /cygdrive/c/Program\ Files\ \(x86\)/Steam
+endif
+
+TF2MNT := $(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg
 
 start: $(EXE)
 	@set -e; \
@@ -398,10 +404,22 @@ start: $(EXE)
 	export CFGFS_DIR=$$PWD; \
 	export CFGFS_MOUNTPOINT=$$PWD/mnt; \
 	export CFGFS_NO_SCROLLBACK=1; \
-	export GAMEDIR=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2/tf; \
-	export GAMEROOT=~/.local/share/Steam/steamapps/common/Team\ Fortress\ 2; \
+	export GAMEDIR=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf; \
+	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \
 	export NO_LISTUPDATE=1; \
 	export SteamAppId=440; \
 	[ ! -e env.sh ] || . ./env.sh; \
 	exec "$$CFGFS_DIR"/$(EXE) $(CFGFS_FLAGS) "$${GAMEDIR}/custom/!cfgfs/cfg"
+
+startcyg:
+	@set -e; \
+	export CFGFS_DIR=$$PWD; \
+	export CFGFS_MOUNTPOINT=$(TF2MNT); \
+	export CFGFS_NO_SCROLLBACK=1; \
+	export GAMEDIR=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf; \
+	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
+	export GAMENAME=Team\ Fortress\ 2; \
+	export SteamAppId=440; \
+	[ ! -e env.sh ] || . ./env.sh; \
+	exec "$$CFGFS_DIR"/$(EXE).exe $(TF2MNT)

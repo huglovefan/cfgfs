@@ -51,6 +51,10 @@ void main_quit(void) {
 		main_quit_called = true;
 		pthread_kill(main_thread, SIGINT);
 	}
+#if !defined(__linux__)
+	// fixme: cygwin doesn't quit properly here
+	exit(0);
+#endif
 }
 
 // -----------------------------------------------------------------------------
