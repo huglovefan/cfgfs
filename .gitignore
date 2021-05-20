@@ -9,7 +9,7 @@
 /.fndata.old
 /cfgfs
 /mnt
-*.d
+/src/**/*.d
 *.o
 
 # created by cfgfs

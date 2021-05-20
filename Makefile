@@ -15,6 +15,7 @@ CFLAGS ?= -O2 -g
 
 ifneq (,$(findstring Cygwin,$(shell uname -o)))
  IS_CYGWIN := 1
+ EXEEXT := .exe
  LUA_CFLAGS ?= -Ilua-5.4.3/src
  LUA_LIBS ?= lua-5.4.3/src/liblua.a
 else
@@ -263,12 +264,26 @@ endif
 
 ## make targets
 
+all: $(EXE) cfgfs_run$(EXEEXT)
+
 $(EXE): $(OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
 
 -include $(DEPS)
 .c.o:
 	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
+
+# ~
+
+DMD ?= dmd
+DMDFLAGS ?= -g
+
+ifneq (,$(IS_CYGWIN))
+ CFGFS_RUN_DEF := cfgfs_run.def
+endif
+
+cfgfs_run$(EXEEXT): cfgfs_run.d $(CFGFS_RUN_DEF)
+	$(DMD) $(DMDFLAGS) $^ -of=$@
 
 # ~
 
