@@ -40,20 +40,7 @@ end
 - `libbsd`
 - xterm
 - standard development tools (`clang` or `gcc`, `git`, `make`)
-
-#### Gentoo
-
-```sh
-sudo emerge -an lua:5.4 fuse:3 readline libX11 libXtst libbsd xterm git
-```
-
-#### Ubuntu
-
-Requires at least Ubuntu 20.10 or newer for the `liblua5.4` package.
-
-```sh
-sudo apt install build-essential liblua5.4-dev libfuse3-dev libreadline-dev libx11-dev libxtst-dev libbsd-dev xterm
-```
+- D language compiler (`dmd` only)
 
 #### Windows
 
