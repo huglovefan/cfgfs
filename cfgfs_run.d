@@ -101,6 +101,8 @@ void runMain(string[] args_) {
 			linkConsoleLog(gameDir, cfgfsMountPoint);
 		}
 
+		auto startTime = to!string(Clock.currTime().toUnixTime);
+
 		while (!wantExit) {
 			auto p = spawnProcess(
 				getTerminalCommand("cfgfs (%s)".format(gameTitle), [to!string(cfgfsDir.chainPath("cfgfs").array), cfgfsMountPoint]),
@@ -108,7 +110,7 @@ void runMain(string[] args_) {
 					"CFGFS_DIR": cfgfsDir,
 					"CFGFS_MOUNTPOINT": cfgfsMountPoint,
 					"CFGFS_RUN_PID": to!string(getpid()),
-					"CFGFS_STARTTIME": to!string(Clock.currTime().toUnixTime),
+					"CFGFS_STARTTIME": startTime,
 					"GAMEDIR": gameDir,
 					"GAMENAME": gameTitle,
 					"GAMEROOT": gameRoot,
