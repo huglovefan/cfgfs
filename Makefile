@@ -125,6 +125,7 @@ CFLAGS += \
           -Wmissing-prototypes \
           -Wstrict-overflow=5 \
           -Werror=implicit-function-declaration \
+          -Werror=incompatible-pointer-types \
           -Wno-address \
           -Wno-bool-operation \
           -Wno-misleading-indentation \
