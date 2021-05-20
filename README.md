@@ -58,13 +58,18 @@ sudo apt install build-essential liblua5.4-dev libfuse3-dev libreadline-dev libx
 #### Windows
 
 `cfgfs` currently doesn't support Windows.
-Just about everything in this repository is done differently on Windows so most of the code would have to be rewritten for it.
+~~Just about everything in this repository is done differently on Windows so most of the code would have to be rewritten for it.~~
 
-Most importantly, the virtual filesystem library [`libfuse`] doesn't support Windows.
-There exist Windows-native alternatives like [WinFsp] that could work for making a cfgfs clone.
+~~Most importantly, the virtual filesystem library [`libfuse`] doesn't support Windows.
+There exist Windows-native alternatives like [WinFsp] that could work for making a cfgfs clone.~~
 
 [`libfuse`]: https://github.com/libfuse/libfuse
 [WinFsp]: https://github.com/billziss-gh/winfsp
+
+There's a half-done Windows port on the [`windows`] branch.
+It might be usable at some point in the future.
+
+[`windows`]: https://github.com/huglovefan/cfgfs/tree/windows
 
 ## Installation
 
