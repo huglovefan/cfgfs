@@ -1936,8 +1936,18 @@ end
 
 -- non-blocking child processes
 
+-- note: avoid firing the event with "nil" if nothing was written (cygfuse fix)
+local last_data = nil
 _message = function (name, data)
-	return fire_event(name, data)
+	if data then
+		last_data = name
+		return fire_event(name, data)
+	else
+		if last_data then
+			last_data = nil
+			return fire_event(name, data)
+		end
+	end
 end
 
 local get_channel = function (purpose)

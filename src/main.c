@@ -293,6 +293,21 @@ D		assert(rv < 0);
 
 // ~
 
+#if defined(CYGFUSE)
+
+// needed for "echo > file" to work
+
+static int cfgfs_truncate(const char *path, off_t len, struct fuse_file_info *fi) {
+	(void)len;
+	(void)fi;
+VV	eprintln("cfgfs_truncate %s", path);
+	return 0;
+}
+
+#endif
+
+// ~
+
 __attribute__((hot))
 static int cfgfs_open(const char *restrict path,
                       struct fuse_file_info *restrict fi) {
@@ -676,6 +691,9 @@ VV		eprintln("fopen %s: %s", path, strerror(errno));
 
 static const struct fuse_operations cfgfs_oper = {
 	.getattr = cfgfs_getattr,
+#if defined(CYGFUSE)
+	.truncate = cfgfs_truncate,
+#endif
 	.open = cfgfs_open,
 	.read = cfgfs_read,
 	.write = cfgfs_write,
