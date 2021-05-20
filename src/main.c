@@ -447,7 +447,12 @@ VV	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
 	switch (FH_GET_TYPE(fi->fh)) {
 	case sft_console_log: {
+#if defined(__linux__)
 		bool complete = (size >= 2 && data[size-1] == '\n');
+#else
+		bool complete = (size >= 2 && data[size-1] == '\n') &&
+		                !(size == 2 && data[size-2] == '\r');
+#endif
 		lua_State *L = lua_get_state("cfgfs_write/sft_console_log");
 		if (unlikely(L == NULL)) return -errno;
 		 lua_pushvalue(L, GAME_CONSOLE_OUTPUT_IDX);

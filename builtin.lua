@@ -1798,14 +1798,14 @@ _game_console_output = function (line, complete, was_jumbled)
 		--  different from how it would be printed in the in-game console
 		return gco_unjumble(nil)
 	elseif complete == false then
-		if line ~= '\n' then
-			local contents = line:before('\x7f ')
+		if not (line == '\n' or line == '\r\n') then
+			local contents, rest = line:match('^(.*)\x7f( \r?)$')
 			if contents then
 				-- cmd.echo() from lua
 				-- (\x7f is added in cmd.c to mark echos so they
 				--  can be identified here)
 
-				our_logfile:write(contents, ' \n')
+				our_logfile:write(contents, rest, '\n')
 				-- preserve the trailing spac↑e from echo
 
 				return _println(contents)
