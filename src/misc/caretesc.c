@@ -2,14 +2,14 @@
 
 #include <stddef.h>
 
-#define needsesc(c) ((c) <= 31 || (c) == 127)
+#define needsesc(c) ((unsigned char)(c) <= 31 || (unsigned char)(c) == 127)
 
-static char getesc(char c) {
+static unsigned char getesc(unsigned char c) {
 	if (c == 0) return '@';
 	if (c <= 26) return c-1+'A';
-	if (c <= 31) return "[\\]^_"[c-27];
+	if (c <= 31) return (unsigned char)"[\\]^_"[c-27];
 	if (c == 127) return '?';
-	return -1;
+	return c;
 }
 
 size_t caretesc(const char *restrict s, char *buf) {
@@ -19,7 +19,7 @@ size_t caretesc(const char *restrict s, char *buf) {
 			*buf++ = *s++;
 		} else {
 			*buf++ = '^';
-			*buf++ = getesc(*s++);
+			*buf++ = (char)getesc((unsigned char)*s++);
 		}
 	}
 	*buf = '\0';
@@ -37,4 +37,8 @@ static void _init_test_caretesc(void) {
 	assert_compiler_knows(getesc('\x1e') == '^');
 	assert_compiler_knows(getesc('\x1f') == '_');
 	assert_compiler_knows(getesc('\x7f') == '?');
+
+	assert_compiler_knows(!needsesc('\xe3') && getesc((unsigned char)'\xe3') == (unsigned char)'\xe3');
+	assert_compiler_knows(!needsesc('\x81') && getesc((unsigned char)'\x81') == (unsigned char)'\x81');
+	assert_compiler_knows(!needsesc('\x82') && getesc((unsigned char)'\x82') == (unsigned char)'\x82');
 }
