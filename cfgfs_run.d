@@ -279,6 +279,7 @@ void runMain(string[] args) {
 					"GAMEDIR": gameDir,
 					"GAMENAME": gameTitle,
 					"GAMEROOT": gameRoot,
+					"MODNAME": gameDir.baseName,
 					"LC_ALL": null,
 					"LD_LIBRARY_PATH": null,
 					"LD_PRELOAD": null,
