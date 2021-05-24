@@ -276,7 +276,7 @@ $(EXE): $(OBJS)
 # ~
 
 DMD ?= dmd
-DFLAGS ?= -g
+DFLAGS ?= -g -wi
 
 ifneq (,$(IS_CYGWIN))
  CFGFS_RUN_DEF := cfgfs_run.def
