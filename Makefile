@@ -276,14 +276,14 @@ $(EXE): $(OBJS)
 # ~
 
 DMD ?= dmd
-DMDFLAGS ?= -g
+DFLAGS ?= -g
 
 ifneq (,$(IS_CYGWIN))
  CFGFS_RUN_DEF := cfgfs_run.def
 endif
 
 cfgfs_run$(EXEEXT): cfgfs_run.d $(CFGFS_RUN_DEF)
-	$(DMD) $(DMDFLAGS) $^ -of=$@
+	$(DMD) $(DFLAGS) $^ -of=$@
 
 # ~
 
