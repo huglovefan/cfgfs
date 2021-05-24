@@ -12,7 +12,7 @@ Aside from everything Lua and regular configs can do, cfgfs scripts can also do 
 - Waiting regardless of the `sv_allow_wait_command` setting
 
 All of this is done safely without modifying the game process or its binaries.
-To the game, it's the same as if it was executing regular config files from the disk.
+To the game, it's the same as if it was executing normal config files from the disk.
 
 ```Lua
 -- add a keybind
