@@ -253,7 +253,6 @@ void runMain(string[] args) {
 					// unmount cfgfs if it was left mounted for some reason
 					checkMountBeforeRun(true);
 				}
-				firstRun = false;
 
 				string[string] env = [
 					"CFGFS_DIR": cfgfsDir,
@@ -294,6 +293,7 @@ void runMain(string[] args) {
 				}
 
 				Thread.sleep(dur!("msecs")(200));
+				firstRun = false;
 			}
 
 			// avoid leaving it mounted
