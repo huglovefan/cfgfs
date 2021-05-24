@@ -19,12 +19,27 @@ import core.stdc.stdlib;
 import core.sys.windows.windows;
 
 string findGameDir(string[] args) {
+	// note: use the last one in case there are multiple
+	string rv = null;
 	for (int i = 1; i < args.length-1; i++) {
 		if (args[i] == "-game") {
-			return args[i+1].absolutePath;
+			rv = args[i+1].absolutePath;
+			i += 1;
 		}
 	}
-	throw new StringException("couldn't parse command line (missing -game parameter)");
+	if (!rv) {
+		throw new StringException("couldn't parse command line (missing -game parameter)");
+	}
+	return rv;
+}
+unittest {
+	import std.exception;
+	string apath = "a".absolutePath;
+	string bpath = "b".absolutePath;
+	assert(findGameDir(["cfgfs_run", "-game", apath]) == apath);
+	assert(findGameDir(["cfgfs_run", "-game", apath, "-game", bpath]) == bpath);
+	assertThrown!StringException(findGameDir(["cfgfs_run"]));
+	assertThrown!StringException(findGameDir(["cfgfs_run", "-game"]));
 }
 
 string findGameTitle(string gameDir) {
