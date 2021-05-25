@@ -126,7 +126,8 @@ local init_settings = function ()
 		compat_noalias = false,
 	}
 
-	if os.getenv('GAMENAME') == 'Team Fortress 2' then
+	if os.getenv('GAMENAME') == 'Team Fortress 2' or
+	   os.getenv('GAMENAME') == 'Team Fortress 2 Classic' then
 		cfgfs.notify_cfgs['scout.cfg'] = true
 		cfgfs.notify_cfgs['soldier.cfg'] = true
 		cfgfs.notify_cfgs['pyro.cfg'] = true
@@ -136,6 +137,9 @@ local init_settings = function ()
 		cfgfs.notify_cfgs['medic.cfg'] = true
 		cfgfs.notify_cfgs['sniper.cfg'] = true
 		cfgfs.notify_cfgs['spy.cfg'] = true
+		if os.getenv('GAMENAME') == 'Team Fortress 2 Classic' then
+			cfgfs.notify_cfgs['civilian.cfg'] = true
+		end
 		cfgfs.restore_globals_on_reload['class'] = 'classchange'
 		cfgfs.restore_globals_on_reload['slot'] = 'slotchange'
 	end
