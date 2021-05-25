@@ -18,12 +18,28 @@ import core.stdc.stdlib;
 
 import core.sys.windows.windows;
 
-string findGameDir(string[] args) {
+string findGameExe(string[] args) {
+	foreach (arg; args) {
+		if (arg.isAbsolute) {
+			switch (arg.baseName) {
+			case "hl2.sh":
+			case "hl2.exe":
+				return arg;
+			default:
+				break;
+			}
+		}
+	}
+	return null;
+}
+
+string findGameDir(string[] args, string exeDir) {
 	// note: use the last one in case there are multiple
+	// note2: the path is relative to the executable (hl2.sh or hl2.exe)
 	string rv = null;
 	for (int i = 1; i < args.length-1; i++) {
 		if (args[i] == "-game") {
-			rv = args[i+1].absolutePath;
+			rv = args[i+1].absolutePath(exeDir);
 			i += 1;
 		}
 	}
@@ -31,15 +47,6 @@ string findGameDir(string[] args) {
 		throw new StringException("couldn't parse command line (missing -game parameter)");
 	}
 	return rv;
-}
-unittest {
-	import std.exception;
-	string apath = "a".absolutePath;
-	string bpath = "b".absolutePath;
-	assert(findGameDir(["cfgfs_run", "-game", apath]) == apath);
-	assert(findGameDir(["cfgfs_run", "-game", apath, "-game", bpath]) == bpath);
-	assertThrown!StringException(findGameDir(["cfgfs_run"]));
-	assertThrown!StringException(findGameDir(["cfgfs_run", "-game"]));
 }
 
 string findGameTitle(string gameDir) {
@@ -242,7 +249,10 @@ void runMain(string[] args) {
 	cfgfsDir = thisExePath().dirName;
 	gameRoot = getcwd();
 
-	gameDir = findGameDir(args);
+	string exePath = findGameExe(args);
+	string exeDir = (exePath) ? exePath.dirName : getcwd();
+
+	gameDir = findGameDir(args, exeDir);
 	gameTitle = findGameTitle(gameDir);
 
 	cfgfsMountPoint = cast(string)gameDir.chainPath("custom", "!cfgfs", "cfg").array;
