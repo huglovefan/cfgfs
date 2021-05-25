@@ -597,8 +597,9 @@ static void check_env(void) {
 // locate script.lua
 
 // 1. $CFGFS_SCRIPT
-// 2a. ./script_440.lua  (SteamAppId set)
-// 2b. ./script.lua  (SteamAppId not set)
+// 2. script_tf.lua  (MODNAME set)
+// 3. script_440.lua  (SteamAppId set)
+// 4. script.lua
 
 typedef bool (*path_callback)(const char *);
 
@@ -613,24 +614,28 @@ static bool test_paths(path_callback cb) {
 		return true;
 	}
 
+	char buf[64];
+
+	// 2. script_tf.lua
+	if (NULL != getenv("MODNAME")) {
+		snprintf(buf, sizeof(buf), "./script_%s.lua", getenv("MODNAME"));
+		if (STR_TEST(buf)) {
+			return true;
+		}
+	}
+
+	// 3. script_440.lua
 	if (NULL != getenv("SteamAppId")) {
-
-		char buf[32];
 		int appid = atoi(getenv("SteamAppId"));
-
-		// 2a. ./script_440.lua
 		snprintf(buf, sizeof(buf), "./script_%d.lua", appid);
 		if (STR_TEST(buf)) {
 			return true;
 		}
+	}
 
-	} else {
-
-		// 2b. ./script.lua
-		if (STR_TEST("./script.lua")) {
-			return true;
-		}
-
+	// 4. script.lua
+	if (STR_TEST("./script.lua")) {
+		return true;
 	}
 
 #undef ENV_TEST
