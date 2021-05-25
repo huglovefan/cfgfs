@@ -2183,6 +2183,12 @@ local update_notify_list = function ()
 	_notify_list_set(allpaths)
 end
 
+local create_nonexistent_notifys = function ()
+	for name in pairs(cfgfs.notify_cfgs) do
+		_ensure_cfg_exists(name)
+	end
+end
+
 --------------------------------------------------------------------------------
 
 -- local click_key_bound: declared near bind() where it's set
@@ -2225,6 +2231,7 @@ local before_script_exec = function ()
 end
 local after_script_exec = function ()
 	update_notify_list()
+	create_nonexistent_notifys()
 	if not click_key_bound then
 		eprintln('\awarning: no function key bound to "cfgfs_click" found!')
 		eprintln(' why: one of the f1-f12 keys must be bound to "cfgfs_click" for delayed command execution to work')

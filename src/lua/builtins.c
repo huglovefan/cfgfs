@@ -1,5 +1,6 @@
 #include "builtins.h"
 
+#include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <math.h>
@@ -224,6 +225,65 @@ typeerr:
 
 // -----------------------------------------------------------------------------
 
+// takes a config name like "scout.cfg" and makes sure there's one like that
+//  somewhere in the game's search path
+// why: cfgfs.notify_cfgfs in builtin.lua doesn't work reliably if the config
+//  doesn't exist, so it uses this to create them
+// (reading a nonexistent config generates fewer filesystem events so the
+//  unmask_next mechanism doesn't work properly for them)
+static int l_ensure_cfg_exists(lua_State *L) {
+	const char *name = luaL_checkstring(L, 1);
+	bool rv = false;
+
+	if (!getenv("GAMEDIR")) return 0;
+
+	// unsupported, but likely to already exist if it has such a fancy path
+	if (strchr(name, '/') || strchr(name, '\\')) return 0;
+
+	char *path = NULL;
+
+	(void)asprintf(&path, "%s/cfg/%s", getenv("GAMEDIR"), name);
+	if (0 == access(path, F_OK)) {
+		rv = true;
+		goto out;
+	}
+
+	free(path);
+	(void)asprintf(&path, "%s/custom", getenv("GAMEDIR"));
+
+	struct dirent **namelist = NULL;
+	int cnt = scandir(path, &namelist, NULL, alphasort);
+	for (int i = 0; i < cnt; i++) {
+		const char *entname = namelist[i]->d_name;
+		// ignore dotdot/hidden and cfgfs
+		if (!rv && entname[0] != '.' && 0 != strcmp(entname, "!cfgfs")) {
+			free(path);
+			(void)asprintf(&path, "%s/custom/%s/cfg/%s",
+			    getenv("GAMEDIR"), entname, name);
+			rv = (0 == access(path, F_OK));
+		}
+		free(namelist[i]);
+	}
+	free(namelist);
+
+out:
+	if (!rv) {
+		free(path);
+		(void)asprintf(&path, "%s/cfg/%s", getenv("GAMEDIR"), name);
+		FILE *f = fopen(path, "a");
+		if (f != NULL) {
+			fprintf(f, "// empty file created by cfgfs (notify_cfgs)\n");
+			fclose(f);
+		} else {
+V			eprintln("ensure_cfg_exists: fopen %s: %s", name, strerror(errno));
+		}
+	}
+	free(path);
+	return 0;
+}
+
+// -----------------------------------------------------------------------------
+
 static const luaL_Reg fns_g[] = {
 	{"_fatal", (lua_CFunction)l_panic},
 	{"_print", l_print},
@@ -232,6 +292,7 @@ static const luaL_Reg fns_g[] = {
 	{"eprintv", l_eprintv},
 	{"_ms", l_ms},
 	{"_get_locker", l_get_locker},
+	{"_ensure_cfg_exists", l_ensure_cfg_exists},
 	// main.c
 	{"_notify_list_set", (lua_CFunction)l_notify_list_set},
 #if defined(CFGFS_HAVE_RELOADER)
