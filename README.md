@@ -53,10 +53,14 @@ There exist Windows-native alternatives like [WinFsp] that could work for making
 [`libfuse`]: https://github.com/libfuse/libfuse
 [WinFsp]: https://github.com/billziss-gh/winfsp
 
-There's a half-done Windows port on the [`windows`] branch.
-It might be usable at some point in the future.
+There's a half-done Windows port on the ~~[`windows`]~~ [`master`] branch.
+~~It might be usable at some point in the future.~~
+The basic technology works but some features are still missing or broken due to lack of motivation to implement them.
+The known "technical limitations" are listed in [this issue].
 
 [`windows`]: https://github.com/huglovefan/cfgfs/tree/windows
+[`master`]: https://github.com/huglovefan/cfgfs/tree/master
+[this issue]: https://github.com/huglovefan/cfgfs/issues/10
 
 ## Installation
 
