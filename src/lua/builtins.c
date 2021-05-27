@@ -27,6 +27,7 @@
 #include "../lua.h"
 #include "../macros.h"
 #include "../main.h"
+#include "../misc/string.h"
 #include "../reloader.h"
 
 #include "rcon.h"
@@ -240,27 +241,27 @@ static int l_ensure_cfg_exists(lua_State *L) {
 	// unsupported, but likely to already exist if it has such a fancy path
 	if (strchr(name, '/') || strchr(name, '\\')) return 0;
 
-	char *path = NULL;
+	char stkdata[128];
+	struct string s = string_new_empty_from_stkbuf(stkdata, sizeof(stkdata));
+	s.autogrow = 1;
 
-	(void)asprintf(&path, "%s/cfg/%s", getenv("GAMEDIR"), name);
-	if (0 == access(path, F_OK)) {
+	string_set_contents_from_fmt(&s, "%s/cfg/%s", getenv("GAMEDIR"), name);
+	if (0 == access(s.data, F_OK)) {
 		rv = true;
 		goto out;
 	}
 
-	free(path);
-	(void)asprintf(&path, "%s/custom", getenv("GAMEDIR"));
+	string_set_contents_from_fmt(&s, "%s/custom", getenv("GAMEDIR"));
 
 	struct dirent **namelist = NULL;
-	int cnt = scandir(path, &namelist, NULL, alphasort);
+	int cnt = scandir(s.data, &namelist, NULL, alphasort);
 	for (int i = 0; i < cnt; i++) {
 		const char *entname = namelist[i]->d_name;
 		// ignore dotdot/hidden and cfgfs
 		if (!rv && entname[0] != '.' && 0 != strcmp(entname, "!cfgfs")) {
-			free(path);
-			(void)asprintf(&path, "%s/custom/%s/cfg/%s",
+			string_set_contents_from_fmt(&s, "%s/custom/%s/cfg/%s",
 			    getenv("GAMEDIR"), entname, name);
-			rv = (0 == access(path, F_OK));
+			rv = (0 == access(s.data, F_OK));
 		}
 		free(namelist[i]);
 	}
@@ -268,9 +269,8 @@ static int l_ensure_cfg_exists(lua_State *L) {
 
 out:
 	if (!rv) {
-		free(path);
-		(void)asprintf(&path, "%s/cfg/%s", getenv("GAMEDIR"), name);
-		FILE *f = fopen(path, "a");
+		string_set_contents_from_fmt(&s, "%s/cfg/%s", getenv("GAMEDIR"), name);
+		FILE *f = fopen(s.data, "a");
 		if (f != NULL) {
 			fprintf(f, "// empty file created by cfgfs (notify_cfgs)\n");
 			fclose(f);
@@ -278,7 +278,7 @@ out:
 V			eprintln("ensure_cfg_exists: fopen %s: %s", name, strerror(errno));
 		}
 	}
-	free(path);
+	string_free(&s);
 	return 0;
 }
 
