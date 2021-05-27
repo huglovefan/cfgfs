@@ -22,6 +22,8 @@ void string_append_from_buf(struct string *self, const char *buf, size_t sz);
 __attribute__((format(printf, 2, 3)))
 void string_append_from_fmt(struct string *self, const char *fmt, ...);
 
+void string_remove_range(struct string *self, size_t start, size_t len);
+
 #define string_set_contents_from_buf(s, buf, sz) \
 	({ \
 		string_clear(s); \

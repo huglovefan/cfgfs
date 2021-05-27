@@ -155,6 +155,15 @@ again:;
 	}
 }
 
+void string_remove_range(struct string *self, size_t start, size_t len) {
+	if U (start >= self->length) return;
+	if U (len > self->length-start) len = self->length-start;
+	size_t end = start+len;
+	memmove(self->data+start, self->data+end, self->length-end);
+	self->length -= len;
+	self->data[self->length] = '\0';
+}
+
 // -----------------------------------------------------------------------------
 
 #if defined(WITH_D) && (defined(__clang__) || defined(__GNUC__))
@@ -275,4 +284,49 @@ TEST(autogrow_shrink) {
 	assert(s.overflow && s.length == 0 && 0 == strcmp(s.data, ""));
 
 	string_free(&s);
+}
+
+TEST (remove_range) {
+	char b[16];
+	struct string s = string_new_empty_from_stkbuf(b, sizeof(b));
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 0, 1);
+	assert(s.length == 2 && 0 == strcmp(s.data, "bc"));
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 1, 1);
+	assert(s.length == 2 && 0 == strcmp(s.data, "ac"));
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 2, 1);
+	assert(s.length == 2 && 0 == strcmp(s.data, "ab"));
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 3, 1);
+	assert(s.length == 3 && 0 == strcmp(s.data, "abc"));
+
+	// ~
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 0, 2);
+	assert(s.length == 1 && 0 == strcmp(s.data, "c"));
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 1, 2);
+	assert(s.length == 1 && 0 == strcmp(s.data, "a"));
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 2, 2);
+	assert(s.length == 2 && 0 == strcmp(s.data, "ab"));
+
+	// ~
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 2, 100);
+	assert(s.length == 2 && 0 == strcmp(s.data, "ab"));
+
+	string_set_contents_from_fmt(&s, "abc");
+	string_remove_range(&s, 999, 1);
+	assert(s.length == 3 && 0 == strcmp(s.data, "abc"));
 }

@@ -22,37 +22,9 @@
 #include "../cli_output.h"
 #include "../lua.h"
 #include "../macros.h"
+#include "../misc/string.h"
 
 #include "srcrcon.h"
-
-// -----------------------------------------------------------------------------
-
-struct byte_array {
-	size_t len;
-	size_t cap;
-	char *data;
-};
-
-static void byte_array_append(struct byte_array *self, const char *data, size_t sz) {
-	if (self->cap < sz+self->len) goto resize;
-resize_done:
-	memcpy(self->data+self->len, data, sz);
-	self->len += sz;
-	return;
-resize:
-	do {
-		self->cap = (self->cap != 0) ? self->cap*2 : 64;
-	} while (self->cap < sz+self->len);
-	self->data = realloc(self->data, self->cap);
-	goto resize_done;
-}
-static void byte_array_remove_range(struct byte_array *self, size_t start, size_t len) {
-	if (start >= self->len) return;
-	if (len > self->len-start) len = self->len-start;
-	size_t end = start+len;
-	memmove(self->data+start, self->data+end, self->len-end);
-	self->len -= len;
-}
 
 // -----------------------------------------------------------------------------
 
@@ -70,7 +42,7 @@ struct rcon_threaddata {
 struct rcon_session {
 	src_rcon_t *r;
 	int conn;
-	struct byte_array response;
+	struct string response;
 };
 
 struct rcon_session *rcon_connect(const char *host, int port, const char *password) {
@@ -78,6 +50,7 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	if (!sess) {
 		return NULL;
 	}
+	sess->response.resizable = 1;
 
 	int sock = -1;
 
@@ -145,7 +118,7 @@ err:
 	if (sock != -1) close(sock);
 	if (sess != NULL) {
 		src_rcon_free(sess->r);
-		free(sess->response.data);
+		string_free(&sess->response);
 		free(sess);
 	}
 	return NULL;
@@ -158,7 +131,7 @@ int rcon_run_cfg(struct rcon_session *sess, const char *cfg, int32_t *id_out) {
 void rcon_disconnect(struct rcon_session *sess) {
 	if (sess == NULL) return;
 	close(sess->conn);
-	free(sess->response.data);
+	string_free(&sess->response);
 	src_rcon_free(sess->r);
 	free(sess);
 }
@@ -199,12 +172,12 @@ static int wait_auth(struct rcon_session *sess, src_rcon_message_t *auth) {
 			return -1;
 		}
 
-		byte_array_append(&sess->response, tmp, (size_t)ret);
+		string_append_from_buf(&sess->response, tmp, (size_t)ret);
 
 		size_t off = 0;
-		rcon_error_t status = src_rcon_auth_wait(sess->r, auth, &off, sess->response.data, sess->response.len);
+		rcon_error_t status = src_rcon_auth_wait(sess->r, auth, &off, sess->response.data, sess->response.length);
 		if (status != rcon_error_moredata) {
-			byte_array_remove_range(&sess->response, 0, off);
+			string_remove_range(&sess->response, 0, off);
 			return (int)status;
 		}
 	}
@@ -267,9 +240,9 @@ auth_done:
 		src_rcon_message_t *command = NULL;
 		src_rcon_message_t **commandanswers = NULL;
 		size_t off = 0;
-		rcon_error_t status = src_rcon_command_wait(td->sess->r, command, &commandanswers, &off, td->sess->response.data, td->sess->response.len);
+		rcon_error_t status = src_rcon_command_wait(td->sess->r, command, &commandanswers, &off, td->sess->response.data, td->sess->response.length);
 		if (status != rcon_error_moredata) {
-			byte_array_remove_range(&td->sess->response, 0, off);
+			string_remove_range(&td->sess->response, 0, off);
 		}
 
 		if (status == rcon_error_success && commandanswers != NULL) {
@@ -318,7 +291,7 @@ read:;
 				}
 				break;
 			}
-			byte_array_append(&td->sess->response, tmp, (size_t)ret);
+			string_append_from_buf(&td->sess->response, tmp, (size_t)ret);
 		}
 	}
 cleanup:
