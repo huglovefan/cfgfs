@@ -98,8 +98,6 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	sess->conn = sock;
 	sess->r = src_rcon_new();
 
-	if (info) freeaddrinfo(info);
-
 	struct rcon_threaddata *td = malloc(sizeof(struct rcon_threaddata));
 	td->sess = sess;
 	td->password = (password) ? strdup(password) : NULL;
@@ -110,6 +108,8 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	    "rcon: pthread_create",
 	    goto err);
 	pthread_detach(thread);
+
+	if (info) freeaddrinfo(info);
 
 	return sess;
 err:
