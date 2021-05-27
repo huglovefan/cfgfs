@@ -45,6 +45,7 @@ COLD_OBJS = \
        src/rcon/srcrcon.o \
        src/pipe_io.o \
        src/attention.o \
+       src/misc/string.o \
        src/reloader.o \
        src/cli_input.o \
        src/misc/caretesc.o \
@@ -129,6 +130,7 @@ CFLAGS += \
           -Werror=incompatible-pointer-types \
           -Wno-address \
           -Wno-bool-operation \
+          -Wno-format-zero-length \
           -Wno-misleading-indentation \
 # .
 endif
