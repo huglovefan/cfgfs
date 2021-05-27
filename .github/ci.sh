@@ -30,6 +30,7 @@ for cc in clang gcc; do
 	    LUA_LIBS="${luadir}/src/liblua.a" \
 	    SANITIZER="-fsanitize=address,undefined" \
 	    WE=1 \
+	    cfgfs \
 	    || exit
 	echo "== testing ${cc} build of cfgfs =="
 	make test || exit
