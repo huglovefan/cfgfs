@@ -33,7 +33,7 @@ end
 
 ## System requirements
 
-- Lua 5.4
+- Lua 5.4 + basic scripting skills (recommended)
 - `libfuse3`
 - `libreadline`
 - `libx11`, `libxtst`
@@ -65,13 +65,21 @@ The known "technical limitations" are listed in [this issue].
 ## Installation
 
 1. Clone the repository and `cd` to it: `git clone https://github.com/huglovefan/cfgfs && cd cfgfs`
-2. Run `make && make install` to compile cfgfs and install the `cfgfs_run` script
+2. Run `make && make install` to compile cfgfs and install the `cfgfs_run` script  
+   (must re-run this step if the `cfgfs` directory is moved or renamed)
 3. Add `cfgfs_run %command%` to the beginning of the game's launch options.  
    If you already have something using `%command%` there, then add only `cfgfs_run` before `%command%`.
 
-Launching the game will now automatically start `cfgfs` and load the "config" from `script_APPID.lua` (with the game's AppID) in the cfgfs directory.
+cfgfs will now start together with the game and pop up its terminal window when it's ready.
 
-**Note:** If the cfgfs directory is ever moved or renamed, the `cfgfs_run` script will need to be reinstalled by running `make install` again in the new directory.
+On startup, cfgfs will load a script ("config") corresponding to the game from a file named like `script.lua` in the `cfgfs` directory.
+The exact name varies by game; for TF2 it's `script_tf.lua`.
+If the script file doesn't exist, a blank one will be automatically created and its name printed to the terminal.
+
+There's currently no documentation for how you're meant to write scripts for this thing.
+There's a basic example of the alias/bind syntax in this readme (scroll up) and my [cfgfs-scripts] contains some more practical stuff to learn/copypaste from.
+
+[cfgfs-scripts]: https://github.com/huglovefan/cfgfs-scripts
 
 #### Updating
 
