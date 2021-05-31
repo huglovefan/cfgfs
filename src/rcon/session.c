@@ -67,7 +67,7 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	int ret;
 
 	if ((ret = getaddrinfo(host, portstr, &hint, &info))) {
-		eprintln("Failed to resolve host: %s: %s", host, gai_strerror(ret));
+		eprintln("rcon: Failed to resolve host: %s: %s", host, gai_strerror(ret));
 		goto err;
 	}
 
@@ -91,7 +91,7 @@ struct rcon_session *rcon_connect(const char *host, int port, const char *passwo
 	}
 
 	if (sock < 0) {
-		eprintln("Failed to connect to the given host/service");
+		eprintln("rcon: Failed to connect to the given host/service");
 		goto err;
 	}
 
@@ -150,7 +150,7 @@ static int send_message(struct rcon_session *sess, src_rcon_message_t *msg) {
 		ssize_t ret = write(sess->conn, p, size);
 		if (ret == 0 || ret == -1) {
 			free(data);
-			perror("Failed to communicate");
+			perror("rcon: write error");
 			return -2;
 		}
 
@@ -168,7 +168,7 @@ static int wait_auth(struct rcon_session *sess, src_rcon_message_t *auth) {
 		char tmp[512];
 		ssize_t ret = read(sess->conn, tmp, sizeof(tmp));
 		if (ret == -1) {
-			perror("Failed to receive data");
+			perror("rcon: read error");
 			return -1;
 		}
 
@@ -278,7 +278,7 @@ read:;
 			char tmp[512];
 			ssize_t ret = read(td->sess->conn, tmp, sizeof(tmp));
 			if (ret == -1) {
-				perror("Failed to receive data");
+				perror("rcon: read error");
 				goto cleanup;
 			}
 			if (ret == 0) {
