@@ -58,23 +58,6 @@ static inline void check_locker_name(const char *s) {
 	abort();
 }
 
-// taking the lock may take up to this long or a warning is printed
-// locker: name of who's trying to take the lock
-static inline double acceptable_lock_delay_for_locker(const char *me,
-                                                      const char *other) {
-	// non-interactive
-	if (CHEAP_COMPARE(other, "attention")) {
-		return 16.0;
-	}
-
-	// supposed to be fast
-	if (CHEAP_COMPARE(me, "cfgfs_read")) {
-		return 1.0;
-	}
-
-	return 4.0;
-}
-
 // the total time holding the lock may be this long or a warning is printed
 // locker: who the lock was held by
 static inline double acceptable_call_time_for_locker(const char *me) {
@@ -83,25 +66,26 @@ static inline double acceptable_call_time_for_locker(const char *me) {
 	    CHEAP_COMPARE(me, "reloader")) {
 		return 16.67*2.0;
 	}
-	return 16.67/2.0;
+	return 16.67;
 }
 
+// returns true if a warning should be printed if `me` had to wait
+//  `block_dur` ms to get the lua lock while it was held by `other`
 static inline bool should_warn_for_contention(const char *me,
-                                              const char *other) {
+                                              const char *other,
+                                              double block_dur) {
+	// cfgfs_read being blocked?
 	if (CHEAP_COMPARE(me, "cfgfs_read")) {
 
-		// non-interactive
-		if (CHEAP_COMPARE(other, "attention")) return false;
+		// blocked by attention?
+		if (CHEAP_COMPARE(other, "attention")) {
+			return block_dur >= 16.67*4.0;
+		}
 
-		return true;
+		return block_dur >= 16.67/2.0;
 	}
 
-	// supposed to be fast
-	if (CHEAP_COMPARE(other, "cfgfs_write/sft_console_log")) {
-		return true;
-	}
-
-	return false;
+	return block_dur >= 16.67;
 }
 
 #undef CHEAP_COMPARE
@@ -139,9 +123,9 @@ V		eprintln("lua_lock_state: %s couldn't get lock: %s",
 		return false;
 	}
 
-	if (unlikely(contested && should_warn_for_contention(who, prev_locked_by))) {
-		eprintln("warning: %s: lock contention! lock was held by %s for %.2f ms",
-		    who, prev_locked_by, prev_locked_dur);
+	if (unlikely(contested && should_warn_for_contention(who, prev_locked_by, lock_dur))) {
+		eprintln("warning: lua call by %s blocked %s for %.2f ms",
+		    who, prev_locked_by, lock_dur);
 	}
 
 	if (unlikely(g_L == NULL)) {
@@ -156,11 +140,6 @@ D	assert(stack_is_clean(g_L));
 
 	locked_by = who;
 	locked_at = lock_end;
-
-	if (lock_dur > acceptable_lock_delay_for_locker(locked_by, prev_locked_by)) {
-		eprintln("warning: %s: locking lua took %.2f ms while %s held the lock for %.2f ms",
-		    locked_by, lock_dur, prev_locked_by, prev_locked_dur);
-	}
 
 	return true;
 }
@@ -182,7 +161,7 @@ else	assert(stack_is_clean_quick(g_L));
 
 	double locked_for = mono_ms()-locked_at;
 	if (locked_for > acceptable_call_time_for_locker(locked_by)) {
-		eprintln("warning: %s: lua call took %.2f ms",
+		eprintln("warning: lua call by %s took %.2f ms",
 		    locked_by, locked_for);
 	}
 
