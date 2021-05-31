@@ -191,6 +191,14 @@ void cli_input_init(void) {
 	if (thread != 0) return;
 	if (!isatty(STDIN_FILENO)) return;
 
+	// make sure these exist in the environment so that readline's changes
+	//  to them doesn't cause environment stuff to be reallocated
+	// this fixes a rare startup crash where libreadline uses setenv() +
+	//  libfuse uses getenv() at the same time
+	// https://rachelbythebay.com/w/2017/01/30/env/
+	setenv("COLUMNS", getenv("COLUMNS") ?: "80", 1);
+	setenv("LINES", getenv("LINES") ?: "24", 1);
+
 	check_minus1(
 	    pipe(msgpipe),
 	    "cli: pipe",

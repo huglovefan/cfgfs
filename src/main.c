@@ -739,6 +739,18 @@ int main(int argc, char **argv) {
 	mlockall(MCL_CURRENT|MCL_FUTURE);
 #endif
 
+	// set CFGFS_RESTARTED if not running through cfgfs_run
+	if (!getenv("CFGFS_RUN_PID")) {
+		if (!getenv("CFGFS_RESTARTED") && !getenv("CFGFS_MAYBE_NOT_RESTARTED")) {
+			// first run
+			setenv("CFGFS_MAYBE_NOT_RESTARTED", "1", 1);
+		} else if (getenv("CFGFS_MAYBE_NOT_RESTARTED") && !getenv("CFGFS_RESTARTED")) {
+			// second run
+			unsetenv("CFGFS_MAYBE_NOT_RESTARTED");
+			setenv("CFGFS_RESTARTED", "1", 1);
+		}
+	}
+
 	cfg_init_badchars();
 	click_init_threadattr();
 
@@ -901,7 +913,6 @@ out_no_nothing:
 	one_true_exit();
 #if defined(__linux__)
 	if (0 == unlink("/tmp/.cfgfs_reexec")) {
-		setenv("CFGFS_RESTARTED", "1", 1);
 		execvp(argv[0], argv);
 		perror("cfgfs: exec");
 		rv = rv_cfgfs_reexec_failed;
