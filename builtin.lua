@@ -716,6 +716,7 @@ local get_cvars = function (t)
 				if rv[mk] == false then
 					rv[mk] = mv
 					incnt = incnt+1
+					fire_event('cvar.'..mk, mv)
 				end
 			end
 		elseif ev == 'game_console_output' then
