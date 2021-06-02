@@ -22,6 +22,7 @@ struct string string_new(size_t sz) {
 	self.data = p;
 	self.length = 0;
 	self.capacity = sz;
+	self.autogrow = 0;
 	self.overflow = 0;
 	self.resizable = 1;
 	if L (sz != 0) p[0] = '\0';
@@ -33,6 +34,7 @@ struct string string_new_empty_from_stkbuf(char *buf, size_t sz) {
 	self.data = buf;
 	self.length = 0;
 	self.capacity = sz;
+	self.autogrow = 0;
 	self.overflow = 0;
 	self.resizable = 0;
 	if L (sz != 0) buf[0] = '\0';
@@ -171,6 +173,22 @@ void string_remove_range(struct string *self, size_t start, size_t len) {
 #else
  #define TEST(x) __attribute__((unused)) static void test_##x(void)
 #endif
+
+TEST (zero_init_stk) {
+	char tmp1[2], tmp2[2];
+	struct string s1, s2;
+	memset(&s1, 0b10101010, sizeof(s1));
+	memset(&s2, 0b01010101, sizeof(s2));
+	s1 = string_new_empty_from_stkbuf(tmp1, sizeof(tmp1));
+	s2 = string_new_empty_from_stkbuf(tmp2, sizeof(tmp2));
+	s1.data = NULL; s1.capacity = 0;
+	s2.data = NULL; s2.capacity = 0;
+
+	assert(s1.length == s2.length);
+	assert(s1.resizable == s2.resizable);
+	assert(s1.overflow == s2.overflow);
+	assert(s1.autogrow == s2.autogrow);
+}
 
 TEST (append_from_buf_stk) {
 	char c[4];
