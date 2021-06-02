@@ -207,6 +207,9 @@ ifneq ($(SANITIZER),)
  CPPFLAGS += -DSANITIZER=\"$(SANITIZER)\"
  CFLAGS   += $(SANITIZER)
  LDFLAGS  += $(SANITIZER)
+ ifneq ($(WE),)
+  CFLAGS += -Wno-error=frame-larger-than=
+ endif
 endif
 
 # agpl compliance (https://www.gnu.org/licenses/gpl-howto.en.html)

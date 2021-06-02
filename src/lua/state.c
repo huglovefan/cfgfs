@@ -34,7 +34,7 @@ static double      locked_at = 0.0;
 
 // fixme: seems to not work with cygwin
 
-#if (defined(__clang__) || defined(__GNUC__)) && defined(__linux__)
+#if (defined(__clang__) || defined(__GNUC__)) && defined(__linux__) && !defined(SANITIZER)
  #define CHEAP_COMPARE(s1, s2) (s1 == s2)
 #else
  #define CHEAP_COMPARE(s1, s2) (s1 && s2 && 0 == strcmp(s1, s2))

@@ -156,6 +156,8 @@ extern void ERROR_this_call_to_CompilerEnforcedUnreachable_may_be_reachable(void
 // this way you can be sure there are no hidden returns or unexpected jumps
 //  hiding in that code
 
+#if !defined(SANITIZER)
+
 #define one_true_entry() \
 	__attribute__((cleanup(check_otx))) \
 	int otx = 0
@@ -169,6 +171,15 @@ extern void missing_call_to_one_true_exit(void);
 static inline void check_otx(const int *v) {
 	if (*v != 1) missing_call_to_one_true_exit();
 }
+
+#else
+
+// doesn't seem to work in gcc sanitizer builds
+
+#define one_true_entry() ((void)0)
+#define one_true_exit() ((void)0)
+
+#endif
 
 // -----------------------------------------------------------------------------
 
