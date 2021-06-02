@@ -68,11 +68,11 @@ void do_click(void) {
 		}
 #else
 		if (keycode != 0) {
-			INPUT inputs[2] = {0};
+			INPUT inputs[2] = {{0}};
 			inputs[0].type = INPUT_KEYBOARD;
-			inputs[0].ki.wVk = keycode;
+			inputs[0].ki.wVk = (WORD)keycode;
 			inputs[1].type = INPUT_KEYBOARD;
-			inputs[1].ki.wVk = keycode;
+			inputs[1].ki.wVk = (WORD)keycode;
 			inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
 			UINT sent = SendInput(2, inputs, sizeof(INPUT));
 			if (sent != 2) {

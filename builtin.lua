@@ -1278,7 +1278,12 @@ end
 
 local our_logfile
 if os.getenv('CFGFS_STARTTIME') then
-	os.execute('mkdir -p logs')
+	if __linux__ then
+		os.execute('mkdir -p logs')
+	else
+		-- windows: cygwin /bin might not be in $PATH, call it directly
+		os.execute('/bin/mkdir -p logs')
+	end
 	logfilename = os.date('logs/console_%Y-%m-%d_%H:%M:%S.log', tonumber(os.getenv('CFGFS_STARTTIME')))
 	our_logfile = io.open(logfilename, 'a')
 end
@@ -1871,15 +1876,18 @@ end
 
 -- local click_key_bound: declared near bind() where it's set
 
--- this is a risky operation. it works most of the time but has a chance of freezing the game
--- resetting con_logfile closes the file inside the game, and it's re-opened on the next console write
--- sometimes something goes wrong and the game deadlocks instead
--- note: the log is normally inited from launch options, this alias exists to do it on cfgfs startup if it had crashed
+local con_logfile_main, con_logfile_tmp
+if __linux__ then
+	con_logfile_main = 'console.log'
+	con_logfile_tmp = 'console_tmp.log'
+else
+	con_logfile_main = 'custom/!cfgfs/cfg/console.log'
+	con_logfile_tmp = 'console.log'
+end
+
 local reinit_log = function ()
-	-- new: test if using an existing file would be safer than setting this
-	--  to an empty string. lets see if this freezes
-	cvar.con_logfile = 'console_tmp.log'
-	cvar.con_logfile = 'console.log'
+	cvar.con_logfile = con_logfile_tmp
+	cvar.con_logfile = con_logfile_main
 	cmd.echo('cfgfs: log file has been reinited')
 end
 
@@ -1894,13 +1902,11 @@ local before_script_exec = function ()
 
 	cmd.cfgfs_restart = function ()
 		cmd.echo "restarting..."
-		cvar.con_logfile = 'console_tmp.log'
+		cvar.con_logfile = con_logfile_tmp
 		wait(0)
-		os.execute([[
-		( command sleep 0.1; fusermount -u "$CFGFS_MOUNTPOINT" ) &
-		]])
+		_cfgfs_unmount()
 		wait(150)
-		cvar.con_logfile = 'console.log'
+		cvar.con_logfile = con_logfile_main
 		cmd.echo "restart failed?"
 	end
 
@@ -1986,7 +1992,7 @@ end
 
 -- booby trap require() so that reloader can watch source files loaded using it
 
-if nil ~= rawget(_G, '_reloader_add_watch') then
+do
 	-- modname string -> state bool
 	--   true = successfully watched
 	--   false = tried to add watch but failed

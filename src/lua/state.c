@@ -125,7 +125,7 @@ V		eprintln("lua_lock_state: %s couldn't get lock: %s",
 
 	if (unlikely(contested && should_warn_for_contention(who, prev_locked_by, lock_dur))) {
 		eprintln("warning: lua call by %s blocked %s for %.2f ms",
-		    who, prev_locked_by, lock_dur);
+		    prev_locked_by, who, lock_dur);
 	}
 
 	if (unlikely(g_L == NULL)) {

@@ -11,16 +11,28 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#pragma GCC diagnostic push
- #if defined(__clang__)
-  #pragma GCC diagnostic ignored "-Wdocumentation"
- #endif
- #pragma GCC diagnostic ignored "-Wpadded"
-  #include <fuse.h>
-  #if !defined(CYGFUSE)
-   #include <fuse_lowlevel.h>
+#if defined(__linux__)
+ #pragma GCC diagnostic push
+  #if defined(__clang__)
+   #pragma GCC diagnostic ignored "-Wdocumentation"
   #endif
-#pragma GCC diagnostic pop
+  #pragma GCC diagnostic ignored "-Wpadded"
+  #include <fuse.h>
+  #include <fuse_lowlevel.h>
+ #pragma GCC diagnostic pop
+#endif
+
+#if defined(CYGFUSE)
+ #pragma GCC diagnostic push
+  #if defined(__clang__)
+   #pragma GCC diagnostic ignored "-Wextra-semi-stmt"
+  #endif
+  #pragma GCC diagnostic ignored "-Wmissing-braces"
+  #pragma GCC diagnostic ignored "-Wsign-conversion"
+  #pragma GCC diagnostic ignored "-Wstrict-prototypes"
+  #include <fuse.h>
+ #pragma GCC diagnostic pop
+#endif
 
 #include <lauxlib.h>
 
@@ -601,6 +613,12 @@ static void check_env(void) {
 // 3. script_440.lua  (SteamAppId set)
 // 4. script.lua
 
+#if defined(__linux__)
+ #define STEAMAPPID_ENV "SteamAppId"
+#else
+ #define STEAMAPPID_ENV "STEAMAPPID"
+#endif
+
 typedef bool (*path_callback)(const char *);
 
 __attribute__((minsize))
@@ -625,8 +643,8 @@ static bool test_paths(path_callback cb) {
 	}
 
 	// 3. script_440.lua
-	if (NULL != getenv("SteamAppId")) {
-		int appid = atoi(getenv("SteamAppId"));
+	if (NULL != getenv(STEAMAPPID_ENV)) {
+		int appid = atoi(getenv(STEAMAPPID_ENV));
 		snprintf(buf, sizeof(buf), "./script_%d.lua", appid);
 		if (STR_TEST(buf)) {
 			return true;
@@ -859,9 +877,7 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 	attention_init();
 #endif
 	cli_input_init();
-#if defined(CFGFS_HAVE_RELOADER)
 	reloader_init();
-#endif
 
 	// ~ boot up fuse ~
 
@@ -880,7 +896,7 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 		.clone_fd = false,
 		.max_idle_threads = 5,
 	});
-	rv = loop_rv;
+	rv = (enum fuse_main_rv)loop_rv;
 #endif
 
 out_fuse_newed_and_mounted_and_signals_handled:
@@ -901,9 +917,7 @@ out_no_fuse:
 #endif
 	cli_input_deinit();
 	click_deinit();
-#if defined(CFGFS_HAVE_RELOADER)
 	reloader_deinit();
-#endif
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
 out_no_nothing:

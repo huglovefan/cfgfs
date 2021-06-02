@@ -3,23 +3,28 @@
 
 # build-related junk
 /.cache/
-/.thinlto-cache/
-/test/rv
 /.fndata
 /.fndata.old
+/.thinlto-cache/
 /cfgfs
+/test/rv
+/lua-5.[0-9]*/
 /mnt
 /src/**/*.d
 *.o
 
 # created by cfgfs
 /.cli_history
+/.cli_scrollback
 /console.log
 /logs/
-
-# automatically created, don't belong in this repo
 /script.lua
 /script_*.lua
 
 # user-modifiable
 /env.sh
+
+# windows junk
+*.dll
+*.exe
+*.obj

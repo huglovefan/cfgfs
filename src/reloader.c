@@ -5,11 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/inotify.h>
 #include <sys/poll.h>
 #include <unistd.h>
 
 #if defined(__linux__)
+ #include <sys/inotify.h>
  #include <sys/prctl.h>
 #endif
 
@@ -22,17 +22,26 @@
 #include "macros.h"
 #include "pipe_io.h"
 
+#if defined(__CYGWIN__)
+
+struct inotify_event { char unused; };
+
+#endif
+
 // -----------------------------------------------------------------------------
 
 static int msgpipe[2] = {-1, -1};
 
 enum msg {
 	msg_exit = 1,
+	msg_reload = 2,
 };
 
 // -----------------------------------------------------------------------------
 
 // init/deinit and file adding
+
+#if defined(__linux__)
 
 // note: these assume they're only called
 // 1. from main thread before it has called reloader_init()
@@ -94,6 +103,11 @@ V	eprintln("reloader: successfully added path %s", path);
 	return true;
 }
 
+#else
+#define get_or_init_inotify_fd() (-1)
+#define deinit_inotify_if_inited() ((void)0)
+#endif
+
 // -----------------------------------------------------------------------------
 
 static char readbuf[sizeof(struct inotify_event) + PATH_MAX + 1];
@@ -102,10 +116,15 @@ static bool wait_for_event(void) {
 	one_true_entry();
 	bool success = false;
 
+#if defined(__linux__)
 	int fd = get_or_init_inotify_fd();
 	if (unlikely(fd == -1)) goto out;
 
 	switch (rdselect(msgpipe[0], fd)) {
+#else
+	int fd = -1;
+	switch (rdselect(msgpipe[0])) {
+#endif
 	case 2: {
 V		eprintln("reloader: inotify fd became readable");
 		ssize_t rv = read(fd, readbuf, sizeof(readbuf));
@@ -116,6 +135,9 @@ V		eprintln("reloader: inotify fd became readable");
 	case 1:
 		switch (readch(msgpipe[0])) {
 		case msg_exit:
+			goto out;
+		case msg_reload:
+			success = true;
 			goto out;
 		}
 		assert_unreachable();
@@ -166,7 +188,7 @@ V	eprintln("reloader: reloading done!");
 // exported to lua as _reloader_add_watch()
 int l_reloader_add_watch(void *L) {
 	bool ok = false;
-
+#if defined(__linux__)
 	// can't safely add the watch -> just return false
 	if (unlikely(!safe_to_call_these_from_lua(L))) {
 V		eprintln("l_reloader_watch_file: lua not locked by us, ignoring add of %s",
@@ -180,8 +202,13 @@ V		eprintln("l_reloader_watch_file: lua not locked by us, ignoring add of %s",
 		ok = true;
 	}
 out:
+#endif
 	lua_pushboolean(L, ok);
 	return 1;
+}
+
+void reloader_reload(void) {
+	if (msgpipe[1] != -1) writech(msgpipe[1], msg_reload);
 }
 
 // -----------------------------------------------------------------------------

@@ -5,7 +5,9 @@
 #include "rcon.h"
 #include "srcrcon.h"
 
-#include <bsd/stdlib.h>
+#if !defined(__CYGWIN__)
+ #include <bsd/stdlib.h>
+#endif
 
 #include <stdlib.h>
 #include <stdio.h>

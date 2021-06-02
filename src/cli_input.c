@@ -29,6 +29,7 @@
 #include "main.h"
 #include "misc/caretesc.h"
 #include "pipe_io.h"
+#include "reloader.h"
 
 _Atomic(bool) cli_reading_line;
 
@@ -100,6 +101,13 @@ static void winch_handler(int signal) {
 	writech(msgpipe[1], msg_winch);
 }
 
+static int ctrl_r(int a, int b) {
+	(void)a;
+	(void)b;
+	reloader_reload();
+	return 0;
+}
+
 // -----------------------------------------------------------------------------
 
 static void *cli_main(void *ud) {
@@ -112,6 +120,7 @@ static void *cli_main(void *ud) {
 	 cli_reading_line = true;
 	 rl_callback_handler_install(DEFAULT_PROMPT, linehandler);
 	 rl_bind_key('\t', rl_insert); // disable filename completion
+	 rl_bind_key('\x12', ctrl_r); // ^R
 	cli_unlock_output_norestore();
 
 	// create the history file if it doesn't exist

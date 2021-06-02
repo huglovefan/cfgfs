@@ -76,9 +76,34 @@ void runCfgfsCommand(string title, string[] cmd, string[string] env) {
 	// note: mintty "forks" into a new process to display its gui so .wait() doesn't work
 	// use -RP to make it print the child pid to stdout and wait that instead
 
+	string[] minttyCmd = [
+		"C:\\cygwin64\\bin\\mintty.exe",
+		//"-h", "error",
+		"-RP",
+		"-t", title,
+		"-e",
+	];
+
+	// do env.sh if it exists and cygwin is installed
+	// (may want to support using this without cygwin at some point)
+	if (exists(env["CFGFS_DIR"].chainPath("env.sh")) &&
+	    exists("C:\\cygwin64\\bin\\cygpath.exe") &&
+	    exists("C:\\cygwin64\\bin\\sh.exe")) {
+		minttyCmd ~= [
+			"/bin/sh", "-c", `
+				[ ! -e env.sh ] || . ./env.sh
+				if exe=$(/bin/cygpath.exe -- "$1"); then
+					shift
+					set -- "$exe" "$@"
+				fi
+				exec "$@"
+			`, "--",
+		];
+	}
+
 	auto pipe = pipe();
 	auto p = spawnProcess(
-		["C:\\cygwin64\\bin\\mintty", "-RP", "-t", title, "-e"] ~ cmd,
+		minttyCmd ~ cmd,
 		std.stdio.stdin,
 		pipe.writeEnd,
 		std.stdio.stderr,
@@ -88,12 +113,13 @@ void runCfgfsCommand(string title, string[] cmd, string[string] env) {
 	);
 	p.wait(); // useless
 
+	// it's written like `printf("%d %d\n", pid1, pid2)`
 	auto p1 = to!int(pipe.readEnd.readln(' ')[0..$-1]);
 	auto p2 = to!int(pipe.readEnd.readln('\n')[0..$-1]);
 	pipe.close();
 
-	HANDLE pid1 = OpenProcess(PROCESS_ALL_ACCESS, false, p1);
-	HANDLE pid2 = OpenProcess(PROCESS_ALL_ACCESS, false, p2);
+	HANDLE pid1 = OpenProcess(SYNCHRONIZE, false, p1);
+	HANDLE pid2 = OpenProcess(SYNCHRONIZE, false, p2);
 
 	if (pid1 != null) {
 		WaitForSingleObject(pid1, INFINITE);
@@ -108,6 +134,22 @@ void runCfgfsCommand(string title, string[] cmd, string[string] env) {
 bool checkMountBeforeRun(bool tryRecover) {
 	if (isCfgfsReady(cfgfsMountPoint)) {
 		MessageBoxA(null, "Looks like another instance of cfgfs is already running for this game. Kill the cfgfs.exe process and try again.".toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
+		return false;
+	}
+	if (cfgfsMountPoint.exists) {
+		// try to delete the mount directory if it already exists
+		// if it's mounted, this will succeed but it'll keep existing
+		// (but if the other check failed then it's probably not mounted)
+		if (tryRecover) {
+			bool deleted = false;
+			try {
+				cfgfsMountPoint.rmdir();
+				deleted = true;
+			} catch (Exception) {
+			}
+			if (deleted) return checkMountBeforeRun(false);
+		}
+		MessageBoxA(null, "The mount directory already exists. Make sure cfgfs isn't already running.".toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
 		return false;
 	}
 	return true;
@@ -232,6 +274,9 @@ string termTitleForGameName(string gameName) {
 	return "cfgfs (%s)".format(gameName);
 }
 
+version (Windows) string exeName = "cfgfs.exe";
+version (linux) string exeName = "cfgfs";
+
 // -----------------------------------------------------------------------------
 
 shared string cfgfsDir;
@@ -262,7 +307,9 @@ void runMain(string[] args) {
 		return;
 	}
 
-	mkdirRecurse(cfgfsMountPoint);
+	version (linux) {
+		mkdirRecurse(cfgfsMountPoint);
+	}
 
 	auto t = task!(() {
 		try {
@@ -279,6 +326,7 @@ void runMain(string[] args) {
 				if (!firstRun) {
 					// unmount cfgfs if it was left mounted for some reason
 					checkMountBeforeRun(true);
+					// fixme: continue on failure?
 				}
 
 				string[string] env = [
@@ -302,7 +350,7 @@ void runMain(string[] args) {
 				auto clock = StopWatch(AutoStart.yes);
 				runCfgfsCommand(
 					termTitleForGameName(gameTitle),
-					[cast(string)cfgfsDir.chainPath("cfgfs").array, cfgfsMountPoint],
+					[cast(string)cfgfsDir.chainPath(exeName).array, cfgfsMountPoint],
 					env
 				);
 				clock.stop();
@@ -312,7 +360,7 @@ void runMain(string[] args) {
 				else                                   failureCnt += 1;
 
 				if (failureCnt >= 3) {
-					version (Windows) MessageBoxA(null, "cfgfs has failed to start three times in a row, giving up.".toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
+					version (Windows) MessageBoxA(null, "cfgfs failed to start three times in a row, giving up.".toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
 					break;
 				}
 
@@ -349,33 +397,36 @@ void runMain(string[] args) {
 		Thread.sleep(dur!("msecs")(100));
 	}
 
-	string[] extraArgs = [
-		"+exec", "cfgfs/init",
-	];
+	string[] extraArgs = [];
 	version (linux) {
 		extraArgs ~= ["-condebug"];
 	}
 	version (Windows) {
 		extraArgs ~= ["+con_logfile", "custom/!cfgfs/cfg/console.log"];
 	}
+	extraArgs ~= ["+exec", "cfgfs/init"];
 
-	auto p = spawnProcess(
+	spawnProcess(
 		args[1..$]~extraArgs,
 		null,
-		Config.retainStdin|Config.retainStdout|Config.retainStderr);
-	int rv = p.wait();
+		Config.retainStdin|Config.retainStdout|Config.retainStderr
+	).wait();
 
 	gameExited = true;
 	version (linux) {
-		// todo: this fails if a file is open
-		spawnProcess(
-			["fusermount", "-u", cfgfsMountPoint],
-			[
-				"LD_LIBRARY_PATH": null,
-				"LD_PRELOAD": null,
-			],
-			Config.retainStdin|Config.retainStdout|Config.retainStderr
-		).wait();
+		// this fails if a file is open
+		foreach (delay; [0, 333, 333]) {
+			Thread.sleep(dur!("msecs")(delay));
+			int rv = spawnProcess(
+				["fusermount", "-u", cfgfsMountPoint],
+				[
+					"LD_LIBRARY_PATH": null,
+					"LD_PRELOAD": null,
+				],
+				Config.retainStdin|Config.retainStdout|Config.retainStderr
+			).wait();
+			if (rv == 0) break;
+		}
 	}
 	version (Windows) {
 		// it just werkz

@@ -20,13 +20,11 @@ ifneq (,$(findstring Cygwin,$(shell uname -o)))
  LUA_LIBS ?= lua-5.4.3/src/liblua.a
 else
  CPPFLAGS += -DCFGFS_HAVE_ATTENTION
- CPPFLAGS += -DCFGFS_HAVE_RCON
- CPPFLAGS += -DCFGFS_HAVE_RELOADER
 endif
 
 # ------------------------------------------------------------------------------
 
-EXE := $(shell basename -- "$$PWD")
+EXE := $(shell basename -- "$$PWD")$(EXEEXT)
 
 HOT_OBJS = \
        src/main.o \
@@ -55,11 +53,7 @@ COLD_OBJS = \
        src/error.o \
 
 ifneq (,$(IS_CYGWIN))
- COLD_OBJS := $(filter-out src/lua/rcon.o,$(COLD_OBJS))
- COLD_OBJS := $(filter-out src/rcon/session.o,$(COLD_OBJS))
- COLD_OBJS := $(filter-out src/rcon/srcrcon.o,$(COLD_OBJS))
  COLD_OBJS := $(filter-out src/attention.o,$(COLD_OBJS))
- COLD_OBJS := $(filter-out src/reloader.o,$(COLD_OBJS))
  COLD_OBJS := $(filter-out src/xlib.o,$(COLD_OBJS))
 endif
 
@@ -95,6 +89,7 @@ CFLAGS += \
           -Wno-atomic-implicit-seq-cst \
           -Wno-c++98-compat \
           -Wno-disabled-macro-expansion \
+          -Wno-error=unknown-warning-option \
           -Wno-format-nonliteral \
           -Wno-gnu-auto-type \
           -Wno-gnu-binary-literal \
@@ -210,6 +205,7 @@ endif
 # sanitizer
 ifneq ($(SANITIZER),)
  CPPFLAGS += -DSANITIZER=\"$(SANITIZER)\"
+ CFLAGS   += $(SANITIZER)
  LDFLAGS  += $(SANITIZER)
 endif
 
@@ -280,18 +276,20 @@ $(EXE): $(OBJS)
 DMD ?= dmd
 DFLAGS ?= -g -wi
 
+CFGFS_RUN_EXE := cfgfs_run$(EXEEXT)
 ifneq (,$(IS_CYGWIN))
- CFGFS_RUN_DEF := cfgfs_run.def
+ DFLAGS += -L-Subsystem:Windows
 endif
 
-cfgfs_run$(EXEEXT): cfgfs_run.d $(CFGFS_RUN_DEF)
-	$(DMD) $(DFLAGS) $^ -of=$@
+# unset CC if using tcc to prevent "tcc: error: invalid option -- '-Xlinker'"
+$(CFGFS_RUN_EXE): cfgfs_run.d
+	case "$$CC" in *tcc*) unset CC; esac; $(DMD) $(DFLAGS) $^ -of=$@
 
 # ~
 
 CFGFS_RM ?= rm -v
 clean:
-	@$(CFGFS_RM) -f -- $(EXE) $(OBJS) $(DEPS)
+	@$(CFGFS_RM) -f -- $(EXE) $(CFGFS_RUN_EXE) $(OBJS) $(DEPS)
 
 watch:
 	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >/tmp/.cfgfs_reexec;pkill -INT cfgfs||rm /tmp/.cfgfs_reexec;make -s postbuild'; do\
@@ -440,4 +438,4 @@ startcyg:
 	export GAMENAME=Team\ Fortress\ 2; \
 	export SteamAppId=440; \
 	[ ! -e env.sh ] || . ./env.sh; \
-	exec "$$CFGFS_DIR"/$(EXE).exe $(TF2MNT)
+	exec "$$CFGFS_DIR"/$(EXE) $(TF2MNT)
