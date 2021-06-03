@@ -44,8 +44,10 @@
 #include "cli_output.h"
 #include "cli_scrollback.h"
 #include "click.h"
+#include "keys.h"
 #include "lua.h"
 #include "macros.h"
+#include "misc/string.h"
 #include "optstring.h"
 #include "reloader.h"
 
@@ -277,6 +279,11 @@ error:
 
 // -----------------------------------------------------------------------------
 
+#if defined(CYGFUSE)
+ static uid_t fs_uid;
+ static gid_t fs_gid;
+#endif
+
 __attribute__((hot))
 static int cfgfs_getattr(const char *restrict path,
                          struct stat *restrict stbuf,
@@ -284,18 +291,30 @@ static int cfgfs_getattr(const char *restrict path,
 	(void)fi;
 V	eprintln("cfgfs_getattr: %s", path);
 
-	int rv = lookup_path(path, NULL, false);
+	union sft_ptr type = {0};
+	int rv = lookup_path(path, &type, false);
 
 	if (rv == 0xf) {
-		stbuf->st_mode = 0666|S_IFREG;
+		if ((type.sft & FILE_TYPE_BITS) == 0)
+			stbuf->st_mode = 0400|S_IFREG;
+		else if (type.sft & sft_console_log)
+			stbuf->st_mode = 0200|S_IFREG;
+		else if (type.sft & sft_message)
+			stbuf->st_mode = 0200|S_IFREG;
+		else
+			return -EIO;
 		stbuf->st_size = reported_cfg_size;
 #if defined(CYGFUSE)
-		// required for writing to console.log
-		stbuf->st_uid = geteuid();
+		stbuf->st_uid = fs_uid;
+		stbuf->st_gid = fs_gid;
 #endif
 		return 0;
 	} else if (rv == 0xd) {
-		stbuf->st_mode = 0777|S_IFDIR;
+		stbuf->st_mode = 0500|S_IFDIR;
+#if defined(CYGFUSE)
+		stbuf->st_uid = fs_uid;
+		stbuf->st_gid = fs_gid;
+#endif
 		return 0;
 	} else {
 D		assert(rv < 0);
@@ -312,7 +331,7 @@ D		assert(rv < 0);
 static int cfgfs_truncate(const char *path, off_t len, struct fuse_file_info *fi) {
 	(void)len;
 	(void)fi;
-VV	eprintln("cfgfs_truncate %s", path);
+VV	eprintln("cfgfs_truncate: %s", path);
 	return 0;
 }
 
@@ -340,13 +359,17 @@ D		assert(rv < 0);
 
 // ~
 
-#if !defined(CYGFUSE)
- #define MANUAL_READ_OPEN_CNT 1
- #define UNMASK_CNT_TOTAL 3
-#else
- #define MANUAL_READ_OPEN_CNT 2
- #define UNMASK_CNT_TOTAL 6
+// how many getattr() calls to ignore after the game has executed /unmask_next/name.cfg
+// note: the count is accurate only when the config actually exists outside cfgfs. if it doesn't exist, we get a few less events but have no good way to detect that
+#if defined(__linux__)
+ #define UNMASK_IGNORE_CNT 3
+#elif defined(CYGFUSE)
+ #define UNMASK_IGNORE_CNT 6
 #endif
+
+
+// game makes this many open() calls total when reading a config
+#define NUM_OPEN_CALLS_TO_READ_A_CONFIG 3
 
 __attribute__((hot))
 static int cfgfs_read(const char *restrict path,
@@ -360,17 +383,19 @@ V	eprintln("cfgfs_read: %s (size=%lu, offset=%lu)", path, size, offset);
 
 	if (unlikely(offset != 0)) return 0;
 
-	if (unlikely(size < reported_cfg_size)) {
-		eprintln("\acfgfs_read: read size too small! expected at least %zu, got only %zu",
-		    reported_cfg_size, size);
-D		abort();
-		return -EOVERFLOW;
-	}
-
 	// check that it's not some special file. we only support reading configs here
 	if (unlikely(FH_GET_TYPE(fi->fh) != sft_none)) {
 V		eprintln("cfgfs_read: can't read this type of file!");
 		return -EOPNOTSUPP;
+	}
+
+	if (unlikely(size < reported_cfg_size)) {
+		eprintln("warning: cfgfs_read: read size %zu is too small, ignoring request", size);
+#if defined(__linux__)
+		// don't abort on windows. reads from "type" in cmd.exe are 512 bytes but i haven't seen anything like that on linux
+D		abort();
+#endif
+		return -EOVERFLOW;
 	}
 
 	size_t pathlen = strlen(path);
@@ -378,7 +403,9 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 	if (unlikely(FH_IS_ORDINARY(fi->fh))) {
 		// catch the game manually reading config.cfg at startup so we don't
 		//  lose any buffer contents to that
-		if (unlikely(last_config_open_cnt <= MANUAL_READ_OPEN_CNT)) {
+		// note: the fake read of config.cfg might leave the count at non-zero,
+		//  so use < instead of !=
+		if (unlikely(last_config_open_cnt < NUM_OPEN_CALLS_TO_READ_A_CONFIG)) {
 			if (unlikely(0 != strcmp(path, "/config.cfg"))) {
 				eprintln("cfgfs_read: warning: ignoring manual read of %s",
 				    path+1);
@@ -408,7 +435,7 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 			}
 			memcpy(last_config_name, name, namelen);
 			last_config_name_len = namelen;
-			unmask_cnt = UNMASK_CNT_TOTAL;
+			unmask_cnt = UNMASK_IGNORE_CNT;
 			return 0;
 		}
 	}
@@ -527,23 +554,134 @@ D		assert(0 == memcmp(path, MESSAGE_DIR_PREFIX, strlen(MESSAGE_DIR_PREFIX)));
 
 // ~
 
+//#define WITH_READDIR
+
+#if defined(WITH_READDIR)
+
+__attribute__((minsize))
+static int cfgfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+                         off_t offset, struct fuse_file_info *fi,
+                         enum fuse_readdir_flags flags) {
+	(void)offset;
+	(void)fi;
+	(void)flags;
+V	eprintln("cfgfs_readdir: %s", path);
+	if (0 == strcmp(path, "/")) {
+		filler(buf, ".", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "..", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "cfgfs", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "message", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "console.log", NULL, 0, (enum fuse_fill_dir_flags)0);
+		char strbuf[64];
+		struct string str = string_new_empty_from_stkbuf(strbuf, sizeof(strbuf));
+		pthread_rwlock_rdlock(&notify_list_lock);
+		char *p = notify_list;
+		for (;;) {
+			uint8_t len = (unsigned char)*p++;
+			if (!len) break;
+			string_set_contents_from_buf(&str, p, len);
+			const char *name = *str.data == '/' ? str.data+1 : str.data;
+			if (!strchr(name, '/'))
+				filler(buf, name, NULL, 0, (enum fuse_fill_dir_flags)0);
+			p += (size_t)len;
+		}
+		pthread_rwlock_unlock(&notify_list_lock);
+		string_free(&str);
+		return 0;
+	}
+	if (0 == strcmp(path, "/cfgfs")) {
+		filler(buf, ".", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "..", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "alias", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "keys", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "buffer.cfg", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "click.cfg", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "init.cfg", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "license.cfg", NULL, 0, (enum fuse_fill_dir_flags)0);
+		return 0;
+	}
+	if (0 == strcmp(path, "/cfgfs/alias")) {
+		filler(buf, ".", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "..", NULL, 0, (enum fuse_fill_dir_flags)0);
+		lua_State *L = lua_get_state("cfgfs_readdir");
+		if (!L) return -errno;
+		char strbuf[64];
+		struct string str = string_new_empty_from_stkbuf(strbuf, sizeof(strbuf));
+		 lua_getglobal(L, "_defined_alias_names");
+		 if (LUA_TTABLE != lua_type(L, -1)) goto notable;
+		 int t = lua_gettop(L);
+		  lua_pushnil(L);
+		  while (0 != lua_next(L, t)) {
+		  lua_pop(L, 1);
+		  if (LUA_TSTRING != lua_type(L, -1)) continue;
+		  const char *s = lua_tostring(L, -1);
+		  string_set_contents_from_fmt(&str, "%s.cfg", s);
+		  filler(buf, str.data, NULL, 0, (enum fuse_fill_dir_flags)0);
+		  }
+notable:
+		lua_pop(L, 1);
+		lua_release_state(L);
+		string_free(&str);
+		return 0;
+	}
+	if (0 == strcmp(path, "/cfgfs/keys")) {
+		filler(buf, ".", NULL, 0, (enum fuse_fill_dir_flags)0);
+		filler(buf, "..", NULL, 0, (enum fuse_fill_dir_flags)0);
+		char strbuf[64];
+		struct string str = string_new_empty_from_stkbuf(strbuf, sizeof(strbuf));
+		int i = 0;
+		for (const struct key_list_entry *p = keys; p->name; p++) {
+			i += 1;
+			for (const char *c = "+-^@"; *c; c++) {
+				string_set_contents_from_fmt(&str, "%c%d.cfg", *c, i);
+				filler(buf, str.data, NULL, 0, (enum fuse_fill_dir_flags)0);
+			}
+		}
+		string_free(&str);
+		return 0;
+	}
+	if (0 == strcmp(path, "/message")) {
+		return -ENOTSUP;
+	}
+	return -EINVAL;
+}
+
+#endif
+
+// ~
+
 __attribute__((minsize))
 static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	// https://github.com/libfuse/libfuse/blob/0105e06/include/fuse_common.h#L421
 	(void)conn;
+	(void)cfg;
 
 	// https://github.com/libfuse/libfuse/blob/f54eb86/include/fuse.h#L93
+#if defined(__linux__)
 	cfg->set_gid = true;
 	cfg->gid = getegid();
 	cfg->set_uid = true;
 	cfg->uid = geteuid();
 
+	// save a few filesystem calls by caching
+	// note: these affect the count required by the unmask mechanism
 	cfg->entry_timeout = DBL_MAX;
 	cfg->negative_timeout = 0;
 	cfg->attr_timeout = DBL_MAX;
 
+	// this option disables some caching thing in fuse.
+	// cfgfs used to keep it enabled, but it caused some problems like
+	// - "cat" terminal command only printing some of the file contents it read (total mystery)
+	// - keys rarely getting stuck ingame (no evidence but i think it was because of this. haven't had it happen after re-disabling the cache)
 	cfg->direct_io = true;
+#elif defined(CYGWIN)
+	// set_gid/set_uid don't seem to work with cygfuse
+	fs_uid = geteuid();
+	fs_gid = getegid();
 
+	// it seems like most of the options aren't used by cygfuse
+	// https://github.com/billziss-gh/winfsp/blob/master/src/dll/fuse3/fuse2to3.c#L300
+#endif
 	lua_State *L = lua_get_state("cfgfs_init");
 	if (L != NULL) {
 		 lua_getglobal(L, "_fire_startup");
@@ -726,6 +864,9 @@ static const struct fuse_operations cfgfs_oper = {
 	.read = cfgfs_read,
 	.write = cfgfs_write,
 	.release = cfgfs_release,
+#if defined(WITH_READDIR)
+	.readdir = cfgfs_readdir,
+#endif
 	.init = cfgfs_init,
 };
 
@@ -757,7 +898,9 @@ int main(int argc, char **argv) {
 	mlockall(MCL_CURRENT|MCL_FUTURE);
 #endif
 
+#if defined(__linux__)
 	// set CFGFS_RESTARTED if not running through cfgfs_run
+	// this is for the exec() at the end of the function (linux only)
 	if (!getenv("CFGFS_RUN_PID")) {
 		if (!getenv("CFGFS_RESTARTED") && !getenv("CFGFS_MAYBE_NOT_RESTARTED")) {
 			// first run
@@ -768,45 +911,28 @@ int main(int argc, char **argv) {
 			setenv("CFGFS_RESTARTED", "1", 1);
 		}
 	}
+#endif
 
 	cfg_init_badchars();
 	click_init_threadattr();
 
-	cli_scrollback_load_and_print();
-
-#if defined(SANITIZER)
-	eprintln("NOTE: cfgfs was built with %s", SANITIZER);
-#endif
-
-#if defined(PGO) && PGO == 1
-	eprintln("NOTE: this is a PGO profiling build, rebuild with PGO=2 when finished");
-#endif
-
-D	eprintln("NOTE: debug checks are enabled");
-V	eprintln("NOTE: verbose messages are enabled");
-VV	eprintln("NOTE: very verbose messages are enabled");
+	// === fuse stuff ===
 
 	enum fuse_main_rv rv;
-
-	check_env();
-
-	if (!test_paths(check_existing_script)) {
-		if (!test_paths(check_create_script)) {
-			eprintln("error: couldn't find or create a cfgfs script!");
-			rv = rv_cfgfs_lua_failed;
-			goto out_no_nothing;
-		}
-	}
-D	assert(NULL != getenv("CFGFS_SCRIPT"));
-
-	// ~ init fuse ~
 
 #if !defined(CYGFUSE)
 	fuse_set_log_func(cfgfs_log);
 #endif
 
+#if defined(CYGFUSE)
+ #define SSHWARN if (getenv("SSH_CONNECTION")) eprintln("warning: messages from cygfuse aren't visible over ssh")
+#else
+ #define SSHWARN ((void)0)
+#endif
+
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-#if !defined(CYGFUSE)
+
+#if defined(__linux__)
 	struct fuse_cmdline_opts opts;
 	if (0 != fuse_parse_cmdline(&args, &opts)) {
 		rv = rv_invalid_argument;
@@ -833,20 +959,24 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 		goto out_no_fuse;
 	}
 	opts.foreground = true;
-#else
-	struct cfgfs_opts {
+#elif defined(CYGFUSE)
+	struct cfgfs_cmdline_opts {
 		char *mountpoint;
 	} opts = {0};
-	if (argc != 2) {
-		eprintln("usage: cfgfs <mountpoint>");
+	if (argc <= 1) {
+		eprintln("usage: %s [options] <mountpoint>", args.argv[0]);
+		// it's missing the "FUSE options" part
+		fuse_lib_help(&args);
+		SSHWARN;
 		rv = rv_invalid_argument;
 		goto out_no_fuse;
 	}
-	opts.mountpoint = strdup(argv[1]);
+	opts.mountpoint = strdup(argv[argc-1]);
 #endif
 
 	struct fuse *fuse = fuse_new(&args, &cfgfs_oper, sizeof(cfgfs_oper), NULL);
 	if (fuse == NULL) {
+		SSHWARN;
 		rv = rv_fuse_setup_failed;
 		goto out_no_fuse;
 	}
@@ -866,7 +996,32 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 	g_fuse = fuse;
 #endif
 
-	// ~ init other things ~
+	// === cfgfs stuff ===
+
+	cli_scrollback_load_and_print();
+
+#if defined(SANITIZER)
+	eprintln("NOTE: cfgfs was built with %s", SANITIZER);
+#endif
+
+#if defined(PGO) && PGO == 1
+	eprintln("NOTE: this is a PGO profiling build, rebuild with PGO=2 when finished");
+#endif
+
+D	eprintln("NOTE: debug checks are enabled");
+V	eprintln("NOTE: verbose messages are enabled");
+VV	eprintln("NOTE: very verbose messages are enabled");
+
+	check_env();
+
+	if (!test_paths(check_existing_script)) {
+		if (!test_paths(check_create_script)) {
+			eprintln("error: couldn't find or create a cfgfs script!");
+			rv = rv_cfgfs_lua_failed;
+			goto out_no_nothing;
+		}
+	}
+D	assert(NULL != getenv("CFGFS_SCRIPT"));
 
 	click_init();
 	if (!lua_init()) {
@@ -879,9 +1034,9 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 	cli_input_init();
 	reloader_init();
 
-	// ~ boot up fuse ~
+	// === fuse loop ===
 
-#if !defined(CYGFUSE)
+#if defined(__linux__)
 	int loop_rv = fuse_loop_mt(fuse, &(struct fuse_loop_config){
 		.clone_fd = false,
 		.max_idle_threads = 5,
@@ -890,13 +1045,15 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 	if (loop_rv != 0 && !(loop_rv == SIGINT && main_quit_called)) {
 		rv = rv_fs_error;
 	}
-#else
-	extern int fuse3_loop_mt_31(struct fuse *, struct fuse_loop_config *);
-	int loop_rv = fuse3_loop_mt_31(fuse, &(struct fuse_loop_config){
-		.clone_fd = false,
-		.max_idle_threads = 5,
-	});
-	rv = (enum fuse_main_rv)loop_rv;
+#elif defined(CYGFUSE)
+	// fuse_loop_mt() doesn't work for some reason, it makes a link error
+	// only this antique version with slightly different syntax works
+	extern int fuse3_loop_mt_31(struct fuse3 *, int clone_fd);
+	int loop_rv = fuse3_loop_mt_31(fuse, 0);
+	rv = rv_ok;
+	if (loop_rv != 0) {
+		rv = rv_fs_error;
+	}
 #endif
 
 out_fuse_newed_and_mounted_and_signals_handled:

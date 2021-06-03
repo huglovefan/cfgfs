@@ -46,6 +46,7 @@ static inline void check_locker_name(const char *s) {
 	if (CHEAP_COMPARE(s, "attention") ||
 	    CHEAP_COMPARE(s, "cfgfs_init") ||
 	    CHEAP_COMPARE(s, "cfgfs_read") ||
+	    CHEAP_COMPARE(s, "cfgfs_readdir") ||
 	    CHEAP_COMPARE(s, "cfgfs_release/sft_message") ||
 	    CHEAP_COMPARE(s, "cfgfs_write/sft_console_log") ||
 	    CHEAP_COMPARE(s, "cfgfs_write/sft_message") ||

@@ -620,6 +620,9 @@ local cmd_fns = make_resetable_table()
 local cmdv_fns = make_resetable_table()
 local cmdp_fns = make_resetable_table()
 
+-- used by cfgfs_readdir()
+_defined_alias_names = make_resetable_table()
+
 cmd = setmetatable({--[[ empty ]]}, {
 	__index = function (self, k)
 		local fn = cmd_fns[k]
@@ -635,23 +638,29 @@ cmd = setmetatable({--[[ empty ]]}, {
 			if type(v) == 'function' then
 				cmd_fns[k] = v
 				cmd.alias(k, 'exec', 'cfgfs/alias/'..k)
+				_defined_alias_names[k] = true
 			elseif v ~= nil then
 				v = tostring(v)
 				cmd_fns[k] = function () return cfg(v) end
 				cmd.alias(k, 'exec', 'cfgfs/alias/'..k)
+				_defined_alias_names[k] = true
 			else
 				cmd_fns[k] = nil
 				cmd.alias(k, '')
 				-- ^ there's no "unalias" command so just set it to empty
+				_defined_alias_names[k] = nil
 			end
 		else
 			if type(v) == 'function' then
 				cmd_fns[k] = v
+				_defined_alias_names[k] = true
 			elseif v ~= nil then
 				v = tostring(v)
 				cmd_fns[k] = function () return cfg(v) end
+				_defined_alias_names[k] = true
 			else
 				cmd_fns[k] = nil
+				_defined_alias_names[k] = nil
 			end
 		end
 	end,
@@ -1013,7 +1022,7 @@ _get_contents = function (path)
 		end
 
 		if path == 'license.cfg' then
-			local f = assert(io.open('LICENSE', 'r'))
+			local f = assert(io.open((os.getenv('CFGFS_DIR') or '.')..'/LICENSE', 'r'))
 			for line in f:lines() do
 				cmd.echo(line)
 			end

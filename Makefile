@@ -261,6 +261,10 @@ ifeq (,$(IS_CYGWIN))
  LDLIBS += -lbsd
 endif
 
+ifneq (,$(IS_CYGWIN))
+ LDLIBS += -lDbgHelp
+endif
+
 # ------------------------------------------------------------------------------
 
 ## make targets
@@ -426,6 +430,7 @@ start: $(EXE)
 	export GAMEDIR=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf; \
 	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \
+	export MODNAME=tf; \
 	export NO_LISTUPDATE=1; \
 	export SteamAppId=440; \
 	[ ! -e env.sh ] || . ./env.sh; \
@@ -433,12 +438,16 @@ start: $(EXE)
 
 startcyg:
 	@set -e; \
+	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
+	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
+	ln -fs $(TF2MNT) $(MNTLNK); \
 	export CFGFS_DIR=$$PWD; \
 	export CFGFS_MOUNTPOINT=$(TF2MNT); \
 	export CFGFS_NO_SCROLLBACK=1; \
 	export GAMEDIR=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf; \
 	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \
-	export SteamAppId=440; \
+	export MODNAME=tf; \
+	export STEAMAPPID=440; \
 	[ ! -e env.sh ] || . ./env.sh; \
-	exec "$$CFGFS_DIR"/$(EXE) $(TF2MNT)
+	exec "$$CFGFS_DIR"/$(EXE) $(CFGFS_FLAGS) $(TF2MNT)

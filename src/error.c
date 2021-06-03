@@ -4,10 +4,17 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #if defined(__linux__)
  #include <execinfo.h>
+#endif
+
+#if defined(__CYGWIN__)
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+ #include <dbghelp.h>
 #endif
 
 #include "cli_output.h"
@@ -84,5 +91,36 @@ void print_c_backtrace_unlocked(void) {
 	if (1 != nptrs) fprintf(stderr, "backtrace() returned %d addresses\n", nptrs);
 	else            fprintf(stderr, "backtrace() returned 1 address\n");
 	backtrace_symbols_fd(buffer, nptrs, STDERR_FILENO);
+#endif
+
+#if defined(__CYGWIN__)
+	// https://stackoverflow.com/a/5699483
+	// almost useful but it doesn't show function names from cfgfs.exe
+	// apparently it needs debug info in .pdb format but cygwin can't make that
+
+	// https://docs.microsoft.com/en-us/windows/win32/api/dbghelp/nf-dbghelp-syminitialize
+	// > All DbgHelp functions, such as this one, are single threaded. Therefore, calls from more than one thread to this function will likely result in unexpected behavior or memory corruption.
+	static pthread_mutex_t dbghelp_lock = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_lock(&dbghelp_lock);
+
+	HANDLE *process = GetCurrentProcess();
+
+	static _Bool did_sym_initialize = 0;
+	if (!did_sym_initialize++) SymInitialize(process, NULL, TRUE);
+
+	void *stack[100];
+	int frames = CaptureStackBackTrace(0, 100, stack, NULL);
+
+	SYMBOL_INFO *symbol = calloc(sizeof(SYMBOL_INFO) + 256, 1);
+	symbol->MaxNameLen = 255;
+	symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+
+	for (int i = 0; i < frames; i++) {
+		SymFromAddr(process, (DWORD64)(stack[i]), 0, symbol);
+		fprintf(stderr, "%i: %s - 0x%0llX\n", frames - i - 1, symbol->Name, symbol->Address);
+	}
+
+	free(symbol);
+	pthread_mutex_unlock(&dbghelp_lock);
 #endif
 }
