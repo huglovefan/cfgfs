@@ -706,8 +706,10 @@ local get_cvars = function (t)
 	if #t == 0 then
 		return {}
 	end
-	while not game_window_is_active() do
-		wait_for_event('attention')
+	if __linux__ then
+		while not game_window_is_active() do
+			wait_for_event('attention')
+		end
 	end
 	local rv = {}
 	local incnt, outcnt = 0, 0
@@ -1248,7 +1250,8 @@ _cli_input = function (line)
 				--  something
 				-- at least things waiting for sh() processes do
 				--  get resumed early
-				if  not is_game_window_active()
+				if  __linux__
+				and not is_game_window_active()
 				and not attention_message_shown
 				then
 					println('note: execution won\'t be resumed until the game window is activated')
@@ -1271,7 +1274,8 @@ _cli_input = function (line)
 		cfg(line)
 	end
 
-	if  buffer_was_empty
+	if  __linux__
+	and buffer_was_empty
 	and not _buffer_is_empty()
 	and not is_game_window_active()
 	and not attention_message_shown
@@ -1926,7 +1930,7 @@ end
 local after_script_exec = function ()
 	update_notify_list()
 	create_nonexistent_notifys()
-	if not click_key_bound then
+	if __linux__ and not click_key_bound then
 		eprintln('\awarning: no function key bound to "cfgfs_click" found!')
 		eprintln(' why: one of the f1-f12 keys must be bound to "cfgfs_click" for delayed command execution to work')
 		eprintln(' how: add a keybind like "bind(\'f11\', \'cfgfs_click\')" and re-save script.lua')

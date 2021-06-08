@@ -51,7 +51,7 @@ void click_init_threadattr(void) {
 	pthread_attr_setstacksize(&thread_attr, 0xffff); // glibc default: 8 MB
 }
 
-void do_click(void) {
+static void do_click_real(void) {
 	double now = mono_ms();
 	if (
 #if defined(CFGFS_HAVE_ATTENTION)
@@ -60,29 +60,46 @@ void do_click(void) {
 	    (pending_click == 0.0 || (now-pending_click >= 50.0)) &&
 	    (0 == pthread_mutex_trylock(&click_lock))) {
 		pending_click = now;
+		bool success = false;
 #if defined(__linux__)
 		if (display != NULL && keycode != 0) {
 			XTestFakeKeyEvent(display, keycode, True, CurrentTime);
 			XTestFakeKeyEvent(display, keycode, False, CurrentTime);
 			XFlush(display);
+			success = true;
 		}
 #else
-		if (keycode != 0) {
-			INPUT inputs[2] = {{0}};
-			inputs[0].type = INPUT_KEYBOARD;
-			inputs[0].ki.wVk = (WORD)keycode;
-			inputs[1].type = INPUT_KEYBOARD;
-			inputs[1].ki.wVk = (WORD)keycode;
-			inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-			UINT sent = SendInput(2, inputs, sizeof(INPUT));
-			if (sent != 2) {
-				eprintln("SendInput: 0x%x", HRESULT_FROM_WIN32(GetLastError()));
+		// from https://github.com/PazerOP/tf2_bot_detector/pull/58
+#define copycmd "exec cfgfs/click"
+		HWND gamewin = FindWindowA("Valve001", NULL);
+		if (gamewin != NULL) {
+			COPYDATASTRUCT data = {0};
+			data.dwData = 0;
+			data.cbData = sizeof(copycmd);
+			data.lpData = copycmd;
+			if (!SendMessageTimeoutA(gamewin, WM_COPYDATA, 0, (LPARAM)&data, 0, 1000, NULL)) {
+				eprintln("click: failed to send command! (%d)", GetLastError());
+				success = true;
 			}
 		}
 #endif
+		if (!success) pending_click = 0.0;
 		pthread_mutex_unlock(&click_lock);
 	}
 }
+
+static bool click_at(double ms, pthread_t *thread);
+
+#if defined(__linux__)
+void do_click(void) {
+	do_click_real();
+}
+#else
+// click may block on windows, always create a thread for it
+void do_click(void) {
+	click_at(0.0, NULL);
+}
+#endif
 
 static bool click_set_key(const char *name);
 
@@ -175,7 +192,7 @@ static void *click_thread(void *msp) {
 	    "click: pthread_setcancelstate",
 	    goto end);
 
-	do_click();
+	do_click_real();
 end:
 	return NULL;
 }
