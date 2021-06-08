@@ -136,7 +136,32 @@ bool checkMountBeforeRun(bool tryRecover) {
 		MessageBoxA(null, "Looks like another instance of cfgfs is already running for this game. Kill the cfgfs.exe process and try again.".toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
 		return false;
 	}
-	if (cfgfsMountPoint.exists) {
+
+	bool mountDirExists = cfgfsMountPoint.exists;
+
+	// if the permissions on the mount directory/junction become
+	//  sufficiently fugged up, .exists() will return false but
+	//  .getAttributes() will throw an ERROR_ACCESS_DENIED
+	// drwxr-x---  1 Unknown+User Unknown+Group 0 Jun  8 13:49 cfg/
+	// edit: rebooting seems to fix this
+	if (!mountDirExists) {
+		try {
+			cfgfsMountPoint.getAttributes();
+		} catch (FileException e) {
+			switch (e.errno) {
+			case ERROR_FILE_NOT_FOUND: // doesn't exist (2)
+				mountDirExists = false;
+				break;
+			case ERROR_ACCESS_DENIED: // permission denied (5)
+				mountDirExists = true;
+				break;
+			default: // ?
+				throw e;
+			}
+		}
+	}
+
+	if (mountDirExists) {
 		// try to delete the mount directory if it already exists
 		// if it's mounted, this will succeed but it'll keep existing
 		// (but if the other check failed then it's probably not mounted)
@@ -385,34 +410,44 @@ void runMain(string[] args) {
 	})();
 	t.executeInNewThread();
 
-	while (true) {
+	bool ready = false;
+	int totalWaitMs = 5*1000;
+	int waitStepMs = 100;
+	int waitedSofarMs = 0;
+	while (waitedSofarMs < totalWaitMs) {
 		if (t.done) {
 			return;
 		}
 
 		if (isCfgfsReady(cfgfsMountPoint)) {
+			ready = true;
 			break;
 		}
 
-		Thread.sleep(dur!("msecs")(100));
+		Thread.sleep(dur!("msecs")(waitStepMs));
+		waitedSofarMs += waitStepMs;
 	}
 
-	string[] extraArgs = [];
-	version (linux) {
-		extraArgs ~= ["-condebug"];
-	}
-	version (Windows) {
-		extraArgs ~= ["+con_logfile", "custom/!cfgfs/cfg/console.log"];
-	}
-	extraArgs ~= ["+exec", "cfgfs/init"];
+	if (ready) {
+		string[] extraArgs = [];
+		version (linux) {
+			extraArgs ~= ["-condebug"];
+		}
+		version (Windows) {
+			extraArgs ~= ["+con_logfile", "custom/!cfgfs/cfg/console.log"];
+		}
+		extraArgs ~= ["+exec", "cfgfs/init"];
 
-	spawnProcess(
-		args[1..$]~extraArgs,
-		null,
-		Config.retainStdin|Config.retainStdout|Config.retainStderr
-	).wait();
-
+		spawnProcess(
+			args[1..$]~extraArgs,
+			null,
+			Config.retainStdin|Config.retainStdout|Config.retainStderr
+		).wait();
+	} else {
+		version (Windows) MessageBoxA(null, "cfgfs seems to be having problems starting. Giving up now.".toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
+	}
 	gameExited = true;
+
 	version (linux) {
 		// this fails if a file is open
 		foreach (delay; [0, 333, 333]) {
@@ -430,9 +465,13 @@ void runMain(string[] args) {
 	}
 	version (Windows) {
 		// it just werkz
-		HWND term = FindWindowA(null, termTitleForGameName(gameTitle).toStringz);
-		if (term != null) {
-			PostMessage(term, WM_CLOSE, 0, 0);
+		foreach (delay; [0, 333, 333]) {
+			Thread.sleep(dur!("msecs")(delay));
+			HWND term = FindWindowA(null, termTitleForGameName(gameTitle).toStringz);
+			if (term != null) {
+				PostMessage(term, WM_CLOSE, 0, 0);
+				break;
+			}
 		}
 	}
 
