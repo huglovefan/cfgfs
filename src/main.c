@@ -221,7 +221,7 @@ D	assert(pathlen >= 1);
 		}
 		memcpy(last_config_name, path, pathlen);
 		last_config_name_len = pathlen;
-		last_config_open_cnt = 0;
+		last_config_open_cnt = (is_open) ? 1 : 0;
 		unmask_cnt = 0;
 		return 0xf;
 	}
