@@ -674,7 +674,7 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	// - "cat" terminal command only printing some of the file contents it read (total mystery)
 	// - keys rarely getting stuck ingame (no evidence but i think it was because of this. haven't had it happen after re-disabling the cache)
 	cfg->direct_io = true;
-#elif defined(CYGWIN)
+#elif defined(CYGFUSE)
 	// set_gid/set_uid don't seem to work with cygfuse
 	fs_uid = geteuid();
 	fs_gid = getegid();
