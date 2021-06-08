@@ -33,6 +33,8 @@ end
 
 ## System requirements
 
+#### GNU/Linux
+
 - Lua 5.4 + basic scripting skills (recommended)
 - `libfuse3`
 - `libreadline`
@@ -44,23 +46,21 @@ end
 
 #### Windows
 
-`cfgfs` currently doesn't support Windows.
-~~Just about everything in this repository is done differently on Windows so most of the code would have to be rewritten for it.~~
+- basic Lua 5.4 scripting skills (recommended)
+- [WinFsp] with the `FUSE for Cygwin` component
+- DMD installed from [their installer](https://dlang.org/download.html)
+- [Cygwin] with the following packages:
+  - everything in the `base` category
+  - `clang`
+  - `libreadline-devel`
+  - `make`
+  - `git`
+  - `curl`
 
-~~Most importantly, the virtual filesystem library [`libfuse`] doesn't support Windows.
-There exist Windows-native alternatives like [WinFsp] that could work for making a cfgfs clone.~~
+[Cygwin]: https://cygwin.com/
+[WinFsp]: http://www.secfs.net/winfsp/
 
-[`libfuse`]: https://github.com/libfuse/libfuse
-[WinFsp]: https://github.com/billziss-gh/winfsp
-
-There's a half-done Windows port on the ~~[`windows`]~~ [`master`] branch.
-~~It might be usable at some point in the future.~~
-The basic technology works but some features are still missing or broken due to lack of motivation to implement them.
-The known "technical limitations" are listed in [this issue].
-
-[`windows`]: https://github.com/huglovefan/cfgfs/tree/windows
-[`master`]: https://github.com/huglovefan/cfgfs/tree/master
-[this issue]: https://github.com/huglovefan/cfgfs/issues/10
+(install instructions for windows aren't yet written. please be patient)
 
 ## Installation
 
