@@ -830,8 +830,10 @@ VV		eprintln("fopen %s: %s", path, strerror(errno));
 	}
 	fprintf(f, "--\n");
 	fprintf(f, "\n");
+#if defined(__linux__)
 	fprintf(f, "bind('f11', 'cfgfs_click')\n");
 	fprintf(f, "\n");
+#endif
 	fprintf(f, "cmd.echo('script.lua loaded')\n");
 	fclose(f);
 
