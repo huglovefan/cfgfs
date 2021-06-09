@@ -335,6 +335,9 @@ void runMain(string[] args) {
 	version (linux) {
 		mkdirRecurse(cfgfsMountPoint);
 	}
+	version (Windows) {
+		mkdirRecurse(cfgfsMountPoint.dirName);
+	}
 
 	auto t = task!(() {
 		try {
