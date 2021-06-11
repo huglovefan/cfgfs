@@ -14,7 +14,7 @@
 
 #pragma GCC diagnostic push
  #pragma GCC diagnostic ignored "-Wstrict-prototypes"
-  #include <readline.h>
+  #include <readline/readline.h>
 #pragma GCC diagnostic pop
 #include <readline/history.h>
 
@@ -230,6 +230,7 @@ void cli_input_deinit(void) {
 
 	writech(msgpipe[1], msg_exit);
 
+#if !defined(__FreeBSD__)
 	struct timespec ts = {0};
 	clock_gettime(CLOCK_REALTIME, &ts);
 	ts.tv_sec += 1;
@@ -237,6 +238,9 @@ void cli_input_deinit(void) {
 	if (err != 0) {
 		return;
 	}
+#else
+	pthread_join(thread, NULL);
+#endif
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));

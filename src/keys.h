@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #include <X11/X.h> // KeySym
 #else
  typedef unsigned int KeyCode;

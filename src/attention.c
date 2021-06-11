@@ -11,7 +11,7 @@
 #endif
 #include <unistd.h>
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #include <X11/Xutil.h>
 #else
  #define WIN32_LEAN_AND_MEAN
@@ -40,7 +40,7 @@ enum msg {
 // -----------------------------------------------------------------------------
 
 static const char *game_window_title = NULL;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  static Display *display;
  #define window_title_fmt "%s - OpenGL"
 #else
@@ -66,7 +66,7 @@ static bool wait_for_event(int conn) {
 }
 
 static void check_attention(Atom net_wm_name) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	Window focus;
 	int revert;
 	XGetInputFocus(display, &focus, &revert);
@@ -97,7 +97,7 @@ V		eprintln("attention: game_window_is_active=%d", newattn);
 lua_done:;
 	}
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	if (prop.value) XFree(prop.value);
 #endif
 }
@@ -121,7 +121,7 @@ static void *attention_main(void *ud) {
 	(void)ud;
 	set_thread_name("attention");
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	Atom net_active_window = XInternAtom(display, "_NET_ACTIVE_WINDOW", 0);
 	Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
 
@@ -162,7 +162,7 @@ void attention_init(void) {
 	if (thread != 0) return;
 	if (!getenv("GAMENAME")) return;
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	display = XOpenDisplay(NULL);
 	if (display == NULL) {
 		eprintln("attention: failed to open display!");
@@ -185,7 +185,7 @@ void attention_init(void) {
 err:
 	if (msgpipe[0] != -1) close(exchange(msgpipe[0], -1));
 	if (msgpipe[1] != -1) close(exchange(msgpipe[1], -1));
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
 #endif
 	thread = 0;
@@ -196,6 +196,7 @@ void attention_deinit(void) {
 
 	writech(msgpipe[1], msg_exit);
 
+#if !defined(__FreeBSD__)
 	struct timespec ts = {0};
 	clock_gettime(CLOCK_REALTIME, &ts);
 	ts.tv_sec += 1;
@@ -203,11 +204,14 @@ void attention_deinit(void) {
 	if (err != 0) {
 		return;
 	}
+#else
+	pthread_join(thread, NULL);
+#endif
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	XCloseDisplay(exchange(display, NULL));
 #endif
 

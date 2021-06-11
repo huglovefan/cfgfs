@@ -333,7 +333,7 @@ void lua_define_builtins(void *L) {
 	 luaL_setfuncs(L, l_rcon_fns, 0);
 	lua_pop(L, 1);
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	lua_pushboolean(L, 1); lua_setglobal(L, "__linux__");
 #else
 	lua_pushboolean(L, 0); lua_setglobal(L, "__linux__");

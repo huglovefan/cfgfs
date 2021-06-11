@@ -18,7 +18,7 @@
 #include "../macros.h"
 
 static lua_State *g_L;
-static pthread_mutex_t lua_mutex = PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP;
+static pthread_mutex_t lua_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static const char *prev_locked_by = NULL;
 static double      prev_locked_dur = 0.0;

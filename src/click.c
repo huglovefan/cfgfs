@@ -13,7 +13,7 @@
  #include <sys/prctl.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #include <X11/extensions/XTest.h>
  #include <X11/keysym.h>
 #else
@@ -30,7 +30,7 @@
 #include "keys.h"
 #include "lua.h"
 #include "macros.h"
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #include "xlib.h"
 #endif
 
@@ -38,7 +38,7 @@ static double pending_click;
 
 static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 static KeyCode keycode;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  static Display *display;
 #endif
 
@@ -61,7 +61,7 @@ static void do_click_real(void) {
 	    (0 == pthread_mutex_trylock(&click_lock))) {
 		pending_click = now;
 		bool success = false;
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 		if (display != NULL && keycode != 0) {
 			XTestFakeKeyEvent(display, keycode, True, CurrentTime);
 			XTestFakeKeyEvent(display, keycode, False, CurrentTime);
@@ -90,7 +90,7 @@ static void do_click_real(void) {
 
 static bool click_at(double ms, pthread_t *thread);
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 void do_click(void) {
 	do_click_real();
 }
@@ -107,7 +107,7 @@ __attribute__((minsize))
 void click_init(void) {
 	pthread_mutex_lock(&click_lock);
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	display = XOpenDisplay(NULL);
 	if (display == NULL) {
 		eprintln("click: failed to open display!");
@@ -126,7 +126,7 @@ out:
 __attribute__((minsize))
 void click_deinit(void) {
 	pthread_mutex_lock(&click_lock);
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
 #endif
 	keycode = 0;
@@ -138,7 +138,7 @@ void click_deinit(void) {
 // NOTE: assumes click_lock is held
 __attribute__((minsize))
 static bool click_set_key(const char *name) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	if (!display) return false;
 #endif
 	KeySym ks = keys_name2keysym(name);
@@ -146,7 +146,7 @@ static bool click_set_key(const char *name) {
 		eprintln("click_set_key: key '%s' not supported", name);
 		return false;
 	}
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	KeyCode kc = XKeysymToKeycode(display, ks);
 	if (kc == 0) {
 		eprintln("click_set_key: couldn't get key code for '%s'!", name);

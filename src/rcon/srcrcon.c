@@ -5,7 +5,7 @@
 #include "rcon.h"
 #include "srcrcon.h"
 
-#if !defined(__CYGWIN__)
+#if !defined(__CYGWIN__) && !defined(__FreeBSD__)
  #include <bsd/stdlib.h>
 #endif
 

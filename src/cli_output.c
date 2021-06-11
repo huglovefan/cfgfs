@@ -8,7 +8,7 @@
 
 #pragma GCC diagnostic push
  #pragma GCC diagnostic ignored "-Wstrict-prototypes"
-  #include <readline.h>
+  #include <readline/readline.h>
 #pragma GCC diagnostic pop
 
 #include "cli_input.h"

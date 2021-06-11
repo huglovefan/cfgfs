@@ -18,7 +18,16 @@ ifneq (,$(findstring Cygwin,$(shell uname -o)))
  EXEEXT := .exe
  LUA_CFLAGS ?= -Ilua-5.4.3/src
  LUA_LIBS ?= lua-5.4.3/src/liblua.a
-else
+endif
+
+ifneq (,$(findstring FreeBSD,$(shell uname -o)))
+ IS_FREEBSD := 1
+ LUA_PKG ?= lua-5.4
+ CPPFLAGS += -DCFGFS_HAVE_ATTENTION
+endif
+
+ifneq (,$(findstring Linux,$(shell uname -o)))
+ IS_LINUX := 1
  CPPFLAGS += -DCFGFS_HAVE_ATTENTION
 endif
 
@@ -100,6 +109,7 @@ CFLAGS += \
           -Wno-padded \
           -Wno-reserved-id-macro \
           -Wno-string-compare \
+          -Wno-thread-safety-analysis \
           -Wframe-larger-than=1024 \
 # .
 endif
@@ -232,8 +242,8 @@ LDLIBS += -lm
 CPPFLAGS += -DEXE='"$(EXE)"'
 
 # readline
-CPPFLAGS += -I/usr/include/readline
-LDLIBS += -lreadline
+CFLAGS += $(shell pkg-config --cflags readline)
+LDLIBS += $(shell pkg-config --libs   readline)
 
 # xlib (linux only)
 ifeq (,$(IS_CYGWIN))
@@ -257,7 +267,7 @@ else
 endif
 
 # src/rcon/srcrcon.c (arc4random_uniform)
-ifeq (,$(IS_CYGWIN))
+ifeq (,$(IS_CYGWIN)$(IS_FREEBSD))
  LDLIBS += -lbsd
 endif
 
@@ -409,17 +419,23 @@ analyze:
 
 MNTLNK := mnt
 
-ifeq (,$(IS_CYGWIN))
+ifneq (,$(IS_LINUX))
  STEAMDIR := ~/.local/share/Steam
-else
+endif
+ifneq (,$(IS_CYGWIN))
  STEAMDIR := /cygdrive/c/Program\ Files\ \(x86\)/Steam
+endif
+ifneq (,$(IS_FREEBSD))
+ STEAMDIR := ~/.steam/steam
 endif
 
 TF2MNT := $(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg
 
 start: $(EXE)
 	@set -e; \
-	mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
+	if [ -n "$(IS_LINUX)" ]; then \
+		mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
+	fi; \
 	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \

@@ -22,7 +22,7 @@
 #include "macros.h"
 #include "pipe_io.h"
 
-#if defined(__CYGWIN__)
+#if defined(__CYGWIN__) || defined(__FreeBSD__)
 
 struct inotify_event { char unused; };
 
@@ -253,6 +253,7 @@ void reloader_deinit(void) {
 
 	writech(msgpipe[1], msg_exit);
 
+#if !defined(__FreeBSD__)
 	struct timespec ts = {0};
 	clock_gettime(CLOCK_REALTIME, &ts);
 	ts.tv_sec += 1;
@@ -260,6 +261,9 @@ void reloader_deinit(void) {
 	if (err != 0) {
 		return;
 	}
+#else
+	pthread_join(thread, NULL);
+#endif
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));

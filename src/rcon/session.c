@@ -11,6 +11,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#if defined(__FreeBSD__)
+ #include <sys/socket.h>
+ #include <netinet/in.h>
+#endif
+
 #if defined(__linux__)
  #include <sys/prctl.h>
 #endif

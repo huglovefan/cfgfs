@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #define XK_LATIN1
  #define XK_MISCELLANY
  #include <X11/keysymdef.h>
@@ -11,7 +11,7 @@
  #include <windows.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #define WIN_LIN(win, lin) lin
 #else
  #define WIN_LIN(win, lin) win
@@ -135,7 +135,7 @@ const struct key_list_entry keys[] = {
 	{ "mwheelup", 0 },
 	{ "mwheeldown", 0 },
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	{ "a_button", 0 },
 	{ "b_button", 0 },
 	{ "x_button", 0 },

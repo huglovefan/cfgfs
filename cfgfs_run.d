@@ -182,7 +182,7 @@ bool checkMountBeforeRun(bool tryRecover) {
 
 } // version (Windows)
 
-version (linux) {
+version (Posix) {
 
 bool isCfgfsReady(string mountpoint) {
 	// test readiness by opening and closing a file from the filesystem
@@ -226,6 +226,7 @@ void runCfgfsCommand(string title, string[] cmd, string[string] env) {
 	).wait();
 }
 
+version (linux)
 bool checkMountBeforeRun(bool tryRecover) {
 	// context: we're about to mount cfgfs, but it needs to be not already mounted before we can do that
 
@@ -289,18 +290,26 @@ bool checkMountBeforeRun(bool tryRecover) {
 
 	// bad: unknown error
 	// the old version ignored these so just return true
-	version (linux) stderr.writeln(msg);
+	version (Posix) stderr.writeln(msg);
 	return true;
 }
 
-} // version (linux)
+version (FreeBSD)
+bool checkMountBeforeRun(bool tryRecover) {
+	if (isCfgfsReady(cfgfsMountPoint)) {
+		return false;
+	}
+	return true;
+}
+
+} // version (Posix)
 
 string termTitleForGameName(string gameName) {
 	return "cfgfs (%s)".format(gameName);
 }
 
 version (Windows) string exeName = "cfgfs.exe";
-version (linux) string exeName = "cfgfs";
+version (Posix) string exeName = "cfgfs";
 
 // -----------------------------------------------------------------------------
 
@@ -332,7 +341,7 @@ void runMain(string[] args) {
 		return;
 	}
 
-	version (linux) {
+	version (Posix) {
 		mkdirRecurse(cfgfsMountPoint);
 	}
 	version (Windows) {
@@ -341,7 +350,7 @@ void runMain(string[] args) {
 
 	auto t = task!(() {
 		try {
-			version (linux) {
+			version (Posix) {
 				linkConsoleLog(gameDir, cfgfsMountPoint);
 			}
 
@@ -403,12 +412,12 @@ void runMain(string[] args) {
 			// avoid leaving it mounted
 			checkMountBeforeRun(true);
 
-			version (linux) {
+			version (Posix) {
 				unlinkConsoleLog(gameDir, cfgfsMountPoint);
 			}
 		} catch (Throwable e) {
 			version (Windows) MessageBoxA(null, e.toString().toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
-			version (linux) stderr.writeln(e.toString());
+			version (Posix) stderr.writeln(e.toString());
 		}
 	})();
 	t.executeInNewThread();
@@ -433,7 +442,7 @@ void runMain(string[] args) {
 
 	if (ready) {
 		string[] extraArgs = [];
-		version (linux) {
+		version (Posix) {
 			extraArgs ~= ["-condebug"];
 		}
 		version (Windows) {
@@ -466,6 +475,21 @@ void runMain(string[] args) {
 			if (rv == 0) break;
 		}
 	}
+	version (FreeBSD) {
+		// this fails if a file is open
+		foreach (delay; [0, 333, 333]) {
+			Thread.sleep(dur!("msecs")(delay));
+			int rv = spawnProcess(
+				["umount", cfgfsMountPoint],
+				[
+					"LD_LIBRARY_PATH": null,
+					"LD_PRELOAD": null,
+				],
+				Config.retainStdin|Config.retainStdout|Config.retainStderr
+			).wait();
+			if (rv == 0) break;
+		}
+	}
 	version (Windows) {
 		// it just werkz
 		foreach (delay; [0, 333, 333]) {
@@ -483,13 +507,13 @@ void runMain(string[] args) {
 
 void main(string[] args) {
 	// todo: redirect stderr somewhere on windows so writing to it doesn't throw
-	version (linux) stderr.write("=== cfgfs_run ===\n");
+	version (Posix) stderr.write("=== cfgfs_run ===\n");
 	try {
 		runMain(args);
 	} catch (Throwable e) {
 		version (Windows) MessageBoxA(null, e.toString().toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
-		version (linux) stderr.writeln(e.toString());
+		version (Posix) stderr.writeln(e.toString());
 	} finally {
-		version (linux) stderr.write("=== /cfgfs_run ===\n");
+		version (Posix) stderr.write("=== /cfgfs_run ===\n");
 	}
 }

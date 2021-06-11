@@ -11,7 +11,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #pragma GCC diagnostic push
   #if defined(__clang__)
    #pragma GCC diagnostic ignored "-Wdocumentation"
@@ -50,6 +50,17 @@
 #include "misc/string.h"
 #include "optstring.h"
 #include "reloader.h"
+
+#if defined(__FreeBSD__)
+
+static char *get_current_dir_name(void) {
+	char *buf = malloc(PATH_MAX);
+	buf[0] = '\0';
+	getcwd(buf, PATH_MAX);
+	return buf;
+}
+
+#endif
 
 // -----------------------------------------------------------------------------
 
@@ -324,7 +335,7 @@ D		assert(rv < 0);
 
 // ~
 
-#if defined(CYGFUSE)
+#if defined(CYGFUSE) || defined(__FreeBSD__)
 
 // needed for "echo > file" to work
 
@@ -361,7 +372,7 @@ D		assert(rv < 0);
 
 // how many getattr() calls to ignore after the game has executed /unmask_next/name.cfg
 // note: the count is accurate only when the config actually exists outside cfgfs. if it doesn't exist, we get a few less events but have no good way to detect that
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #define UNMASK_IGNORE_CNT 3
 #elif defined(CYGFUSE)
  #define UNMASK_IGNORE_CNT 6
@@ -486,7 +497,7 @@ VV	eprintln("cfgfs_write: %s (size=%lu, offset=%lu)", path, size, offset);
 
 	switch (FH_GET_TYPE(fi->fh)) {
 	case sft_console_log: {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 		bool complete = (size >= 2 && data[size-1] == '\n');
 #else
 		bool complete = (size >= 2 && data[size-1] == '\n') &&
@@ -657,7 +668,7 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	(void)cfg;
 
 	// https://github.com/libfuse/libfuse/blob/f54eb86/include/fuse.h#L93
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	cfg->set_gid = true;
 	cfg->gid = getegid();
 	cfg->set_uid = true;
@@ -751,7 +762,7 @@ static void check_env(void) {
 // 3. script_440.lua  (SteamAppId set)
 // 4. script.lua
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #define STEAMAPPID_ENV "SteamAppId"
 #else
  #define STEAMAPPID_ENV "STEAMAPPID"
@@ -830,7 +841,7 @@ VV		eprintln("fopen %s: %s", path, strerror(errno));
 	}
 	fprintf(f, "--\n");
 	fprintf(f, "\n");
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	fprintf(f, "bind('f11', 'cfgfs_click')\n");
 	fprintf(f, "\n");
 #endif
@@ -859,7 +870,7 @@ VV		eprintln("fopen %s: %s", path, strerror(errno));
 
 static const struct fuse_operations cfgfs_oper = {
 	.getattr = cfgfs_getattr,
-#if defined(CYGFUSE)
+#if defined(CYGFUSE) || defined(__FreeBSD__)
 	.truncate = cfgfs_truncate,
 #endif
 	.open = cfgfs_open,
@@ -892,6 +903,7 @@ int main(int argc, char **argv) {
 
 	one_true_entry();
 
+#if !defined(__FreeBSD__)
 	// https://lwn.net/Articles/837019/
 	mallopt(M_MMAP_MAX, 0);
 	mallopt(M_TOP_PAD, 10*1024*1000);
@@ -899,8 +911,9 @@ int main(int argc, char **argv) {
 #if defined(__linux__)
 	mlockall(MCL_CURRENT|MCL_FUTURE);
 #endif
+#endif
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	// set CFGFS_RESTARTED if not running through cfgfs_run
 	// this is for the exec() at the end of the function (linux only)
 	if (!getenv("CFGFS_RUN_PID")) {
@@ -934,7 +947,7 @@ int main(int argc, char **argv) {
 
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	struct fuse_cmdline_opts opts;
 	if (0 != fuse_parse_cmdline(&args, &opts)) {
 		rv = rv_invalid_argument;
@@ -1038,7 +1051,7 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 
 	// === fuse loop ===
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	int loop_rv = fuse_loop_mt(fuse, &(struct fuse_loop_config){
 		.clone_fd = false,
 		.max_idle_threads = 5,
@@ -1084,7 +1097,7 @@ out_no_nothing:
 	 cli_scrollback_flush_and_free();
 	cli_unlock_output_norestore();
 	one_true_exit();
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
 	if (0 == unlink("/tmp/.cfgfs_reexec")) {
 		execvp(argv[0], argv);
 		perror("cfgfs: exec");
