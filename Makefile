@@ -279,7 +279,12 @@ endif
 
 ## make targets
 
-all: $(EXE) cfgfs_run$(EXEEXT)
+ALL_TARGETS := $(EXE) cfgfs_run$(EXEEXT)
+ifneq (,$(IS_FREEBSD))
+ ALL_TARGETS += cfgfs_run_32
+endif
+
+all: $(ALL_TARGETS)
 
 $(EXE): $(OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@ $(LDLIBS)
@@ -304,9 +309,14 @@ $(CFGFS_RUN_EXE): cfgfs_run.d
 
 # ~
 
+cfgfs_run_32: cfgfs_run_32.c
+	$(CC) -Os -m32 $^ -o $@
+
+# ~
+
 CFGFS_RM ?= rm -v
 clean:
-	@$(CFGFS_RM) -f -- $(EXE) $(CFGFS_RUN_EXE) $(OBJS) $(DEPS)
+	@$(CFGFS_RM) -f -- $(EXE) $(CFGFS_RUN_EXE) cfgfs_run_32 $(OBJS) $(DEPS)
 
 watch:
 	@while ls builtin.lua $(SRCS) $$(cat $(DEPS) | sed 's/^[^:]\+://;/^$$/d;s/\\//') | awk '!t[$$0]++' | entr -cs 'make||{ rv=$$?;printf "\a";exit $$rv;};: >/tmp/.cfgfs_reexec;pkill -INT cfgfs||rm /tmp/.cfgfs_reexec;make -s postbuild'; do\

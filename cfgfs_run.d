@@ -188,7 +188,7 @@ bool isCfgfsReady(string mountpoint) {
 	// test readiness by opening and closing a file from the filesystem
 	// this uses timeout to avoid freezing if the filesystem is in a bad state (frozen or crashed but left mounted)
 	auto p = spawnProcess(
-		["timeout", "0.1", "sh", "-c", `exec 2>/dev/null; exec <"$1/cfgfs/buffer.cfg"`, "--", mountpoint],
+		["timeout", "0.1", "sh", "-c", `exec 2>/dev/null; exec <"$1/cfgfs/buffer.cfg"`, "sh", mountpoint],
 		[
 			"LD_LIBRARY_PATH": null,
 			"LD_PRELOAD": null,
@@ -199,9 +199,11 @@ bool isCfgfsReady(string mountpoint) {
 
 void linkConsoleLog(string gameDir, string mountPoint) {
 	string log = cast(string)gameDir.chainPath("console.log").array;
-	string target = cast(string)mountPoint.chainPath("console.log").array;
+	string target = cast(string)chainPath("custom", "!cfgfs", "cfg", "console.log").array;
+	string oldfile = cast(string)gameDir.chainPath("console.log.old").array;
 	if (log.exists) {
-		log.rename("console.log.old");
+		if (log.isSymlink) log.remove();
+		else log.rename(oldfile);
 	}
 	symlink(target, log);
 }
@@ -218,7 +220,7 @@ void runCfgfsCommand(string title, string[] cmd, string[string] env) {
 			"xterm",
 				"-title", title,
 				"-e",
-				"sh", "-c", `[ ! -e env.sh ] || . ./env.sh; exec "$@"`, "--",
+				"sh", "-c", `[ ! -e env.sh ] || . ./env.sh; exec "$@"`, "sh",
 		] ~ cmd,
 		env,
 		Config.retainStdin|Config.retainStdout|Config.retainStderr,
@@ -441,7 +443,25 @@ void runMain(string[] args) {
 	}
 
 	if (ready) {
+		string[string] gameEnv;
+		string[] preCmd = [];
 		string[] extraArgs = [];
+
+		version (FreeBSD) {
+			if (getenv("LD_LIBRARY_PATH_TMP")) {
+				gameEnv["LD_LIBRARY_PATH"] = cast(string)fromStringz(getenv("LD_LIBRARY_PATH_TMP"));
+			}
+			if (getenv("LD_PRELOAD_TMP")) {
+				gameEnv["LD_PRELOAD"] = cast(string)fromStringz(getenv("LD_PRELOAD_TMP"));
+			}
+			if (getenv("PATH_TMP")) {
+				gameEnv["PATH"] = cast(string)fromStringz(getenv("PATH_TMP"));
+			}
+			if (args[1].endsWith(".sh")) {
+				preCmd ~= ["/compat/linux/bin/bash"];
+			}
+		}
+
 		version (Posix) {
 			extraArgs ~= ["-condebug"];
 		}
@@ -451,8 +471,8 @@ void runMain(string[] args) {
 		extraArgs ~= ["+exec", "cfgfs/init"];
 
 		spawnProcess(
-			args[1..$]~extraArgs,
-			null,
+			preCmd~args[1..$]~extraArgs,
+			gameEnv,
 			Config.retainStdin|Config.retainStdout|Config.retainStderr
 		).wait();
 	} else {

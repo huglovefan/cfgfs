@@ -7,6 +7,8 @@
 /.fndata.old
 /.thinlto-cache/
 /cfgfs
+/cfgfs_run
+/cfgfs_run_32
 /test/rv
 /lua-5.[0-9]*/
 /mnt
