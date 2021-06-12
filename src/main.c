@@ -64,26 +64,44 @@ static char *get_current_dir_name(void) {
 
 // -----------------------------------------------------------------------------
 
-#if !defined(CYGFUSE)
-static pthread_t g_main_thread;
-static bool main_quit_called;
+static pthread_mutex_t main_quit_lock = PTHREAD_MUTEX_INITIALIZER;
 
-__attribute__((minsize))
+static struct {
+	pthread_t main_thread;
+	struct fuse *fusep;
+} quitdata;
+static struct {
+	int signo;
+	bool err;
+} quitstat;
+
+static void init_quitdata(struct fuse *fusep) {
+	quitdata.main_thread = pthread_self();
+	quitdata.fusep = fusep;
+}
+static void clear_quitdata(void) {
+	pthread_mutex_lock(&main_quit_lock);
+	memset(&quitdata, 0, sizeof(quitdata));
+	pthread_mutex_unlock(&main_quit_lock);
+}
+
 void main_quit(void) {
-	pthread_t main_thread = g_main_thread;
-	if (main_thread) {
-		main_quit_called = true;
-		pthread_kill(main_thread, SIGINT);
+	pthread_mutex_lock(&main_quit_lock);
+#if defined(__linux__) || defined(__FreeBSD__)
+	if (quitdata.main_thread) {
+		quitstat.signo = SIGINT;
+		pthread_kill(quitdata.main_thread, SIGINT);
+		quitdata.main_thread = 0;
 	}
-}
 #else
-static struct fuse *g_fuse;
-
-__attribute__((minsize))
-void main_quit(void) {
-	if (g_fuse) fuse_exit(g_fuse);
-}
+	if (quitdata.fusep) {
+		fuse_exit(quitdata.fusep);
+		quitdata.fusep = 0;
+	}
 #endif
+	memset(&quitdata, 0, sizeof(quitdata));
+	pthread_mutex_unlock(&main_quit_lock);
+}
 
 // -----------------------------------------------------------------------------
 
@@ -898,6 +916,10 @@ enum fuse_main_rv {
 	rv_cfgfs_reexec_failed = 11,
 };
 
+#if defined(__FreeBSD__)
+ static void create_check_thread(const char *mountpoint);
+#endif
+
 __attribute__((minsize))
 int main(int argc, char **argv) {
 
@@ -1005,11 +1027,7 @@ int main(int argc, char **argv) {
 		goto out_fuse_newed_and_mounted;
 	}
 
-#if !defined(CYGFUSE)
-	g_main_thread = pthread_self();
-#else
-	g_fuse = fuse;
-#endif
+	init_quitdata(fuse);
 
 	// === cfgfs stuff ===
 
@@ -1051,13 +1069,18 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 
 	// === fuse loop ===
 
+#if defined(__FreeBSD__)
+	create_check_thread(opts.mountpoint);
+#endif
+
 #if defined(__linux__) || defined(__FreeBSD__)
 	int loop_rv = fuse_loop_mt(fuse, &(struct fuse_loop_config){
 		.clone_fd = false,
 		.max_idle_threads = 5,
 	});
 	rv = rv_ok;
-	if (loop_rv != 0 && !(loop_rv == SIGINT && main_quit_called)) {
+	if (loop_rv != 0 &&
+	    !(quitstat.signo && loop_rv == quitstat.signo && !quitstat.err)) {
 		rv = rv_fs_error;
 	}
 #elif defined(CYGFUSE)
@@ -1072,11 +1095,7 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 #endif
 
 out_fuse_newed_and_mounted_and_signals_handled:
-#if !defined(CYGFUSE)
-	g_main_thread = 0;
-#else
-	g_fuse = NULL;
-#endif
+	clear_quitdata();
 	fuse_remove_signal_handlers(se);
 out_fuse_newed_and_mounted:
 	fuse_unmount(fuse);
@@ -1106,3 +1125,48 @@ out_no_nothing:
 #endif
 	return (int)rv;
 }
+
+// -----------------------------------------------------------------------------
+
+#if defined(__FreeBSD__)
+
+// check that we're actually mounted and exit if we're not
+// if mounting fails on freebsd, fuse_mount() and others will pass but the
+//  mount point will remain empty
+
+struct check_thread_data {
+	char *mountpoint;
+};
+
+static void *check_thread_main(void *ud);
+
+static void create_check_thread(const char *mountpoint) {
+	struct check_thread_data *data = malloc(sizeof(struct check_thread_data));
+	data->mountpoint = strdup(mountpoint);
+	pthread_t thread;
+	pthread_create(&thread, NULL, check_thread_main, data);
+	pthread_detach(thread);
+}
+
+static void *check_thread_main(void *ud) {
+	struct check_thread_data *data = ud;
+#define fpath "/cfgfs/buffer.cfg"
+	size_t bufsz = strlen(data->mountpoint)+strlen(fpath)+1;
+	char *buf = malloc(bufsz);
+	snprintf(buf, bufsz, "%s%s", data->mountpoint, fpath);
+	int fd = open(buf, O_RDONLY);
+	if (fd == -1) {
+		eprintln("readiness check failed: fopen %s: %s", &fpath[1], strerror(errno));
+	}
+	if (fd != -1) close(fd);
+	free(buf);
+	free(data->mountpoint);
+	free(data);
+	if (fd == -1) {
+		quitstat.err = 1;
+		main_quit();
+	}
+	return NULL;
+}
+
+#endif
