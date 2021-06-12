@@ -8,10 +8,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#if defined(__linux__)
- #include <sys/prctl.h>
-#endif
-
 #pragma GCC diagnostic push
  #pragma GCC diagnostic ignored "-Wstrict-prototypes"
   #include <readline/readline.h>

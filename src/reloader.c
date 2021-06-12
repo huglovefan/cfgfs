@@ -10,7 +10,6 @@
 
 #if defined(__linux__)
  #include <sys/inotify.h>
- #include <sys/prctl.h>
 #endif
 
 #include <lauxlib.h>

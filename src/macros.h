@@ -46,23 +46,17 @@
 		_exchange_oldval; \
 	})
 
-#if defined(__linux__)
-// #include <sys/prctl.h>
-#define set_thread_name(s) \
-	({ \
-D		assert(strlen(s) <= 15, "thread name too long"); \
-		prctl(PR_SET_NAME, s, NULL, NULL, NULL); \
-	})
+#define set_thread_name(buf) \
+	do { \
+		assert(strlen(buf) <= 15, "thread name too long"); \
+		pthread_setname_np(pthread_self(), (buf)); \
+	} while (0)
+
 #define get_thread_name(buf) \
-	({ \
+	do { \
 		_Static_assert(sizeof(buf) >= 16, "buffer too small"); \
-		memset(buf, 0, sizeof(buf)); \
-		prctl(PR_GET_NAME, buf, NULL, NULL, NULL); \
-	})
-#else
-#define set_thread_name(s) ((void)(s))
-#define get_thread_name(buf) (*buf = 0)
-#endif
+		pthread_getname_np(pthread_self(), (buf), 16); \
+	} while (0)
 
 // get milliseconds since the start of the program
 #define mono_ms() \

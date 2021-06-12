@@ -9,10 +9,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#if defined(__linux__)
- #include <sys/prctl.h>
-#endif
-
 #if defined(__linux__) || defined(__FreeBSD__)
  #include <X11/extensions/XTest.h>
  #include <X11/keysym.h>

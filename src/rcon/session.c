@@ -16,10 +16,6 @@
  #include <netinet/in.h>
 #endif
 
-#if defined(__linux__)
- #include <sys/prctl.h>
-#endif
-
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>

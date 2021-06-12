@@ -6,9 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/poll.h>
-#if defined(__linux__)
- #include <sys/prctl.h>
-#endif
 #include <unistd.h>
 
 #if defined(__linux__) || defined(__FreeBSD__)
