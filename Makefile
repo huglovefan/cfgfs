@@ -11,31 +11,36 @@ endif
 
 CFLAGS ?= -O2 -g
 
-#STATIC_LIBFUSE := 1
+CPPFLAGS += $(MYCPPFLAGS)
+CFLAGS   += $(MYCFLAGS)
+LDFLAGS  += $(MYLDFLAGS)
+LDLIBS   += $(MYLIBS)
 
-ifneq (,$(findstring Cygwin,$(shell uname -o)))
+# ------------------------------------------------------------------------------
+
+osname := $(shell uname -o)
+
+ifneq (,$(findstring Linux,$(osname)))
+ IS_LINUX := 1
+endif
+
+ifneq (,$(findstring FreeBSD,$(osname)))
+ IS_FREEBSD := 1
+ LUA_PKG ?= lua-5.4
+endif
+
+ifneq (,$(findstring Cygwin,$(osname)))
  IS_CYGWIN := 1
  EXEEXT := .exe
  LUA_CFLAGS ?= -Ilua-5.4.3/src
  LUA_LIBS ?= lua-5.4.3/src/liblua.a
 endif
 
-ifneq (,$(findstring FreeBSD,$(shell uname -o)))
- IS_FREEBSD := 1
- LUA_PKG ?= lua-5.4
- CPPFLAGS += -DCFGFS_HAVE_ATTENTION
-endif
-
-ifneq (,$(findstring Linux,$(shell uname -o)))
- IS_LINUX := 1
- CPPFLAGS += -DCFGFS_HAVE_ATTENTION
-endif
-
 # ------------------------------------------------------------------------------
 
 EXE := $(shell basename -- "$$PWD")$(EXEEXT)
 
-HOT_OBJS = \
+OBJS = \
        src/main.o \
        src/buffer_list.o \
        src/lua/state.o \
@@ -45,8 +50,7 @@ HOT_OBJS = \
        src/click.o \
        src/buffers.o \
        src/cli_scrollback.o \
-
-COLD_OBJS = \
+       \
        src/lua/rcon.o \
        src/rcon/session.o \
        src/rcon/srcrcon.o \
@@ -61,16 +65,18 @@ COLD_OBJS = \
        src/xlib.o \
        src/error.o \
 
-ifneq (,$(IS_CYGWIN))
- COLD_OBJS := $(filter-out src/attention.o,$(COLD_OBJS))
- COLD_OBJS := $(filter-out src/xlib.o,$(COLD_OBJS))
+ifeq (,$(IS_LINUX)$(IS_FREEBSD))
+ OBJS := $(filter-out src/attention.o,$(OBJS))
+else
+ CPPFLAGS += -DCFGFS_HAVE_ATTENTION
 endif
 
-OBJS = $(HOT_OBJS) $(COLD_OBJS)
+ifeq (,$(IS_LINUX)$(IS_FREEBSD))
+ OBJS := $(filter-out src/xlib.o,$(OBJS))
+endif
+
 DEPS = $(OBJS:.o=.d)
 SRCS = $(OBJS:.o=.c)
-
-$(COLD_OBJS): CFLAGS += $(SIZE_OPT_CFLAGS)
 
 CFLAGS += -std=gnu11
 CPPFLAGS += -D_GNU_SOURCE
@@ -79,75 +85,66 @@ CPPFLAGS += -D_GNU_SOURCE
 
 ## compiler-specific flags
 
+warnings_clang := \
+	-Weverything \
+	-Werror=conditional-uninitialized \
+	-Werror=format \
+	-Werror=fortify-source \
+	-Werror=implicit-function-declaration \
+	-Werror=incompatible-function-pointer-types \
+	-Werror=incompatible-pointer-types \
+	-Werror=int-conversion \
+	-Werror=return-type \
+	-Werror=sometimes-uninitialized \
+	-Werror=uninitialized \
+	-Wno-atomic-implicit-seq-cst \
+	-Wno-c++98-compat \
+	-Wno-disabled-macro-expansion \
+	-Wno-error=unknown-warning-option \
+	-Wno-format-nonliteral \
+	-Wno-gnu-auto-type \
+	-Wno-gnu-binary-literal \
+	-Wno-gnu-conditional-omitted-operand \
+	-Wno-gnu-statement-expression \
+	-Wno-gnu-zero-variadic-macro-arguments \
+	-Wno-language-extension-token \
+	-Wno-padded \
+	-Wno-reserved-id-macro \
+	-Wno-string-compare \
+	-Wno-thread-safety-analysis \
+	-Wframe-larger-than=1024 \
+
+warnings_gcc := \
+	-Wall \
+	-Wextra \
+	-Wmissing-prototypes \
+	-Wstrict-overflow=5 \
+	-Werror=implicit-function-declaration \
+	-Werror=incompatible-pointer-types \
+	-Wno-address \
+	-Wno-bool-operation \
+	-Wno-format-zero-length \
+	-Wno-misleading-indentation \
+
+warnings_tcc := \
+	-Wall \
+
 # clang
 ifneq (,$(findstring clang,$(CC)))
-CPPFLAGS += -MMD -MP
-SIZE_OPT_CFLAGS = -Oz
-CFLAGS += \
-          -Weverything \
-          -Werror=conditional-uninitialized \
-          -Werror=format \
-          -Werror=fortify-source \
-          -Werror=implicit-function-declaration \
-          -Werror=incompatible-function-pointer-types \
-          -Werror=incompatible-pointer-types \
-          -Werror=int-conversion \
-          -Werror=return-type \
-          -Werror=sometimes-uninitialized \
-          -Werror=uninitialized \
-          -Wno-atomic-implicit-seq-cst \
-          -Wno-c++98-compat \
-          -Wno-disabled-macro-expansion \
-          -Wno-error=unknown-warning-option \
-          -Wno-format-nonliteral \
-          -Wno-gnu-auto-type \
-          -Wno-gnu-binary-literal \
-          -Wno-gnu-conditional-omitted-operand \
-          -Wno-gnu-statement-expression \
-          -Wno-gnu-zero-variadic-macro-arguments \
-          -Wno-language-extension-token \
-          -Wno-padded \
-          -Wno-reserved-id-macro \
-          -Wno-string-compare \
-          -Wno-thread-safety-analysis \
-          -Wframe-larger-than=1024 \
-# .
-endif
-
-# tcc
-ifneq (,$(findstring tcc,$(CC)))
-LDFLAGS += -rdynamic # keep tcc_backtrace() even if no direct calls
-CFLAGS += \
-          -Wall \
-# .
+ CPPFLAGS += -MMD -MP
+ CFLAGS += $(warnings_clang)
 endif
 
 # gcc
 ifneq (,$(findstring gcc,$(CC)))
-CPPFLAGS += -MMD -MP
-SIZE_OPT_CFLAGS = -Os
-CFLAGS += \
-          -Wall \
-          -Wextra \
-          -Wmissing-prototypes \
-          -Wstrict-overflow=5 \
-          -Werror=implicit-function-declaration \
-          -Werror=incompatible-pointer-types \
-          -Wno-address \
-          -Wno-bool-operation \
-          -Wno-format-zero-length \
-          -Wno-misleading-indentation \
-# .
+ CPPFLAGS += -MMD -MP
+ CFLAGS += $(warnings_gcc)
 endif
 
-# set thinlto-cache-dir if using clang + lld + -flto=thin
-ifneq (,$(findstring clang,$(CC)))
- ifneq (,$(findstring -flto=thin,$(CFLAGS)))
-  ifneq (,$(findstring lld,$(LD)))
-   LDFLAGS += -Wl,--thinlto-cache-dir=.thinlto-cache
-   LDFLAGS += -Wl,--thinlto-cache-policy=cache_size_bytes=500m
-  endif
- endif
+# tcc
+ifneq (,$(findstring tcc,$(CC)))
+ LDFLAGS += -rdynamic # keep tcc_backtrace() even if no direct calls
+ CFLAGS += $(warnings_tcc)
 endif
 
 # ------------------------------------------------------------------------------
@@ -195,23 +192,6 @@ ifneq ($(REPORTED_CFG_SIZE),)
  CFLAGS += -DREPORTED_CFG_SIZE="$(REPORTED_CFG_SIZE)"
 endif
 
-# gcc analyzer
-ifeq ($(A),1)
- CFLAGS += --analyzer
- LDFLAGS += --analyzer
-endif
-
-# pgo
-ifeq ($(PGO),1)
- CFLAGS   += -fprofile-generate
- LDFLAGS  += -fprofile-generate
- CPPFLAGS += -DPGO=1
-else ifeq ($(PGO),2)
- $(shell llvm-profdata merge -output=default.profdata default_*.profraw)
- CFLAGS  += -fprofile-use
- LDFLAGS += -fprofile-use
-endif
-
 # sanitizer
 ifneq ($(SANITIZER),)
  CPPFLAGS += -DSANITIZER=\"$(SANITIZER)\"
@@ -236,17 +216,21 @@ endif
 
 CPPFLAGS += -pthread
 LDLIBS += -pthread
+
 LDLIBS += -ldl
 LDLIBS += -lm
 
 CPPFLAGS += -DEXE='"$(EXE)"'
 
 # readline
-CFLAGS += $(shell pkg-config --cflags readline)
-LDLIBS += $(shell pkg-config --libs   readline)
+READLINE_PKG    ?= readline
+READLINE_CFLAGS ?= $(shell pkg-config --cflags $(READLINE_PKG))
+READLINE_LIBS   ?= $(shell pkg-config --libs   $(READLINE_PKG))
+CFLAGS += $(READLINE_CFLAGS)
+LDLIBS += $(READLINE_LIBS)
 
-# xlib (linux only)
-ifeq (,$(IS_CYGWIN))
+# xlib
+ifneq (,$(IS_LINUX)$(IS_FREEBSD))
  LDLIBS += -lX11 -lXtst
 endif
 
@@ -258,16 +242,16 @@ CFLAGS += $(LUA_CFLAGS)
 LDLIBS += $(LUA_LIBS)
 
 # fuse
+FUSE_PKG    ?= fuse3
+FUSE_CFLAGS ?= $(shell pkg-config --cflags $(FUSE_PKG))
+FUSE_LIBS   ?= $(shell pkg-config --libs   $(FUSE_PKG))
+CFLAGS += $(FUSE_CFLAGS)
+LDLIBS += $(FUSE_LIBS)
+
 CPPFLAGS += -DFUSE_USE_VERSION=35
-CFLAGS += $(shell pkg-config --cflags fuse3)
-ifeq ($(STATIC_LIBFUSE),)
- LDLIBS += $(shell pkg-config --libs fuse3)
-else
- LDLIBS += -l:libfuse3.a
-endif
 
 # src/rcon/srcrcon.c (arc4random_uniform)
-ifeq (,$(IS_CYGWIN)$(IS_FREEBSD))
+ifneq (,$(IS_LINUX))
  LDLIBS += -lbsd
 endif
 
@@ -420,11 +404,6 @@ test:
 testbuild:
 	@exec timeout 60 sh test/build.sh
 
-scan:
-	@scan-build --use-cc=clang make -Bs VV=1
-analyze:
-	@CC=gcc CFLAGS='-O2 -fdiagnostics-color -flto' LDFLAGS='-O2 -fdiagnostics-color -flto' make -Bs A=1 VV=1
-
 # ------------------------------------------------------------------------------
 
 MNTLNK := mnt
@@ -432,11 +411,11 @@ MNTLNK := mnt
 ifneq (,$(IS_LINUX))
  STEAMDIR := ~/.local/share/Steam
 endif
-ifneq (,$(IS_CYGWIN))
- STEAMDIR := /cygdrive/c/Program\ Files\ \(x86\)/Steam
-endif
 ifneq (,$(IS_FREEBSD))
  STEAMDIR := ~/.steam/steam
+endif
+ifneq (,$(IS_CYGWIN))
+ STEAMDIR := /cygdrive/c/Program\ Files\ \(x86\)/Steam
 endif
 
 TF2MNT := $(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg

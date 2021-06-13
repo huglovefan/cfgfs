@@ -1037,10 +1037,6 @@ int main(int argc, char **argv) {
 	eprintln("NOTE: cfgfs was built with %s", SANITIZER);
 #endif
 
-#if defined(PGO) && PGO == 1
-	eprintln("NOTE: this is a PGO profiling build, rebuild with PGO=2 when finished");
-#endif
-
 D	eprintln("NOTE: debug checks are enabled");
 V	eprintln("NOTE: verbose messages are enabled");
 VV	eprintln("NOTE: very verbose messages are enabled");
