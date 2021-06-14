@@ -44,6 +44,13 @@ end
 - standard development tools (`clang` or `gcc`, `git`, `make`)
 - D language compiler (`dmd` only)
 
+#### FreeBSD
+
+```sh
+pkg install fusefs-libs3 git gmake libX11 libXtst lua54 pkgconf readline xterm
+# get dmd from dlang.org
+```
+
 #### Windows
 
 - basic Lua 5.4 scripting skills (recommended)
@@ -60,9 +67,9 @@ end
 [Cygwin]: https://cygwin.com/
 [WinFsp]: http://www.secfs.net/winfsp/
 
-(install instructions for windows aren't yet written. please be patient)
-
 ## Installation
+
+(these instructions are for linux only)
 
 1. Clone the repository and `cd` to it: `git clone https://github.com/huglovefan/cfgfs && cd cfgfs`
 2. Run `make && make install` to compile cfgfs and install the `cfgfs_run` script  
