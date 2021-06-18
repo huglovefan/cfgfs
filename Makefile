@@ -20,6 +20,8 @@ LDLIBS   += $(MYLIBS)
 
 osname := $(shell uname -o)
 
+RELOADER_OBJ ?= src/reloader.o
+
 ifneq (,$(findstring Linux,$(osname)))
  IS_LINUX := 1
 endif
@@ -27,6 +29,7 @@ endif
 ifneq (,$(findstring FreeBSD,$(osname)))
  IS_FREEBSD := 1
  LUA_PKG ?= lua-5.4
+ RELOADER_OBJ := src/reloader_kqueue.o
 endif
 
 ifneq (,$(findstring Cygwin,$(osname)))
@@ -57,7 +60,7 @@ OBJS = \
        src/pipe_io.o \
        src/attention.o \
        src/misc/string.o \
-       src/reloader.o \
+       $(RELOADER_OBJ) \
        src/cli_input.o \
        src/misc/caretesc.o \
        src/keys.o \
@@ -257,6 +260,11 @@ endif
 
 ifneq (,$(IS_CYGWIN))
  LDLIBS += -lDbgHelp
+endif
+
+# backtrace() in error.c
+ifneq (,$(IS_FREEBSD))
+ LDLIBS += -lexecinfo
 endif
 
 # ------------------------------------------------------------------------------

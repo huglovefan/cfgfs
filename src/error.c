@@ -7,7 +7,7 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__FreeBSD__)
  #include <execinfo.h>
 #endif
 
@@ -84,11 +84,20 @@ void print_c_backtrace_unlocked(void) {
 		}
 	}
 
+// backtrace() returns int on linux, size_t on freebsd
 #if defined(__linux__)
+ #define BT_RV_T   int
+ #define BT_RV_FMT "%d"
+#elif defined(__FreeBSD__)
+ #define BT_RV_T   size_t
+ #define BT_RV_FMT "%zu"
+#endif
+
+#if defined(__linux__) || defined(__FreeBSD__)
 #define bt_depth 64
 	void *buffer[bt_depth];
-	int nptrs = backtrace(buffer, bt_depth);
-	if (1 != nptrs) fprintf(stderr, "backtrace() returned %d addresses\n", nptrs);
+	BT_RV_T nptrs = backtrace(buffer, bt_depth);
+	if (1 != nptrs) fprintf(stderr, "backtrace() returned " BT_RV_FMT " addresses\n", nptrs);
 	else            fprintf(stderr, "backtrace() returned 1 address\n");
 	backtrace_symbols_fd(buffer, nptrs, STDERR_FILENO);
 #endif

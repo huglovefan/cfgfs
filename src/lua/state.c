@@ -105,6 +105,8 @@ D	assert(L == g_L);
 	lua_unlock_state();
 }
 
+#define LOCK_TIMEOUT_SEC 2
+
 bool lua_lock_state_real(const char *who) {
 D	check_locker_name(who);
 	double lock_start = mono_ms();
@@ -112,14 +114,22 @@ D	check_locker_name(who);
 	int err = pthread_mutex_trylock(&lua_mutex);
 	if (unlikely(err == EBUSY)) {
 		contested = true;
-		err = pthread_mutex_lock(&lua_mutex);
+		struct timespec ts = {0};
+		clock_gettime(CLOCK_REALTIME, &ts);
+		ts.tv_sec += LOCK_TIMEOUT_SEC;
+		err = pthread_mutex_timedlock(&lua_mutex, &ts);
 	}
 	double lock_end = mono_ms();
 	double lock_dur = lock_end-lock_start;
 
 	if (unlikely(err != 0)) {
-V		eprintln("lua_lock_state: %s couldn't get lock: %s",
-		    who, strerror(err));
+		if (err == ETIMEDOUT) {
+			eprintln("warning: %s couldn't get lua access after %ds",
+			    who, LOCK_TIMEOUT_SEC);
+		} else V {
+V			eprintln("lua_lock_state: %s couldn't get lock: %s",
+			    who, strerror(err));
+		}
 		errno = err;
 		return false;
 	}

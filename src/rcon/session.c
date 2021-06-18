@@ -227,10 +227,12 @@ static void *rcon_reader_main(void *ud) {
 auth_done:
 	{
 		lua_State *L = lua_get_state("rcon_reader");
-		 lua_getglobal(L, "_rcon_status");
-		  lua_pushstring(L, auth_ok ? "auth_ok" : "auth_fail");
-		lua_call(L, 1, 0);
-		lua_release_state(L);
+		if (L) {
+			 lua_getglobal(L, "_rcon_status");
+			  lua_pushstring(L, auth_ok ? "auth_ok" : "auth_fail");
+			lua_call(L, 1, 0);
+			lua_release_state(L);
+		}
 	}
 	if (auth) src_rcon_message_free(auth);
 	if (!auth_ok) goto cleanup;

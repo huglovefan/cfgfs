@@ -8,12 +8,7 @@
 #include <sys/poll.h>
 #include <unistd.h>
 
-#if defined(__linux__) || defined(__FreeBSD__)
- #include <X11/Xutil.h>
-#else
- #define WIN32_LEAN_AND_MEAN
- #include <windows.h>
-#endif
+#include <X11/Xutil.h>
 
 #include <lua.h>
 
@@ -37,12 +32,8 @@ enum msg {
 // -----------------------------------------------------------------------------
 
 static const char *game_window_title = NULL;
-#if defined(__linux__) || defined(__FreeBSD__)
- static Display *display;
- #define window_title_fmt "%s - OpenGL"
-#else
- #define window_title_fmt "%s"
-#endif
+static Display *display;
+#define window_title_fmt "%s - OpenGL"
 
 static bool wait_for_event(int conn) {
 	switch (rdselect(msgpipe[0], conn)) {
@@ -63,7 +54,6 @@ static bool wait_for_event(int conn) {
 }
 
 static void check_attention(Atom net_wm_name) {
-#if defined(__linux__) || defined(__FreeBSD__)
 	Window focus;
 	int revert;
 	XGetInputFocus(display, &focus, &revert);
@@ -72,11 +62,6 @@ static void check_attention(Atom net_wm_name) {
 	XGetTextProperty(display, focus, &prop, net_wm_name);
 
 	const char *title = (const char *)prop.value;
-#else
-	char title[256];
-	title[0] = '\0';
-	int len = GetWindowTextA(GetForegroundWindow(), title, sizeof(title));
-#endif
 
 VV	eprintln("attention: title=\"%s\"", title);
 	bool oldattn = game_window_is_active;
@@ -94,9 +79,7 @@ V		eprintln("attention: game_window_is_active=%d", newattn);
 lua_done:;
 	}
 
-#if defined(__linux__) || defined(__FreeBSD__)
 	if (prop.value) XFree(prop.value);
-#endif
 }
 
 static bool did_active_window_change(Atom net_active_window) {
@@ -118,7 +101,6 @@ static void *attention_main(void *ud) {
 	(void)ud;
 	set_thread_name("attention");
 
-#if defined(__linux__) || defined(__FreeBSD__)
 	Atom net_active_window = XInternAtom(display, "_NET_ACTIVE_WINDOW", 0);
 	Atom net_wm_name = XInternAtom(display, "_NET_WM_NAME", 0);
 
@@ -128,7 +110,6 @@ static void *attention_main(void *ud) {
 
 	int conn = ConnectionNumber(display);
 	assert(conn >= 0);
-#endif
 
 	char *title;
 	if (unlikely(-1 == asprintf(&title, window_title_fmt, getenv("GAMENAME")))) {
@@ -159,14 +140,12 @@ void attention_init(void) {
 	if (thread != 0) return;
 	if (!getenv("GAMENAME")) return;
 
-#if defined(__linux__) || defined(__FreeBSD__)
 	display = XOpenDisplay(NULL);
 	if (display == NULL) {
 		eprintln("attention: failed to open display!");
 		goto err;
 	}
 	XSetErrorHandler(cfgfs_handle_xerror);
-#endif
 
 	check_minus1(
 	    pipe(msgpipe),
@@ -182,9 +161,7 @@ void attention_init(void) {
 err:
 	if (msgpipe[0] != -1) close(exchange(msgpipe[0], -1));
 	if (msgpipe[1] != -1) close(exchange(msgpipe[1], -1));
-#if defined(__linux__) || defined(__FreeBSD__)
 	if (display != NULL) XCloseDisplay(exchange(display, NULL));
-#endif
 	thread = 0;
 }
 
@@ -208,9 +185,7 @@ void attention_deinit(void) {
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));
 
-#if defined(__linux__) || defined(__FreeBSD__)
 	XCloseDisplay(exchange(display, NULL));
-#endif
 
 	thread = 0;
 }
