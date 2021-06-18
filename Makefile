@@ -262,6 +262,11 @@ ifneq (,$(IS_CYGWIN))
  LDLIBS += -lDbgHelp
 endif
 
+# backtrace() in error.c
+ifneq (,$(IS_FREEBSD))
+ LDLIBS += -lexecinfo
+endif
+
 # ------------------------------------------------------------------------------
 
 ## make targets

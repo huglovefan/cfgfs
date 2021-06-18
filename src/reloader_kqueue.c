@@ -79,7 +79,9 @@ poll:
 		int evcnt = kevent(kq, NULL, 0, &ev, 1, NULL);
 		check_minus1(evcnt, "reloader: kevent", goto out);
 
+#if defined(__linux__)
 		if (evcnt == 0) goto poll; // ???
+#endif
 
 		if ((int)ev.ident == msgpipe[0]) {
 			switch (readch(msgpipe[0])) {
@@ -94,6 +96,9 @@ poll:
 			}
 			assert_unreachable();
 		}
+
+		// give them some time to actually write out the file
+		usleep(10*1000);
 
 		pthread_mutex_lock(&lock);
 
@@ -191,7 +196,7 @@ int l_reloader_add_watch(void *L) {
 	char *path2 = NULL;
 	struct watch *newwatches;
 
-	fd = open(path, O_RDONLY|O_NOATIME|O_CLOEXEC);
+	fd = open(path, O_RDONLY|O_CLOEXEC);
 	check_minus1(fd, "reloader_add_watch: open", goto err);
 
 	path2 = strdup(path);

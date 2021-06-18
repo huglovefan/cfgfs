@@ -1927,9 +1927,10 @@ local before_script_exec = function ()
 	cmd.cfgfs_source = function () return cmd.echo(agpl_source_url) end
 	cmd.release_all_keys = assert(release_all_keys)
 end
-local after_script_exec = function ()
+local after_script_exec = function (path)
 	update_notify_list()
 	create_nonexistent_notifys()
+	_reloader_add_watch(path)
 	if __linux__ and not click_key_bound then
 		eprintln('\awarning: no function key bound to "cfgfs_click" found!')
 		eprintln(' why: one of the f1-f12 keys must be bound to "cfgfs_click" for delayed command execution to work')
@@ -1939,7 +1940,8 @@ end
 
 -- reload and re-run script.lua
 _reload_1 = function ()
-	local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or 'script.lua')
+	local path = (os.getenv('CFGFS_SCRIPT') or 'script.lua')
+	local ok, err = loadfile(path)
 	if not ok then
 		eprintln('\aerror: %s', err)
 		eprintln('failed to reload script.lua!')
@@ -1952,7 +1954,7 @@ _reload_1 = function ()
 
 	before_script_exec()
 	local ok, err = xpcall(script, debug.traceback)
-	after_script_exec()
+	after_script_exec(path)
 
 	if not ok then
 		eprintln('\aerror: %s', err)
@@ -2061,7 +2063,8 @@ end
 
 --------------------------------------------------------------------------------
 
-local ok, err = loadfile(os.getenv('CFGFS_SCRIPT') or 'script.lua')
+local path = (os.getenv('CFGFS_SCRIPT') or 'script.lua')
+local ok, err = loadfile(path)
 if not ok then
 	eprintln('\aerror: %s', err)
 	eprintln('failed to load script.lua!')
@@ -2071,7 +2074,7 @@ local script = ok
 
 before_script_exec()
 local ok, err = xpcall(script, debug.traceback)
-after_script_exec()
+after_script_exec(path)
 
 if not ok then
 	eprintln('\aerror: %s', err)
