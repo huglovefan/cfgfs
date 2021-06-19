@@ -16,6 +16,8 @@ import core.thread.osthread;
 import core.time;
 import core.stdc.stdlib;
 
+import core.sys.freebsd.sys.sysctl;
+
 import core.sys.windows.windows;
 
 string findGameExe(string[] args) {
@@ -313,6 +315,20 @@ string termTitleForGameName(string gameName) {
 version (Windows) string exeName = "cfgfs.exe";
 version (Posix) string exeName = "cfgfs";
 
+version (FreeBSD)
+string getsysctl(const string name) {
+	const(char) *cname = name.toStringz;
+	ulong len;
+	if (0 != sysctlbyname(cname, null, &len, null, 0)) {
+		return null;
+	}
+	char[] s = new char[len];
+	if (0 != sysctlbyname(cname, cast(char*)s, &len, null, 0)) {
+		return null;
+	}
+	return cast(string)s[0..len];
+}
+
 // -----------------------------------------------------------------------------
 
 shared string cfgfsDir;
@@ -458,7 +474,9 @@ void runMain(string[] args) {
 				gameEnv["PATH"] = cast(string)fromStringz(getenv("PATH_TMP"));
 			}
 			if (args[1].endsWith(".sh")) {
-				preCmd ~= ["/compat/linux/bin/bash"];
+				string linuxDir = getsysctl("compat.linux.emul_path");
+				if (!linuxDir) linuxDir = "/compat/linux";
+				preCmd ~= [linuxDir~"/bin/bash"];
 			}
 		}
 
