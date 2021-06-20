@@ -123,8 +123,7 @@ union sft_ptr {
 
 // -----------------------------------------------------------------------------
 
-static char *last_config_name = NULL;
-static size_t last_config_name_len = 0;
+static struct string last_config_name = {.autogrow = 1};
 
 static int last_config_open_cnt = 0;
 static int unmask_cnt = 0;
@@ -225,10 +224,7 @@ D	assert(pathlen >= 1);
 		if (!found) return -ENOENT;
 	}
 
-	if (likely(
-		pathlen == last_config_name_len &&
-		0 == memcmp(path, last_config_name, pathlen)
-	)) {
+	if (likely(string_equals_buf(&last_config_name, path, pathlen))) {
 		if (unmask_cnt <= 0) {
 			if (likely(is_open)) {
 				last_config_open_cnt += 1;
@@ -240,16 +236,13 @@ D	assert(pathlen >= 1);
 			return -ENOENT;
 		}
 	} else {
-		if (unlikely(unmask_cnt != 0 && last_config_name != NULL)) {
-			eprintln("warning: leftover unmask_cnt %d from config %.*s",
-			    unmask_cnt, (int)last_config_name_len, last_config_name);
+		if (unlikely(unmask_cnt != 0 && last_config_name.data != NULL)) {
+			eprintln("warning: leftover unmask_cnt %d from config %s",
+			    unmask_cnt, last_config_name.data);
 		}
 
-		if (unlikely(pathlen > last_config_name_len)) {
-			last_config_name = realloc(last_config_name, pathlen);
-		}
-		memcpy(last_config_name, path, pathlen);
-		last_config_name_len = pathlen;
+		string_set_contents_from_buf(&last_config_name, path, pathlen);
+
 		last_config_open_cnt = (is_open) ? 1 : 0;
 		unmask_cnt = 0;
 		return 0xf;
@@ -452,18 +445,15 @@ D		abort();
 			pathlen > strlen(unmask_next_pre)+strlen(".cfg") &&
 			unlikely(0 == memcmp(path, unmask_next_pre, strlen(unmask_next_pre)))
 		) {
-			if (unlikely(unmask_cnt != 0 && last_config_name != NULL)) {
-				eprintln("warning: leftover unmask_cnt %d from config %.*s",
-				    unmask_cnt, (int)last_config_name_len, last_config_name);
+			if (unlikely(unmask_cnt != 0 && last_config_name.data != NULL)) {
+				eprintln("warning: leftover unmask_cnt %d from config %s",
+				    unmask_cnt, last_config_name.data);
 			}
 
 			const char *name = path+(strlen(unmask_next_pre)-1);
 			size_t namelen = pathlen-(strlen(unmask_next_pre)-1);
-			if (unlikely(namelen > last_config_name_len)) {
-				last_config_name = realloc(last_config_name, namelen);
-			}
-			memcpy(last_config_name, name, namelen);
-			last_config_name_len = namelen;
+			string_set_contents_from_buf(&last_config_name, name, namelen);
+
 			unmask_cnt = UNMASK_IGNORE_CNT;
 			return 0;
 		}

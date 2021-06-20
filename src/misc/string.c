@@ -166,6 +166,14 @@ void string_remove_range(struct string *self, size_t start, size_t len) {
 	self->data[self->length] = '\0';
 }
 
+_Bool string_equals_buf(struct string *self, const char *s, size_t sz) {
+	return sz == self->length && 0 == memcmp(self->data, s, sz);
+}
+
+_Bool string_equals_cstring(struct string *self, const char *s) {
+	return string_equals_buf(self, s, strlen(s));
+}
+
 // -----------------------------------------------------------------------------
 
 #if defined(WITH_D) && (defined(__clang__) || defined(__GNUC__))
@@ -347,4 +355,16 @@ TEST (remove_range) {
 	string_set_contents_from_fmt(&s, "abc");
 	string_remove_range(&s, 999, 1);
 	assert(s.length == 3 && 0 == strcmp(s.data, "abc"));
+}
+
+TEST (autogrow_grows) {
+	// initializing .autogrow is enough to make it allocate on the first use
+	struct string s = {.autogrow = 1};
+	string_set_contents_from_buf(&s, "hello", 5);
+	assert(s.length == 5);
+
+	assert(string_equals_buf(&s, "hello", 5));
+	assert(string_equals_cstring(&s, "hello"));
+
+	string_free(&s);
 }
