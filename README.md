@@ -39,6 +39,7 @@ end
 - `libfuse3`
 - `libreadline`
 - `libx11`, `libxtst`
+- `libkqueue`
 - `libbsd`
 - xterm
 - standard development tools (`clang` or `gcc`, `git`, `make`)
@@ -53,19 +54,9 @@ pkg install fusefs-libs3 git gmake libX11 libXtst lua54 pkgconf readline xterm
 
 #### Windows
 
-- basic Lua 5.4 scripting skills (recommended)
-- [WinFsp] with the `FUSE for Cygwin` component
-- DMD installed from [their installer](https://dlang.org/download.html)
-- [Cygwin] with the following packages:
-  - everything in the `base` category
-  - `clang`
-  - `libreadline-devel`
-  - `make`
-  - `git`
-  - `curl`
+See the [`windows`] branch for the latest version that supports Windows.
 
-[Cygwin]: https://cygwin.com/
-[WinFsp]: http://www.secfs.net/winfsp/
+[`windows`]: https://github.com/huglovefan/cfgfs/tree/windows
 
 ## Installation
 

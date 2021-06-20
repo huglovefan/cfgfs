@@ -44,6 +44,7 @@
 #include "cli_output.h"
 #include "cli_scrollback.h"
 #include "click.h"
+#include "click_thread.h"
 #include "keys.h"
 #include "lua.h"
 #include "macros.h"
@@ -941,7 +942,6 @@ int main(int argc, char **argv) {
 #endif
 
 	cfg_init_badchars();
-	click_init_threadattr();
 
 	// === fuse stuff ===
 
@@ -1043,6 +1043,7 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 D	assert(NULL != getenv("CFGFS_SCRIPT"));
 
 	click_init();
+	click_thread_init();
 	if (!lua_init()) {
 		rv = rv_cfgfs_lua_failed;
 		goto out_fuse_newed_and_mounted_and_signals_handled;
@@ -1094,6 +1095,7 @@ out_no_fuse:
 #endif
 	cli_input_deinit();
 	click_deinit();
+	click_thread_deinit();
 	reloader_deinit();
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);
