@@ -65,18 +65,18 @@ out:
 
 // -----------------------------------------------------------------------------
 
+#if defined(USING_LIBKQUEUE) && !defined(NOTE_MSECONDS)
+ // it defaults to milliseconds
+ #define NOTE_MSECONDS 0
+#endif
+
 _Bool click_thread_submit_click(unsigned int ms, uintptr_t *id_out) {
 	struct kevent ev = {
 		.ident = click_id++,
 		.filter = EVFILT_TIMER,
 		.flags = EV_ADD|EV_ONESHOT,
-#if defined(USING_LIBKQUEUE)
-		.fflags = NOTE_USECONDS,
-		.data = ms*1000,
-#else
 		.fflags = NOTE_MSECONDS,
 		.data = ms,
-#endif
 	};
 	bool ok = (-1 != kevent(kq, &ev, 1, NULL, 0, NULL));
 	if (id_out) *id_out = (uintptr_t)ev.ident;
