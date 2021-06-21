@@ -43,7 +43,7 @@ static void *click_thread(void *msp) {
 	    "click: pthread_setcancelstate",
 	    goto end);
 
-	do_click_internal_dontuse();
+	do_click_internal_for_click_thread();
 end:
 	return NULL;
 }

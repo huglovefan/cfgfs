@@ -24,7 +24,7 @@ void do_click(void) {
 	click_thread_submit_click(0, NULL);
 }
 
-void do_click_internal_dontuse(void) {
+void do_click_internal_for_click_thread(void) {
 	double now = mono_ms();
 	if ((pending_click == 0.0 || (now-pending_click >= 50.0)) &&
 	    (0 == pthread_mutex_trylock(&click_lock))) {

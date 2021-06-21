@@ -56,7 +56,7 @@ D		assert(evcnt == 1);
 			assert_unreachable();
 		} else {
 V			eprintln("click() <- %lu processed", ev.ident);
-			do_click();
+			do_click_internal_for_click_thread();
 		}
 	}
 out:

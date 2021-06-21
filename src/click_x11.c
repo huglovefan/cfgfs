@@ -38,7 +38,7 @@ void do_click(void) {
 	}
 }
 
-void do_click_internal_dontuse(void) {
+void do_click_internal_for_click_thread(void) {
 	do_click();
 }
 
