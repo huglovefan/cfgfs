@@ -65,10 +65,16 @@ err:
 // todo: non-x11-specific functions should go somewhere else
 
 static int l_click(lua_State *L) {
-	double ms = luaL_checknumber(L, 1);
+	int ok;
+	long ms = lua_tointegerx(L, 1, &ok);
+	if (unlikely(!ok)) {
+		double n = luaL_checknumber(L, 1);
+		ms = (long)n;
+		ms += (n >= 0) ? 1 : -1;
+	}
 	if (ms > 0) {
 		uintptr_t id;
-		if (click_thread_submit_click((unsigned int)ms, &id)) {
+		if (likely(click_thread_submit_click(ms, &id))) {
 			lua_pushlightuserdata(L, (void *)id);
 			return 1;
 		} else {
@@ -82,7 +88,7 @@ static int l_click(lua_State *L) {
 }
 
 static int l_cancel_click(lua_State *L) {
-	uintptr_t id = (uintptr_t)(lua_touserdata(L, 1));
+	uintptr_t id = (uintptr_t)(void *)lua_touserdata(L, 1);
 	click_thread_cancel_click(id);
 	return 0;
 }

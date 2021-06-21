@@ -55,7 +55,7 @@ D		assert(evcnt == 1);
 			}
 			assert_unreachable();
 		} else {
-V			eprintln("click() <- %d processed", (int)ev.ident);
+V			eprintln("click() <- %lu processed", ev.ident);
 			do_click();
 		}
 	}
@@ -70,7 +70,7 @@ out:
  #define NOTE_MSECONDS 0
 #endif
 
-_Bool click_thread_submit_click(unsigned int ms, uintptr_t *id_out) {
+_Bool click_thread_submit_click(long ms, uintptr_t *id_out) {
 	struct kevent ev = {
 		.ident = click_id++,
 		.filter = EVFILT_TIMER,
@@ -79,9 +79,9 @@ _Bool click_thread_submit_click(unsigned int ms, uintptr_t *id_out) {
 		.data = ms,
 	};
 	bool ok = (-1 != kevent(kq, &ev, 1, NULL, 0, NULL));
-	if (id_out) *id_out = (uintptr_t)ev.ident;
-V	if (ok) eprintln("click(%u) -> %d", ms, (int)ev.ident);
-	else    eprintln("click(%u) -> submit failed: %s", ms, strerror(errno));
+	if (id_out) *id_out = ev.ident;
+V	if (ok) eprintln("click(%lu) -> %lu", ms, ev.ident);
+	else    eprintln("click(%lu) -> submit failed: %s", ms, strerror(errno));
 	return ok;
 }
 
@@ -92,8 +92,8 @@ _Bool click_thread_cancel_click(uintptr_t id) {
 		.flags = EV_DELETE,
 	};
 	bool ok = (-1 != kevent(kq, &ev, 1, NULL, 0, NULL));
-V	if (ok) eprintln("click: %d cancelled", (int)ev.ident);
-	else    eprintln("click: %d cancel failed: %s", (int)ev.ident, strerror(errno));
+V	if (ok) eprintln("click() <- %lu cancelled", ev.ident);
+	else    eprintln("click() <- %lu cancel failed: %s", ev.ident, strerror(errno));
 	return ok;
 }
 
