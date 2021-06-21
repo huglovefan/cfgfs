@@ -44,6 +44,7 @@
 #include "cli_output.h"
 #include "cli_scrollback.h"
 #include "click.h"
+#include "click_thread.h"
 #include "keys.h"
 #include "lua.h"
 #include "macros.h"
@@ -70,10 +71,12 @@ static struct {
 	pthread_t main_thread;
 	struct fuse *fusep;
 } quitdata;
+#if defined(__linux__) || defined(__FreeBSD__)
 static struct {
 	int signo;
 	bool err;
 } quitstat;
+#endif
 
 static void init_quitdata(struct fuse *fusep) {
 	quitdata.main_thread = pthread_self();
@@ -91,12 +94,10 @@ void main_quit(void) {
 	if (quitdata.main_thread) {
 		quitstat.signo = SIGINT;
 		pthread_kill(quitdata.main_thread, SIGINT);
-		quitdata.main_thread = 0;
 	}
 #else
 	if (quitdata.fusep) {
 		fuse_exit(quitdata.fusep);
-		quitdata.fusep = 0;
 	}
 #endif
 	memset(&quitdata, 0, sizeof(quitdata));
@@ -123,8 +124,7 @@ union sft_ptr {
 
 // -----------------------------------------------------------------------------
 
-static char *last_config_name = NULL;
-static size_t last_config_name_len = 0;
+static struct string last_config_name = {.autogrow = 1};
 
 static int last_config_open_cnt = 0;
 static int unmask_cnt = 0;
@@ -225,10 +225,7 @@ D	assert(pathlen >= 1);
 		if (!found) return -ENOENT;
 	}
 
-	if (likely(
-		pathlen == last_config_name_len &&
-		0 == memcmp(path, last_config_name, pathlen)
-	)) {
+	if (likely(string_equals_buf(&last_config_name, path, pathlen))) {
 		if (unmask_cnt <= 0) {
 			if (likely(is_open)) {
 				last_config_open_cnt += 1;
@@ -240,16 +237,13 @@ D	assert(pathlen >= 1);
 			return -ENOENT;
 		}
 	} else {
-		if (unlikely(unmask_cnt != 0 && last_config_name != NULL)) {
-			eprintln("warning: leftover unmask_cnt %d from config %.*s",
-			    unmask_cnt, (int)last_config_name_len, last_config_name);
+		if (unlikely(unmask_cnt != 0 && last_config_name.data != NULL)) {
+			eprintln("warning: leftover unmask_cnt %d from config %s",
+			    unmask_cnt, last_config_name.data);
 		}
 
-		if (unlikely(pathlen > last_config_name_len)) {
-			last_config_name = realloc(last_config_name, pathlen);
-		}
-		memcpy(last_config_name, path, pathlen);
-		last_config_name_len = pathlen;
+		string_set_contents_from_buf(&last_config_name, path, pathlen);
+
 		last_config_open_cnt = (is_open) ? 1 : 0;
 		unmask_cnt = 0;
 		return 0xf;
@@ -452,18 +446,15 @@ D		abort();
 			pathlen > strlen(unmask_next_pre)+strlen(".cfg") &&
 			unlikely(0 == memcmp(path, unmask_next_pre, strlen(unmask_next_pre)))
 		) {
-			if (unlikely(unmask_cnt != 0 && last_config_name != NULL)) {
-				eprintln("warning: leftover unmask_cnt %d from config %.*s",
-				    unmask_cnt, (int)last_config_name_len, last_config_name);
+			if (unlikely(unmask_cnt != 0 && last_config_name.data != NULL)) {
+				eprintln("warning: leftover unmask_cnt %d from config %s",
+				    unmask_cnt, last_config_name.data);
 			}
 
 			const char *name = path+(strlen(unmask_next_pre)-1);
 			size_t namelen = pathlen-(strlen(unmask_next_pre)-1);
-			if (unlikely(namelen > last_config_name_len)) {
-				last_config_name = realloc(last_config_name, namelen);
-			}
-			memcpy(last_config_name, name, namelen);
-			last_config_name_len = namelen;
+			string_set_contents_from_buf(&last_config_name, name, namelen);
+
 			unmask_cnt = UNMASK_IGNORE_CNT;
 			return 0;
 		}
@@ -951,7 +942,6 @@ int main(int argc, char **argv) {
 #endif
 
 	cfg_init_badchars();
-	click_init_threadattr();
 
 	// === fuse stuff ===
 
@@ -1053,6 +1043,7 @@ VV	eprintln("NOTE: very verbose messages are enabled");
 D	assert(NULL != getenv("CFGFS_SCRIPT"));
 
 	click_init();
+	click_thread_init();
 	if (!lua_init()) {
 		rv = rv_cfgfs_lua_failed;
 		goto out_fuse_newed_and_mounted_and_signals_handled;
@@ -1104,6 +1095,7 @@ out_no_fuse:
 #endif
 	cli_input_deinit();
 	click_deinit();
+	click_thread_deinit();
 	reloader_deinit();
 	free(opts.mountpoint);
 	fuse_opt_free_args(&args);

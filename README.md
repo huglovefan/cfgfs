@@ -39,6 +39,7 @@ end
 - `libfuse3`
 - `libreadline`
 - `libx11`, `libxtst`
+- `libkqueue`
 - `libbsd`
 - xterm
 - standard development tools (`clang` or `gcc`, `git`, `make`)
@@ -69,7 +70,7 @@ pkg install fusefs-libs3 git gmake libX11 libXtst lua54 pkgconf readline xterm
 
 ## Installation
 
-(these instructions are for linux only)
+(these instructions assume you're on linux)
 
 1. Clone the repository and `cd` to it: `git clone https://github.com/huglovefan/cfgfs && cd cfgfs`
 2. Run `make && make install` to compile cfgfs and install the `cfgfs_run` script  

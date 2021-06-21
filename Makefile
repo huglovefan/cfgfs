@@ -24,11 +24,15 @@ RELOADER_OBJ ?= src/reloader.o
 
 ifneq (,$(findstring Linux,$(osname)))
  IS_LINUX := 1
+ CLICK_OBJ ?= src/click_thread_kqueue.o src/click_x11.o
 endif
 
 ifneq (,$(findstring FreeBSD,$(osname)))
  IS_FREEBSD := 1
  LUA_PKG ?= lua-5.4
+ LIBKQUEUE_CFLAGS :=
+ LIBKQUEUE_LIBS :=
+ CLICK_OBJ ?= src/click_thread_kqueue.o src/click_x11.o
  RELOADER_OBJ := src/reloader_kqueue.o
 endif
 
@@ -37,6 +41,10 @@ ifneq (,$(findstring Cygwin,$(osname)))
  EXEEXT := .exe
  LUA_CFLAGS ?= -Ilua-5.4.3/src
  LUA_LIBS ?= lua-5.4.3/src/liblua.a
+ CLICK_OBJ ?= src/click_thread_pthread.o src/click_win32.o
+ # doesn't have a .pc file
+ READLINE_CFLAGS ?=
+ READLINE_LIBS ?= -lreadline
 endif
 
 # ------------------------------------------------------------------------------
@@ -50,7 +58,7 @@ OBJS = \
        src/cfg.o \
        src/lua/builtins.o \
        src/cli_output.o \
-       src/click.o \
+       $(CLICK_OBJ) \
        src/buffers.o \
        src/cli_scrollback.o \
        \
@@ -102,6 +110,7 @@ warnings_clang := \
 	-Werror=uninitialized \
 	-Wno-atomic-implicit-seq-cst \
 	-Wno-c++98-compat \
+	-Wno-dangling-else \
 	-Wno-disabled-macro-expansion \
 	-Wno-error=unknown-warning-option \
 	-Wno-format-nonliteral \
@@ -126,6 +135,7 @@ warnings_gcc := \
 	-Werror=incompatible-pointer-types \
 	-Wno-address \
 	-Wno-bool-operation \
+	-Wno-dangling-else \
 	-Wno-format-zero-length \
 	-Wno-misleading-indentation \
 
@@ -252,6 +262,15 @@ CFLAGS += $(FUSE_CFLAGS)
 LDLIBS += $(FUSE_LIBS)
 
 CPPFLAGS += -DFUSE_USE_VERSION=35
+
+# libkqueue
+ifneq (,$(IS_LINUX))
+ LIBKQUEUE_PKG    ?= libkqueue
+ LIBKQUEUE_CFLAGS ?= $(shell pkg-config --cflags $(LIBKQUEUE_PKG))
+ LIBKQUEUE_LIBS   ?= $(shell pkg-config --libs   $(LIBKQUEUE_PKG))
+ CFLAGS += $(LIBKQUEUE_CFLAGS)
+ LDLIBS += $(LIBKQUEUE_LIBS)
+endif
 
 # src/rcon/srcrcon.c (arc4random_uniform)
 ifneq (,$(IS_LINUX))

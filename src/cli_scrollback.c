@@ -19,7 +19,7 @@
 #define LINES_MAX 128
 
 static char **lines;
-static int lines_idx;
+static unsigned int lines_idx;
 
 __attribute__((minsize))
 void cli_scrollback_load_and_print(void) {
@@ -117,7 +117,7 @@ void cli_scrollback_flush_and_free(void) {
 	if (getenv("CFGFS_NO_SCROLLBACK")) goto just_free;
 	FILE *outfile = fopen(SCROLLBACK_FILE_TMP, "w");
 	if (outfile == NULL) goto just_free;
-	for (int i = 0; i < LINES_MAX; i++) {
+	for (unsigned int i = 0; i < LINES_MAX; i++) {
 		char *line = lines[(lines_idx+i) % LINES_MAX];
 		if (line == NULL) continue;
 		fprintf(outfile, "%s\n", line);

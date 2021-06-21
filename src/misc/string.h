@@ -35,3 +35,6 @@ void string_remove_range(struct string *self, size_t start, size_t len);
 		string_clear(s); \
 		string_append_from_fmt(s, fmt, ##__VA_ARGS__); \
 	})
+
+_Bool string_equals_cstring(struct string *self, const char *s);
+_Bool string_equals_buf(struct string *self, const char *s, size_t sz);

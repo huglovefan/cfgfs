@@ -4,6 +4,9 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <unistd.h>
+#if defined(__FreeBSD__)
+ #include <pthread_np.h>
+#endif
 
 #include <sys/event.h>
 #include <sys/stat.h>
@@ -278,7 +281,6 @@ void reloader_deinit(void) {
 
 	writech(msgpipe[1], msg_exit);
 
-#if !defined(__FreeBSD__)
 	struct timespec ts = {0};
 	clock_gettime(CLOCK_REALTIME, &ts);
 	ts.tv_sec += 1;
@@ -286,9 +288,6 @@ void reloader_deinit(void) {
 	if (err != 0) {
 		return;
 	}
-#else
-	pthread_join(thread, NULL);
-#endif
 
 	close(exchange(msgpipe[0], -1));
 	close(exchange(msgpipe[1], -1));
