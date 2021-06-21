@@ -20,6 +20,8 @@ static pthread_mutex_t click_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // -----------------------------------------------------------------------------
 
+// always use a thread for this because SendMessage(WM_COPYDATA) may block when
+//  called from a filesystem thread
 void do_click(void) {
 	click_thread_submit_click(0, NULL);
 }
@@ -34,7 +36,6 @@ void do_click_internal_for_click_thread(void) {
 		HWND gamewin = FindWindowA("Valve001", NULL);
 		if (gamewin != NULL) {
 			COPYDATASTRUCT data = {
-				.dwData = 0,
 				.cbData = sizeof(copycmd),
 				.lpData = copycmd,
 			};
