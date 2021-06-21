@@ -54,13 +54,23 @@ pkg install fusefs-libs3 git gmake libX11 libXtst lua54 pkgconf readline xterm
 
 #### Windows
 
-See the [`windows`] branch for the latest version that supports Windows.
+- basic Lua 5.4 scripting skills (recommended)
+- [WinFsp] with the `FUSE for Cygwin` component
+- DMD installed from [their installer](https://dlang.org/download.html)
+- [Cygwin] with the following packages:
+  - everything in the `base` category
+  - `clang`
+  - `libreadline-devel`
+  - `make`
+  - `git`
+  - `curl`
 
-[`windows`]: https://github.com/huglovefan/cfgfs/tree/windows
+[Cygwin]: https://cygwin.com/
+[WinFsp]: http://www.secfs.net/winfsp/
 
 ## Installation
 
-(these instructions are for linux only)
+(these instructions assume you're on linux)
 
 1. Clone the repository and `cd` to it: `git clone https://github.com/huglovefan/cfgfs && cd cfgfs`
 2. Run `make && make install` to compile cfgfs and install the `cfgfs_run` script  

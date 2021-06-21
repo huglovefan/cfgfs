@@ -71,10 +71,12 @@ static struct {
 	pthread_t main_thread;
 	struct fuse *fusep;
 } quitdata;
+#if defined(__linux__) || defined(__FreeBSD__)
 static struct {
 	int signo;
 	bool err;
 } quitstat;
+#endif
 
 static void init_quitdata(struct fuse *fusep) {
 	quitdata.main_thread = pthread_self();
@@ -92,12 +94,10 @@ void main_quit(void) {
 	if (quitdata.main_thread) {
 		quitstat.signo = SIGINT;
 		pthread_kill(quitdata.main_thread, SIGINT);
-		quitdata.main_thread = 0;
 	}
 #else
 	if (quitdata.fusep) {
 		fuse_exit(quitdata.fusep);
-		quitdata.fusep = 0;
 	}
 #endif
 	memset(&quitdata, 0, sizeof(quitdata));

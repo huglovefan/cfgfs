@@ -41,7 +41,10 @@ ifneq (,$(findstring Cygwin,$(osname)))
  EXEEXT := .exe
  LUA_CFLAGS ?= -Ilua-5.4.3/src
  LUA_LIBS ?= lua-5.4.3/src/liblua.a
- #CLICK_OBJ ?= src/click_win32.o
+ CLICK_OBJ ?= src/click_thread_pthread.o src/click_win32.o
+ # doesn't have a .pc file
+ READLINE_CFLAGS ?=
+ READLINE_LIBS ?= -lreadline
 endif
 
 # ------------------------------------------------------------------------------
@@ -260,12 +263,14 @@ LDLIBS += $(FUSE_LIBS)
 
 CPPFLAGS += -DFUSE_USE_VERSION=35
 
-# kqueue
-LIBKQUEUE_PKG    ?= libkqueue
-LIBKQUEUE_CFLAGS ?= $(shell pkg-config --cflags $(LIBKQUEUE_PKG))
-LIBKQUEUE_LIBS   ?= $(shell pkg-config --libs   $(LIBKQUEUE_PKG))
-CFLAGS += $(LIBKQUEUE_CFLAGS)
-LDLIBS += $(LIBKQUEUE_LIBS)
+# libkqueue
+ifneq (,$(IS_LINUX))
+ LIBKQUEUE_PKG    ?= libkqueue
+ LIBKQUEUE_CFLAGS ?= $(shell pkg-config --cflags $(LIBKQUEUE_PKG))
+ LIBKQUEUE_LIBS   ?= $(shell pkg-config --libs   $(LIBKQUEUE_PKG))
+ CFLAGS += $(LIBKQUEUE_CFLAGS)
+ LDLIBS += $(LIBKQUEUE_LIBS)
+endif
 
 # src/rcon/srcrcon.c (arc4random_uniform)
 ifneq (,$(IS_LINUX))

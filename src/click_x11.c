@@ -38,6 +38,10 @@ void do_click(void) {
 	}
 }
 
+void do_click_internal_dontuse(void) {
+	do_click();
+}
+
 // -----------------------------------------------------------------------------
 
 __attribute__((minsize))

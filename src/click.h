@@ -3,6 +3,7 @@
 #include <lauxlib.h>
 
 void do_click(void);
+void do_click_internal_dontuse(void);
 
 void click_init(void);
 void click_deinit(void);
