@@ -33,16 +33,18 @@ local ev_error_handlers
 setmetatable(_G, {
 	__index = function (self, k)
 		if k == 'panic' then
-			assert(coroutine.running(), 'tried to get panic function outside a coroutine')
-			return ev_error_handlers[coroutine.running()]
+			local co, is_main = coroutine.running()
+			assert(not is_main, 'tried to get panic function outside a coroutine')
+			return ev_error_handlers[co]
 		end
 		return error('tried to access nonexistent variable ' .. tostring(k), 2)
 	end,
 	__newindex = function (self, k, v)
 		if k == 'panic' then
-			assert(coroutine.running(), 'tried to set panic function outside a coroutine')
+			local co, is_main = coroutine.running()
+			assert(not is_main, 'tried to set panic function outside a coroutine')
 			assert(v == nil or type(v) == 'function', 'panic function must be a function')
-			ev_error_handlers[coroutine.running()] = v
+			ev_error_handlers[co] = v
 			return
 		end
 		return rawset(self, k, v)
@@ -309,7 +311,8 @@ wait = function (ms, canceldata)
 	local target = _ms()+ms
 	local click_id = (_click(ms) or true)
 	local check_cancel = false
-	local this_co = assert(coroutine.running())
+	local this_co, is_main = coroutine.running()
+	assert(not is_main, 'tried to wait() outside a coroutine')
 
 	-- click_id is the "id" of the click. it's either userdata for
 	--  pthread_t, or true if the click didn't spawn a thread ("ms" was 0
@@ -579,8 +582,8 @@ cancel_event = function (data)
 end
 
 wait_for_event = function (name, timeout_opt)
-	local this_co = coroutine.running()
-	if this_co then
+	local this_co, is_main = coroutine.running()
+	if not is_main then
 		local canceldata = {}
 		if timeout_opt then
 			spinoff(function ()
