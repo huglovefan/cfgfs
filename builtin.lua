@@ -1117,68 +1117,6 @@ end
 
 -- cli input handling
 
--- cfg commands are parsed here so lua aliases can be called directly (with
---  arguments and without going through the game)
-
-local parse_command = nil
-if pcall(require, 'lpeg') then
-	local lpeg = require 'lpeg'
-
-	local cfg_grammer = lpeg.P {
-		'script',
-
-		space = lpeg.R'\0 '
-		      - lpeg.P'\n';
-
-		separator = lpeg.P';';
-
-		comment = lpeg.P'//'
-		        * lpeg.V'comment_char'^0;
-		comment_char = lpeg.P(1)
-		             - lpeg.P'\n';
-
-		word = lpeg.C(lpeg.V'word_char'^1);
-		word_char = lpeg.P(1)
-		          - lpeg.S' \n";'
-		          - lpeg.P'//';
-
-		quoted = lpeg.P'"'
-		       * lpeg.C(lpeg.V'quoted_char'^0)
-		       * lpeg.P'"'^-1; -- closing quote is optional
-		quoted_char = lpeg.P(1)
-		            - lpeg.S'"\n';
-
-		command = ( lpeg.V'command_part'
-		          * lpeg.V'space'^0 )^1;
-		command_part = lpeg.V'word'
-		             + lpeg.V'quoted';
-
-		anything = lpeg.P'\n'
-		         + lpeg.V'space'
-		         + lpeg.V'separator'
-		         + lpeg.V'comment'
-		         + lpeg.Ct(lpeg.V'command');
-
-		script = lpeg.Ct( lpeg.V'anything'^1 )
-		       * lpeg.P(-1);
-	}
-	-- todo: characters like : aren't handled here
-
-	parse_command = function (s)
-		local cmds = cfg_grammer:match(s)
-		if cmds then
-			return function ()
-				for _, t in ipairs(cmds) do
-					local name = t[1]
-					cmd[name](select(2, table.unpack(t)))
-				end
-			end
-		else
-			return nil
-		end
-	end
-end
-
 local repl_fn = function (code)
 	local fn, err1 = load('return '..code, 'input')
 	if fn then
@@ -1229,12 +1167,6 @@ _cli_input = function (line)
 			return
 		end
 		fn_to_run = fn
-	elseif parse_command then
-		fn_to_run = parse_command(line)
-		if not fn_to_run then
-			-- parsed but there were no commands
-			return
-		end
 	end
 
 	local buffer_was_empty = _buffer_is_empty()
