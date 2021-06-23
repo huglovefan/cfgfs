@@ -1213,7 +1213,7 @@ _cli_input = function (line)
 	end
 
 	if line == 'cfgfs_license' then
-		local f = assert(io.open('LICENSE', 'r'))
+		local f = assert(io.open((os.getenv('CFGFS_DIR') or '.')..'/LICENSE', 'r'))
 		for line in f:lines() do
 			printv(line)
 		end
