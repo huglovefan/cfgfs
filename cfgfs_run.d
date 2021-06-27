@@ -10,6 +10,7 @@ import std.parallelism;
 import std.datetime.systime;
 import std.concurrency;
 import std.datetime.stopwatch;
+import std.range;
 
 import core.runtime;
 import core.thread.osthread;
@@ -20,16 +21,13 @@ import core.sys.freebsd.sys.sysctl;
 
 import core.sys.windows.windows;
 
+version (Windows) string gameExeExt = ".exe";
+version (Posix) string gameExeExt = ".sh";
+
 string findGameExe(string[] args) {
-	foreach (arg; args) {
-		if (arg.isAbsolute) {
-			switch (arg.baseName) {
-			case "hl2.sh":
-			case "hl2.exe":
-				return arg;
-			default:
-				break;
-			}
+	foreach (arg; args.retro) {
+		if (arg.isAbsolute && arg.endsWith(gameExeExt)) {
+			return arg;
 		}
 	}
 	return null;
