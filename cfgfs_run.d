@@ -33,7 +33,7 @@ string findGameExe(string[] args) {
 	return null;
 }
 
-string findGameDir(string[] args, string exeDir) {
+string findGameDir(string[] args, string exeDir, string exeName) {
 	// note: use the last one in case there are multiple
 	// note2: the path is relative to the executable (hl2.sh or hl2.exe)
 	string rv = null;
@@ -41,6 +41,16 @@ string findGameDir(string[] args, string exeDir) {
 		if (args[i] == "-game") {
 			rv = args[i+1].absolutePath(exeDir);
 			i += 1;
+		}
+	}
+	// try the basename of the executable (without .exe) if -game isn't found
+	// this should fix csgo which doesn't use the -game parameter but defaults
+	//  to "csgo" which matches the executable name
+	if (!rv && exeName != null) {
+		string exeBase = exeName.stripExtension;
+		string exeGameDir = cast(string)chainPath(exeDir, exeBase).array;
+		if (exeGameDir.exists && exeGameDir.isDir) {
+			rv = exeGameDir;
 		}
 	}
 	if (!rv) {
@@ -347,7 +357,7 @@ void runMain(string[] args) {
 	string exePath = findGameExe(args);
 	string exeDir = (exePath) ? exePath.dirName : getcwd();
 
-	gameDir = findGameDir(args, exeDir);
+	gameDir = findGameDir(args, exeDir, (exePath) ? exePath.baseName : null);
 	gameTitle = findGameTitle(gameDir);
 
 	cfgfsMountPoint = cast(string)gameDir.chainPath("custom", "!cfgfs", "cfg").array;
