@@ -340,7 +340,6 @@ string getsysctl(const string name) {
 // -----------------------------------------------------------------------------
 
 shared string cfgfsDir;
-shared string gameRoot;
 
 shared string gameDir;
 shared string gameTitle;
@@ -352,7 +351,6 @@ shared bool gameExited;
 void runMain(string[] args) {
 
 	cfgfsDir = thisExePath().dirName;
-	gameRoot = getcwd();
 
 	string exePath = findGameExe(args);
 	string exeDir = (exePath) ? exePath.dirName : getcwd();
@@ -399,7 +397,6 @@ void runMain(string[] args) {
 					"CFGFS_STARTTIME": startTime,
 					"GAMEDIR": gameDir,
 					"GAMENAME": gameTitle,
-					"GAMEROOT": gameRoot,
 					"MODNAME": gameDir.baseName,
 					"LC_ALL": null,
 					"LD_LIBRARY_PATH": null,

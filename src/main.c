@@ -742,7 +742,6 @@ static void check_env(void) {
 		{"CFGFS_DIR", "path to the directory containing the cfgfs executable"},
 		{"CFGFS_MOUNTPOINT", "path to the cfgfs mount directory"},
 		{"GAMEDIR", "path to the game's content directory (contains gameinfo.txt)"},
-		{"GAMEROOT", "path to parent directory of GAMEDIR"},
 		{"GAMENAME", "game name from gameinfo.txt"},
 		{"MODNAME", "name of the game's content directory"},
 		{STEAMAPPID_ENV, "app id of the game (set by steam)"},

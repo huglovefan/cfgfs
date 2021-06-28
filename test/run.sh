@@ -1,7 +1,6 @@
 export CFGFS_SCRIPT=test/script.lua
 export GAMENAME=test
 export GAMEDIR=/var/empty
-export GAMEROOT=/var/empty
 
 fusermount -u test/mnt 2>/dev/null
 

@@ -464,7 +464,6 @@ start:
 	export CFGFS_MOUNTPOINT=$(TF2MNT); \
 	export CFGFS_NO_SCROLLBACK=1; \
 	export GAMEDIR=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf; \
-	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \
 	export MODNAME=tf; \
 	export SteamAppId=440; \
