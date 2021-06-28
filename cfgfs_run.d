@@ -30,7 +30,7 @@ string findGameExe(string[] args) {
 			return arg;
 		}
 	}
-	return null;
+	throw new Exception("couldn't parse game executable from command line");
 }
 
 string findGameDir(string[] args, string exeDir, string exeName) {
@@ -54,7 +54,7 @@ string findGameDir(string[] args, string exeDir, string exeName) {
 		}
 	}
 	if (!rv) {
-		throw new StringException("couldn't parse command line (missing -game parameter)");
+		throw new Exception("couldn't parse command line (missing -game parameter)");
 	}
 	return rv;
 }
@@ -66,7 +66,7 @@ string findGameTitle(string gameDir) {
 			return cast(string)m.front[1];
 		}
 	}
-	throw new StringException("couldn't parse gameinfo.txt");
+	throw new Exception("couldn't parse gameinfo.txt");
 }
 
 version (Windows) {
@@ -341,6 +341,8 @@ string getsysctl(const string name) {
 
 shared string cfgfsDir;
 
+shared string gameExe;
+shared string gameBaseDir;
 shared string gameDir;
 shared string gameTitle;
 
@@ -352,10 +354,9 @@ void runMain(string[] args) {
 
 	cfgfsDir = thisExePath().dirName;
 
-	string exePath = findGameExe(args);
-	string exeDir = (exePath) ? exePath.dirName : getcwd();
-
-	gameDir = findGameDir(args, exeDir, (exePath) ? exePath.baseName : null);
+	gameExe = findGameExe(args);
+	gameBaseDir = gameExe.dirName;
+	gameDir = findGameDir(args, gameBaseDir, gameExe.baseName);
 	gameTitle = findGameTitle(gameDir);
 
 	cfgfsMountPoint = cast(string)gameDir.chainPath("custom", "!cfgfs", "cfg").array;
@@ -438,7 +439,7 @@ void runMain(string[] args) {
 			version (Posix) {
 				unlinkConsoleLog(gameDir, cfgfsMountPoint);
 			}
-		} catch (Throwable e) {
+		} catch (Exception e) {
 			version (Windows) MessageBoxA(null, e.toString().toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
 			version (Posix) stderr.writeln(e.toString());
 		}
@@ -553,7 +554,7 @@ void main(string[] args) {
 	version (Posix) stderr.write("=== cfgfs_run ===\n");
 	try {
 		runMain(args);
-	} catch (Throwable e) {
+	} catch (Exception e) {
 		version (Windows) MessageBoxA(null, e.toString().toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
 		version (Posix) stderr.writeln(e.toString());
 	} finally {
