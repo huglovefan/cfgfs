@@ -427,9 +427,39 @@ compare_fndata:
 
 .PHONY: test
 test:
-	@exec timeout 5 sh test/run.sh
+	@exec timeout 30 sh test/run.sh
 testbuild:
 	@exec timeout 60 sh test/build.sh
+
+# ~
+
+INC := Makefile test
+rtest:
+	@tar -cf- .git $(INC) | ssh $(HOST) ' \
+	[ ! -e ~/.profile ] || . ~/.profile 0<>/dev/null 1>&0 2>&0; \
+	set -e; \
+	tmpdir=$$(mktemp -d); \
+	trap "rv=$$?; set +e; cd /; rm -rf \"$$tmpdir\"; exit $$rv" EXIT; \
+	trap "exit 1" HUP INT TERM; \
+	cd "$$tmpdir"; \
+	tar -xf-; \
+	mkdir cfgfs; cd cfgfs; \
+	mv ../.git .; git reset --hard; \
+	for f in $(INC); do \
+		rm -rf "./$$f"; mv "../$$f" .; \
+	done; \
+	case $$(uname -o) in \
+	*Cygwin*) \
+		curl --no-progress-meter "https://www.lua.org/ftp/lua-5.4.3.tar.gz" | tar -xzf-; \
+		( cd lua-5.4.3 && make -sj2 posix ); \
+		export CC=gcc; \
+		;; \
+	esac; \
+	if command -v gmake >/dev/null; then make() { gmake "$$@"; }; fi; \
+	make -j2 D=1 WE=1; \
+	make test; \
+	make clean CFGFS_RM=rm; \
+	'
 
 # ------------------------------------------------------------------------------
 
