@@ -1,43 +1,71 @@
-export CFGFS_SCRIPT=test/script.lua
-export GAMENAME=test
+export CFGFS_DIR="$PWD"
+export CFGFS_MOUNTPOINT="$PWD/test/mnt"
+export CFGFS_SCRIPT="$PWD/test/script.lua"
+export GAMENAME="Team Fortress 2"
 export GAMEDIR=/var/empty
+export MODNAME=tf
+export SteamAppId=440 STEAMAPPID=440
+export CFGFS_NO_SCROLLBACK=1
 
-fusermount -u test/mnt 2>/dev/null
+osname=$(uname -o)
 
-rm -f test/rv || exit
-mkdir -p test/mnt || exit
+v() {
+	>&2 echo ">>> $*"
+	"$@"
+	>&2 echo "<<< $*"
+}
 
-trap 'fusermount -u test/mnt 2>/dev/null &' EXIT
+case $osname in
+*Linux*)
+	prepare_mnt() {
+		[ -e test/mnt ] || mkdir -p test/mnt
+	}
+	do_unmount() {
+		fusermount -u test/mnt
+	}
+	;;
+*FreeBSD*)
+	prepare_mnt() {
+		[ -e test/mnt ] || mkdir -p test/mnt
+	}
+	do_unmount() {
+		umount test/mnt
+	}
+	;;
+*Cygwin*)
+	prepare_mnt() {
+		[ ! -e test/mnt ] || rmdir test/mnt
+	}
+	do_unmount() {
+		kill $(ps -ef | awk '$6~/\/cfgfs(\.exe)?$/{print $2}')
+	}
+	;;
+esac
+
+wait_mounted() {
+	while ! sh -c 'exec < test/mnt/cfgfs/buffer.cfg' 2>/dev/null; do
+		env sleep 0.5
+	done
+}
+wait_unmounted() {
+	while [ ! -e test/rv ]; do
+		env sleep 0.5
+	done
+}
+
+v prepare_mnt
+
+trap 'do_unmount 2>/dev/null' EXIT
 trap 'exit 1' HUP INT TERM
 
+rm -f test/rv
 {
-export CFGFS_NO_SCROLLBACK=1
 ./cfgfs test/mnt
 echo $? >test/rv
 } &
 pid=$!
 
-#
-# wait for it to start
-#
-i=1
-while true; do
-	if [ ! -d "/proc/$pid" ]; then
-		exit 1
-	fi
-	if mountpoint -q test/mnt; then
-		break
-	fi
-	if [ $i -gt 15 ]; then
-		kill $pid
-		exit 1
-	elif [ $i -gt 10 ]; then
-		sleep 1 || exit
-	else
-		command sleep 0.05
-	fi
-	i=$((i+1))
-done
+v wait_mounted
 
 # ------------------------------------------------------------------------------
 
@@ -63,28 +91,12 @@ fi
 
 # ------------------------------------------------------------------------------
 
-fusermount -u test/mnt || exit
+v do_unmount
 
-#
-# wait for it to exit
-#
-i=1
-while true; do
-	if [ ! -d "/proc/$pid" ]; then
-		break
-	fi
-	if [ $i -gt 15 ]; then
-		kill $pid
-		exit 1
-	elif [ $i -gt 10 ]; then
-		sleep 1 || exit
-	else
-		command sleep 0.05
-	fi
-	i=$((i+1))
-done
+v wait_unmounted
 
 rv=$(cat test/rv) || exit
+rm -f test/rv
 if [ "$rv" != "0" ]; then
 	exit 1
 fi
