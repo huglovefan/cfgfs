@@ -447,29 +447,16 @@ endif
 
 TF2MNT := $(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg
 
-start: $(EXE)
+start:
 	@set -e; \
 	if [ -n "$(IS_LINUX)" ]; then \
 		mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
 	fi; \
-	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
-	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
-	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
-	ln -fs $(TF2MNT) $(MNTLNK); \
-	export CFGFS_DIR=$$PWD; \
-	export CFGFS_MOUNTPOINT=$$PWD/mnt; \
-	export CFGFS_NO_SCROLLBACK=1; \
-	export GAMEDIR=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf; \
-	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
-	export GAMENAME=Team\ Fortress\ 2; \
-	export MODNAME=tf; \
-	export NO_LISTUPDATE=1; \
-	export SteamAppId=440; \
-	[ ! -e env.sh ] || . ./env.sh; \
-	exec "$$CFGFS_DIR"/$(EXE) $(CFGFS_FLAGS) "$${GAMEDIR}/custom/!cfgfs/cfg"
-
-startcyg:
-	@set -e; \
+	if [ -z "$(IS_CYGWIN)" ]; then \
+		[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
+	else \
+		[ ! -d $(TF2MNT) ] || rmdir $(TF2MNT); \
+	fi; \
 	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	ln -fs $(TF2MNT) $(MNTLNK); \
@@ -480,6 +467,7 @@ startcyg:
 	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \
 	export MODNAME=tf; \
+	export SteamAppId=440; \
 	export STEAMAPPID=440; \
 	[ ! -e env.sh ] || . ./env.sh; \
 	exec "$$CFGFS_DIR"/$(EXE) $(CFGFS_FLAGS) $(TF2MNT)
