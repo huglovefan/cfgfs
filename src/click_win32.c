@@ -41,9 +41,11 @@ void do_click_internal_for_click_thread(void) {
 			};
 			if (!SendMessageTimeoutA(gamewin, WM_COPYDATA, 0, (LPARAM)&data, 0, 1000, NULL)) {
 				eprintln("click: failed to send command! (%d)", GetLastError());
-				success = true;
+				goto out_locked;
 			}
+			success = true;
 		}
+out_locked:
 		if (!success) pending_click = 0.0;
 		pthread_mutex_unlock(&click_lock);
 	}

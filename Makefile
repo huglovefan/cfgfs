@@ -427,9 +427,39 @@ compare_fndata:
 
 .PHONY: test
 test:
-	@exec timeout 5 sh test/run.sh
+	@exec timeout 30 sh test/run.sh
 testbuild:
 	@exec timeout 60 sh test/build.sh
+
+# ~
+
+INC := Makefile test
+rtest:
+	@tar -cf- .git $(INC) | ssh $(HOST) ' \
+	[ ! -e ~/.profile ] || . ~/.profile 0<>/dev/null 1>&0 2>&0; \
+	set -e; \
+	tmpdir=$$(mktemp -d); \
+	trap "rv=$$?; set +e; cd /; rm -rf \"$$tmpdir\"; exit $$rv" EXIT; \
+	trap "exit 1" HUP INT TERM; \
+	cd "$$tmpdir"; \
+	tar -xf-; \
+	mkdir cfgfs; cd cfgfs; \
+	mv ../.git .; git reset --hard; \
+	for f in $(INC); do \
+		rm -rf "./$$f"; mv "../$$f" .; \
+	done; \
+	case $$(uname -o) in \
+	*Cygwin*) \
+		curl --no-progress-meter "https://www.lua.org/ftp/lua-5.4.3.tar.gz" | tar -xzf-; \
+		( cd lua-5.4.3 && make -sj2 posix ); \
+		export CC=gcc; \
+		;; \
+	esac; \
+	if command -v gmake >/dev/null; then make() { gmake "$$@"; }; fi; \
+	make -j2 D=1 WE=1; \
+	make test; \
+	make clean CFGFS_RM=rm; \
+	'
 
 # ------------------------------------------------------------------------------
 
@@ -447,29 +477,16 @@ endif
 
 TF2MNT := $(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg
 
-start: $(EXE)
+start:
 	@set -e; \
 	if [ -n "$(IS_LINUX)" ]; then \
 		mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
 	fi; \
-	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
-	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
-	[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
-	ln -fs $(TF2MNT) $(MNTLNK); \
-	export CFGFS_DIR=$$PWD; \
-	export CFGFS_MOUNTPOINT=$$PWD/mnt; \
-	export CFGFS_NO_SCROLLBACK=1; \
-	export GAMEDIR=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf; \
-	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
-	export GAMENAME=Team\ Fortress\ 2; \
-	export MODNAME=tf; \
-	export NO_LISTUPDATE=1; \
-	export SteamAppId=440; \
-	[ ! -e env.sh ] || . ./env.sh; \
-	exec "$$CFGFS_DIR"/$(EXE) $(CFGFS_FLAGS) "$${GAMEDIR}/custom/!cfgfs/cfg"
-
-startcyg:
-	@set -e; \
+	if [ -z "$(IS_CYGWIN)" ]; then \
+		[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
+	else \
+		[ ! -d $(TF2MNT) ] || rmdir $(TF2MNT); \
+	fi; \
 	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
 	ln -fs $(TF2MNT) $(MNTLNK); \
@@ -477,9 +494,9 @@ startcyg:
 	export CFGFS_MOUNTPOINT=$(TF2MNT); \
 	export CFGFS_NO_SCROLLBACK=1; \
 	export GAMEDIR=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf; \
-	export GAMEROOT=$(STEAMDIR)/steamapps/common/Team\ Fortress\ 2; \
 	export GAMENAME=Team\ Fortress\ 2; \
 	export MODNAME=tf; \
+	export SteamAppId=440; \
 	export STEAMAPPID=440; \
 	[ ! -e env.sh ] || . ./env.sh; \
 	exec "$$CFGFS_DIR"/$(EXE) $(CFGFS_FLAGS) $(TF2MNT)

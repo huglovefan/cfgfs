@@ -106,7 +106,7 @@ V	eprintln("reloader: successfully added path %s", path);
 }
 
 #else
-#define get_or_init_inotify_fd() (-1)
+#define get_or_init_inotify_fd() ((void)-1)
 #define deinit_inotify_if_inited() ((void)0)
 #endif
 

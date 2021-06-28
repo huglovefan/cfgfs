@@ -728,16 +728,23 @@ static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) 
 
 // -----------------------------------------------------------------------------
 
+#if defined(__linux__) || defined(__FreeBSD__)
+ #define STEAMAPPID_ENV "SteamAppId"
+#else
+ #define STEAMAPPID_ENV "STEAMAPPID"
+#endif
+
 __attribute__((minsize))
 static void check_env(void) {
 	static const struct var {
 		const char *name, *what;
 	} vars[] = {
 		{"CFGFS_DIR", "path to the directory containing the cfgfs executable"},
-		{"CFGFS_MOUNTPOINT", "path to the directory cfgfs was mounted in"},
-		{"GAMEDIR", "path to mod directory containing gameinfo.txt"},
-		{"GAMEROOT", "path to parent directory of GAMEDIR"},
-		{"GAMENAME", "game title from gameinfo.txt"},
+		{"CFGFS_MOUNTPOINT", "path to the cfgfs mount directory"},
+		{"GAMEDIR", "path to the game's content directory (contains gameinfo.txt)"},
+		{"GAMENAME", "game name from gameinfo.txt"},
+		{"MODNAME", "name of the game's content directory"},
+		{STEAMAPPID_ENV, "app id of the game (set by steam)"},
 		{NULL, NULL},
 	};
 	bool warned = false;
@@ -758,7 +765,7 @@ static void check_env(void) {
 		}
 	}
 	if (warned) {
-		eprintln("features that depend on them will be unavailable");
+		eprintln("features depending on them may be unavailable");
 	}
 }
 
@@ -770,12 +777,6 @@ static void check_env(void) {
 // 2. script_tf.lua  (MODNAME set)
 // 3. script_440.lua  (SteamAppId set)
 // 4. script.lua
-
-#if defined(__linux__) || defined(__FreeBSD__)
- #define STEAMAPPID_ENV "SteamAppId"
-#else
- #define STEAMAPPID_ENV "STEAMAPPID"
-#endif
 
 typedef bool (*path_callback)(const char *);
 

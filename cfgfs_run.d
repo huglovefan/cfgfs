@@ -10,6 +10,7 @@ import std.parallelism;
 import std.datetime.systime;
 import std.concurrency;
 import std.datetime.stopwatch;
+import std.range;
 
 import core.runtime;
 import core.thread.osthread;
@@ -20,22 +21,19 @@ import core.sys.freebsd.sys.sysctl;
 
 import core.sys.windows.windows;
 
+version (Windows) string gameExeExt = ".exe";
+version (Posix) string gameExeExt = ".sh";
+
 string findGameExe(string[] args) {
-	foreach (arg; args) {
-		if (arg.isAbsolute) {
-			switch (arg.baseName) {
-			case "hl2.sh":
-			case "hl2.exe":
-				return arg;
-			default:
-				break;
-			}
+	foreach (arg; args.retro) {
+		if (arg.isAbsolute && arg.endsWith(gameExeExt)) {
+			return arg;
 		}
 	}
-	return null;
+	throw new Exception("couldn't parse game executable from command line");
 }
 
-string findGameDir(string[] args, string exeDir) {
+string findGameDir(string[] args, string exeDir, string exeName) {
 	// note: use the last one in case there are multiple
 	// note2: the path is relative to the executable (hl2.sh or hl2.exe)
 	string rv = null;
@@ -45,8 +43,18 @@ string findGameDir(string[] args, string exeDir) {
 			i += 1;
 		}
 	}
+	// try the basename of the executable (without .exe) if -game isn't found
+	// this should fix csgo which doesn't use the -game parameter but defaults
+	//  to "csgo" which matches the executable name
+	if (!rv && exeName != null) {
+		string exeBase = exeName.stripExtension;
+		string exeGameDir = cast(string)chainPath(exeDir, exeBase).array;
+		if (exeGameDir.exists && exeGameDir.isDir) {
+			rv = exeGameDir;
+		}
+	}
 	if (!rv) {
-		throw new StringException("couldn't parse command line (missing -game parameter)");
+		throw new Exception("couldn't parse command line (missing -game parameter)");
 	}
 	return rv;
 }
@@ -58,7 +66,7 @@ string findGameTitle(string gameDir) {
 			return cast(string)m.front[1];
 		}
 	}
-	throw new StringException("couldn't parse gameinfo.txt");
+	throw new Exception("couldn't parse gameinfo.txt");
 }
 
 version (Windows) {
@@ -332,8 +340,9 @@ string getsysctl(const string name) {
 // -----------------------------------------------------------------------------
 
 shared string cfgfsDir;
-shared string gameRoot;
 
+shared string gameExe;
+shared string gameBaseDir;
 shared string gameDir;
 shared string gameTitle;
 
@@ -344,12 +353,10 @@ shared bool gameExited;
 void runMain(string[] args) {
 
 	cfgfsDir = thisExePath().dirName;
-	gameRoot = getcwd();
 
-	string exePath = findGameExe(args);
-	string exeDir = (exePath) ? exePath.dirName : getcwd();
-
-	gameDir = findGameDir(args, exeDir);
+	gameExe = findGameExe(args);
+	gameBaseDir = gameExe.dirName;
+	gameDir = findGameDir(args, gameBaseDir, gameExe.baseName);
 	gameTitle = findGameTitle(gameDir);
 
 	cfgfsMountPoint = cast(string)gameDir.chainPath("custom", "!cfgfs", "cfg").array;
@@ -391,7 +398,6 @@ void runMain(string[] args) {
 					"CFGFS_STARTTIME": startTime,
 					"GAMEDIR": gameDir,
 					"GAMENAME": gameTitle,
-					"GAMEROOT": gameRoot,
 					"MODNAME": gameDir.baseName,
 					"LC_ALL": null,
 					"LD_LIBRARY_PATH": null,
@@ -433,7 +439,7 @@ void runMain(string[] args) {
 			version (Posix) {
 				unlinkConsoleLog(gameDir, cfgfsMountPoint);
 			}
-		} catch (Throwable e) {
+		} catch (Exception e) {
 			version (Windows) MessageBoxA(null, e.toString().toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
 			version (Posix) stderr.writeln(e.toString());
 		}
@@ -548,7 +554,7 @@ void main(string[] args) {
 	version (Posix) stderr.write("=== cfgfs_run ===\n");
 	try {
 		runMain(args);
-	} catch (Throwable e) {
+	} catch (Exception e) {
 		version (Windows) MessageBoxA(null, e.toString().toStringz(), "cfgfs_run.exe", MB_ICONEXCLAMATION);
 		version (Posix) stderr.writeln(e.toString());
 	} finally {

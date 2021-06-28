@@ -33,16 +33,18 @@ local ev_error_handlers
 setmetatable(_G, {
 	__index = function (self, k)
 		if k == 'panic' then
-			assert(coroutine.running(), 'tried to get panic function outside a coroutine')
-			return ev_error_handlers[coroutine.running()]
+			local co, is_main = coroutine.running()
+			assert(not is_main, 'tried to get panic function outside a coroutine')
+			return ev_error_handlers[co]
 		end
 		return error('tried to access nonexistent variable ' .. tostring(k), 2)
 	end,
 	__newindex = function (self, k, v)
 		if k == 'panic' then
-			assert(coroutine.running(), 'tried to set panic function outside a coroutine')
+			local co, is_main = coroutine.running()
+			assert(not is_main, 'tried to set panic function outside a coroutine')
 			assert(v == nil or type(v) == 'function', 'panic function must be a function')
-			ev_error_handlers[coroutine.running()] = v
+			ev_error_handlers[co] = v
 			return
 		end
 		return rawset(self, k, v)
@@ -309,7 +311,8 @@ wait = function (ms, canceldata)
 	local target = _ms()+ms
 	local click_id = (_click(ms) or true)
 	local check_cancel = false
-	local this_co = assert(coroutine.running())
+	local this_co, is_main = coroutine.running()
+	assert(not is_main, 'tried to wait() outside a coroutine')
 
 	-- click_id is the "id" of the click. it's either userdata for
 	--  pthread_t, or true if the click didn't spawn a thread ("ms" was 0
@@ -579,8 +582,8 @@ cancel_event = function (data)
 end
 
 wait_for_event = function (name, timeout_opt)
-	local this_co = coroutine.running()
-	if this_co then
+	local this_co, is_main = coroutine.running()
+	if not is_main then
 		local canceldata = {}
 		if timeout_opt then
 			spinoff(function ()
@@ -1114,68 +1117,6 @@ end
 
 -- cli input handling
 
--- cfg commands are parsed here so lua aliases can be called directly (with
---  arguments and without going through the game)
-
-local parse_command = nil
-if pcall(require, 'lpeg') then
-	local lpeg = require 'lpeg'
-
-	local cfg_grammer = lpeg.P {
-		'script',
-
-		space = lpeg.R'\0 '
-		      - lpeg.P'\n';
-
-		separator = lpeg.P';';
-
-		comment = lpeg.P'//'
-		        * lpeg.V'comment_char'^0;
-		comment_char = lpeg.P(1)
-		             - lpeg.P'\n';
-
-		word = lpeg.C(lpeg.V'word_char'^1);
-		word_char = lpeg.P(1)
-		          - lpeg.S' \n";'
-		          - lpeg.P'//';
-
-		quoted = lpeg.P'"'
-		       * lpeg.C(lpeg.V'quoted_char'^0)
-		       * lpeg.P'"'^-1; -- closing quote is optional
-		quoted_char = lpeg.P(1)
-		            - lpeg.S'"\n';
-
-		command = ( lpeg.V'command_part'
-		          * lpeg.V'space'^0 )^1;
-		command_part = lpeg.V'word'
-		             + lpeg.V'quoted';
-
-		anything = lpeg.P'\n'
-		         + lpeg.V'space'
-		         + lpeg.V'separator'
-		         + lpeg.V'comment'
-		         + lpeg.Ct(lpeg.V'command');
-
-		script = lpeg.Ct( lpeg.V'anything'^1 )
-		       * lpeg.P(-1);
-	}
-	-- todo: characters like : aren't handled here
-
-	parse_command = function (s)
-		local cmds = cfg_grammer:match(s)
-		if cmds then
-			return function ()
-				for _, t in ipairs(cmds) do
-					local name = t[1]
-					cmd[name](select(2, table.unpack(t)))
-				end
-			end
-		else
-			return nil
-		end
-	end
-end
-
 local repl_fn = function (code)
 	local fn, err1 = load('return '..code, 'input')
 	if fn then
@@ -1210,7 +1151,7 @@ _cli_input = function (line)
 	end
 
 	if line == 'cfgfs_license' then
-		local f = assert(io.open('LICENSE', 'r'))
+		local f = assert(io.open((os.getenv('CFGFS_DIR') or '.')..'/LICENSE', 'r'))
 		for line in f:lines() do
 			printv(line)
 		end
@@ -1226,12 +1167,6 @@ _cli_input = function (line)
 			return
 		end
 		fn_to_run = fn
-	elseif parse_command then
-		fn_to_run = parse_command(line)
-		if not fn_to_run then
-			-- parsed but there were no commands
-			return
-		end
 	end
 
 	local buffer_was_empty = _buffer_is_empty()
