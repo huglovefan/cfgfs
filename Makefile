@@ -20,11 +20,12 @@ LDLIBS   += $(MYLIBS)
 
 osname := $(shell uname -o)
 
-RELOADER_OBJ ?= src/reloader.o
+RELOADER_OBJ ?= src/reloader_dummy.o
 
 ifneq (,$(findstring Linux,$(osname)))
  IS_LINUX := 1
  CLICK_OBJ ?= src/click_thread_kqueue.o src/click_x11.o
+ RELOADER_OBJ := src/reloader_kqueue.o
 endif
 
 ifneq (,$(findstring FreeBSD,$(osname)))
@@ -68,6 +69,7 @@ OBJS = \
        src/pipe_io.o \
        src/attention.o \
        src/misc/string.o \
+       src/reloader_common.o \
        $(RELOADER_OBJ) \
        src/cli_input.o \
        src/misc/caretesc.o \

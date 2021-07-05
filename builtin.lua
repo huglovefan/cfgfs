@@ -1874,13 +1874,13 @@ local after_script_exec = function (path)
 end
 
 -- reload and re-run script.lua
-_reload_1 = function ()
+_reload_1 = function (modified_path)
 	local path = (os.getenv('CFGFS_SCRIPT') or 'script.lua')
 	local ok, err = loadfile(path)
 	if not ok then
 		eprintln('\aerror: %s', err)
 		eprintln('failed to reload script.lua!')
-		return false
+		return {ok=false}
 	end
 	local script = ok
 
@@ -1894,17 +1894,17 @@ _reload_1 = function ()
 	if not ok then
 		eprintln('\aerror: %s', err)
 		eprintln('script.lua was reloaded with an error!')
-		return true
+		return {ok=true, path=modified_path}
 	end
 
 	println('script.lua reloaded successfully')
 
-	return true
+	return {ok=true, path=modified_path}
 end
 
 -- part 2: we re-ran script.lua and output isn't going in init.cfg anymore
-_reload_2 = function (ok)
-	if not ok then return end
+_reload_2 = function (t)
+	if not t.ok then return end
 
 	_init()
 
@@ -1914,7 +1914,7 @@ _reload_2 = function (ok)
 		end
 	end
 
-	fire_event('reload')
+	fire_event('reload', t.path)
 
 	collectgarbage()
 end
@@ -1949,6 +1949,9 @@ do
 	--   false = tried to add watch but failed
 	local watched_modules = {}
 
+	-- modname string -> true
+	local noreload_modules = {}
+
 	-- un-cache loaded modules on reload so they're loaded from disk again
 	-- note: this is needed even for modules that we've failed to watch,
 	--  because without this we would never retry watching them (as loading
@@ -1972,13 +1975,21 @@ do
 		if true == watched_modules[modname] then
 			return require_real(modname)
 		end
+
 		local rv = {pcall(require_real, modname)}
 		if rv[1] then
+			-- successfully require()'d
+
+			-- if it looks like a lua file, add it to the path cache
+			-- if it's not on the noreload list, also watch that path
 			local path = rv[3]
 			if path and path:find('^%.*/.*%.[Ll][Uu][Aa]$') then
 				path_cache[modname] = path
-				watched_modules[modname] = _reloader_add_watch(path)
+				if not noreload_modules[modname] then
+					watched_modules[modname] = _reloader_add_watch(path)
+				end
 			end
+
 			return select(2, table.unpack(rv))
 		else
 			-- require() or the module had an error
@@ -1991,8 +2002,30 @@ do
 				watched_modules[modname] = _reloader_add_watch(path_cache[modname])
 			end
 
+			-- pretend they never got to call reloader_ignore_module()
+			noreload_modules[modname] = nil
+
 			return error(rv[2], 2)
 		end
+	end
+
+	--
+	-- manually add a file to the watch list
+	--
+	reloader_watch_file = function (path)
+		return _reloader_add_watch(path)
+	end
+
+	--
+	-- skip reloading for the calling module
+	-- this means:
+	-- * editing the file won't cause the script to be reloaded
+	-- * reloading cfgfs doesn't un-cache the module (so the body will never
+	--    be evaluated a second time)
+	--
+	reloader_ignore_module = function (...)
+		local modname, path = ...
+		noreload_modules[modname] = true
 	end
 end
 

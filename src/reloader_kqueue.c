@@ -16,6 +16,10 @@
 #include "lua.h"
 #include "pipe_io.h"
 
+#if !defined(__FreeBSD__)
+ #define USING_LIBKQUEUE
+#endif
+
 static int msgpipe[2] = {-1, -1};
 
 enum msg {
@@ -35,8 +39,6 @@ static struct watch {
 } *watches;
 static unsigned int watches_cnt;
 
-static void do_reload(void);
-
 static void remove_watches(void) {
 	for (unsigned int i = 0; i < watches_cnt; i++) {
 		struct kevent ev = {
@@ -54,6 +56,8 @@ static void remove_watches(void) {
 	}
 	watches_cnt = 0;
 }
+
+static bool file_modified(const char *path, const struct stat *oldstat);
 
 static void *reloader_main(void *ud) {
 	(void)ud;
@@ -78,11 +82,11 @@ static void *reloader_main(void *ud) {
 
 	for (;;) {
 poll:
-		memset(&ev, 0, sizeof(struct kevent));
+		ev = (struct kevent){0};
 		int evcnt = kevent(kq, NULL, 0, &ev, 1, NULL);
 		check_minus1(evcnt, "reloader: kevent", goto out);
 
-#if defined(__linux__)
+#if defined(USING_LIBKQUEUE)
 		if (evcnt == 0) goto poll; // ???
 #endif
 
@@ -94,60 +98,34 @@ poll:
 				pthread_mutex_lock(&lock);
 				 remove_watches();
 				pthread_mutex_unlock(&lock);
-				do_reload();
+				reloader_do_reload_internal(NULL);
 				goto poll;
 			}
 			assert_unreachable();
 		}
 
-		// give them some time to actually write out the file
-		usleep(10*1000);
-
 		pthread_mutex_lock(&lock);
 
-		bool should_reload = false;
-		/*if (evcnt != 0) {*/
-			// find the file the event is for, then check if it's modified
-			bool found = false;
-			bool unmodified = false;
-			for (unsigned int i = 0; i < watches_cnt; i++) {
-				if (ev.ident != (uintptr_t)watches[i].fd) {
-					continue;
-				}
-				found = true;
+		unsigned int idx = (unsigned int)(uintptr_t)ev.udata;
+		if (!(idx < watches_cnt)) {
+			eprintln("reloader: idx %u >= watches_cnt %u",
+			    idx, watches_cnt);
+D			assert(false);
+			pthread_mutex_unlock(&lock);
+			continue;
+		}
 
-				struct stat sb;
-				if (-1 != stat(watches[i].path, &sb)) {
-					sb.st_atime = 0;
-					if (0 == memcmp(&sb, &watches[i].sb, sizeof(struct stat))) {
-						unmodified = true;
-					}
-				}
-				break;
-			}
-			assert(found);
-			should_reload = (found) ? !unmodified : true;
-		/*} else {
-			// event has no target
-			// check all files and find out if any of them are modified
-			bool modified = false;
-			for (unsigned int i = 0; i < watches_cnt; i++) {
-				struct stat sb;
-				if (0 == stat(watches[i].path, &sb)) {
-					sb.st_atime = 0;
-					if (0 == memcmp(&sb, &watches[i].sb, sizeof(struct stat))) {
-						continue;
-					}
-				}
-				modified = true;
-				break;
-			}
-			should_reload = (modified);
-		}*/
-
-		if (should_reload) remove_watches();
-		pthread_mutex_unlock(&lock);
-		if (should_reload) do_reload();
+		if (file_modified(watches[idx].path, &watches[idx].sb)) {
+			char *path = strdup(watches[idx].path);
+			remove_watches();
+			pthread_mutex_unlock(&lock);
+			reloader_do_reload_internal(path);
+			free(path);
+		} else {
+			eprintln("reloader: woken up for unmodified path %s",
+			    watches[idx].path);
+			pthread_mutex_unlock(&lock);
+		}
 	}
 out:
 	pthread_mutex_lock(&lock);
@@ -161,29 +139,21 @@ out:
 	return NULL;
 }
 
-
-static void do_reload(void) {
-	lua_State *L = lua_get_state("reloader");
-	if (L == NULL) {
-		perror("reloader: failed to lock lua state!");
-		return;
+static bool file_modified(const char *path, const struct stat *oldstat) {
+D	assert(oldstat->st_atime == 0); // should've cleared this for the comparison to work
+	int tries = 4;
+	while (tries --> 0) {
+		struct stat sb;
+		if (-1 != stat(path, &sb)) {
+			sb.st_atime = 0;
+			if (0 != memcmp(&sb, oldstat, sizeof(struct stat))) {
+				return true;
+			}
+		}
+		// give them time to actually write out the file
+		usleep(5*1000);
 	}
-
-V	eprintln("reloader: reloading...");
-
-	buffer_list_reset(&buffers);
-	buffer_list_reset(&init_cfg);
-
-	lua_getglobal(L, "_reload_1");
-	 lua_call(L, 0, 1);
-	  buffer_list_swap(&buffers, &init_cfg);
-	  lua_getglobal(L, "_reload_2");
-	  lua_rotate(L, -2, 1);
-	lua_call(L, 1, 0);
-
-V	eprintln("reloader: reloading done!");
-
-	lua_release_state(L);
+	return false;
 }
 
 // -----------------------------------------------------------------------------
@@ -192,9 +162,8 @@ void reloader_reload(void) {
 	if (msgpipe[1] != -1) writech(msgpipe[1], msg_reload);
 }
 
-int l_reloader_add_watch(void *L) {
+_Bool reloader_add_watch(const char *path, const char **whynot) {
 	bool locked = false;
-	const char *path = luaL_checkstring(L, 1);
 	int fd;
 	char *path2 = NULL;
 	struct watch *newwatches;
@@ -231,6 +200,7 @@ int l_reloader_add_watch(void *L) {
 		// attrib: edit using geany, touch(1)
 		// write: edit using nano
 		.fflags = NOTE_ATTRIB|NOTE_WRITE,
+		.udata = (void *)(uintptr_t)watches_cnt,
 	};
 	check_minus1(
 	    kevent(kq, &ev, 1, NULL, 0, NULL),
@@ -242,14 +212,13 @@ int l_reloader_add_watch(void *L) {
 	locked = false;
 	pthread_mutex_unlock(&lock);
 
-	lua_pushboolean(L, true);
-	return 1;
+	return true;
 err:
 	if (locked) pthread_mutex_unlock(&lock);
 	if (fd != -1) close(fd);
 	if (path2 != NULL) free(path2);
-	lua_pushboolean(L, false);
-	return 1;
+	if (whynot != NULL) *whynot = "failed to add watch";
+	return false;
 }
 
 // -----------------------------------------------------------------------------

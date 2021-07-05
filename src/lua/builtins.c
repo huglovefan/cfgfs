@@ -300,8 +300,6 @@ static const luaL_Reg fns_g[] = {
 	{"_cfgfs_unmount", l_cfgfs_unmount},
 	// main.c
 	{"_notify_list_set", (lua_CFunction)l_notify_list_set},
-	// reloader.c
-	{"_reloader_add_watch", (lua_CFunction)l_reloader_add_watch},
 	{NULL, NULL},
 };
 static const luaL_Reg fns_s[] = {
@@ -327,6 +325,7 @@ void lua_define_builtins(void *L) {
 	 luaL_setfuncs(L, l_cli_input_fns, 0);
 	 luaL_setfuncs(L, l_click_fns, 0);
 	 luaL_setfuncs(L, l_rcon_fns, 0);
+	 luaL_setfuncs(L, l_reloader_fns, 0);
 	lua_pop(L, 1);
 
 #if defined(__linux__) || defined(__FreeBSD__)
