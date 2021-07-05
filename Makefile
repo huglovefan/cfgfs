@@ -435,9 +435,22 @@ testbuild:
 
 # ~
 
+#
+# rtest: build and run tests on a remote machine
+# - the git repo is copied up to the latest local commit
+# - HOST= should be a machine you can ssh into (it's used like "ssh ${HOST}")
+# - INC= specifies additional files to include on top of the last commit
+#
+
+HOST :=
 INC := Makefile test
 rtest:
-	@tar -cf- .git $(INC) | ssh $(HOST) ' \
+	@if [ -z "$(HOST)" ]; then \
+		>&2 echo "usage: $(MAKE) rtest HOST=<host> [INC=<optional files to include>]"; \
+		exit 1; \
+	fi; \
+	tar -cf- .git $(INC) | ssh $(HOST) ' \
+	: "source ~/.profile so that PATH= is set"; \
 	[ ! -e ~/.profile ] || . ~/.profile 0<>/dev/null 1>&0 2>&0; \
 	set -e; \
 	tmpdir=$$(mktemp -d); \
@@ -452,8 +465,10 @@ rtest:
 	done; \
 	case $$(uname -o) in \
 	*Cygwin*) \
+		: "note: 350K download"; \
 		curl --no-progress-meter "https://www.lua.org/ftp/lua-5.4.3.tar.gz" | tar -xzf-; \
 		( cd lua-5.4.3 && make -sj2 posix ); \
+		: "fixme: building with clang doesn't work through rtest for some reason"; \
 		export CC=gcc; \
 		;; \
 	esac; \
