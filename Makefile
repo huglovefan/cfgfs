@@ -48,6 +48,20 @@ ifneq (,$(findstring Cygwin,$(osname)))
  READLINE_LIBS ?= -lreadline
 endif
 
+ifeq (Msys,$(osname))
+ IS_MSYS := 1
+ EXEEXT := .exe
+ LUA_CFLAGS ?= -Ilua-5.4.3/src
+ LUA_LIBS ?= lua-5.4.3/src/liblua.a
+ CLICK_OBJ ?= src/click_thread_pthread.o src/click_win32.o
+ FUSE_CFLAGS := -IC:/Program\ Files\ \(x86\)/WinFSP/inc/fuse3
+ FUSE_LIBS := C:/Program\ Files\ \(x86\)/WinFSP/bin/winfsp-x64.dll
+ # building with clang causes this:
+ # cfgfs.exe: Invalid relocation.  Offset 0x3e08e80cf at address 0x100404151
+ #  doesn't fit into 32 bits
+ CC := gcc
+endif
+
 # ------------------------------------------------------------------------------
 
 EXE := $(shell basename -- "$$PWD")$(EXEEXT)
@@ -279,7 +293,7 @@ ifneq (,$(IS_LINUX))
  LDLIBS += -lbsd
 endif
 
-ifneq (,$(IS_CYGWIN))
+ifneq (,$(IS_CYGWIN)$(IS_MSYS))
  LDLIBS += -lDbgHelp
 endif
 
@@ -491,6 +505,9 @@ endif
 ifneq (,$(IS_CYGWIN))
  STEAMDIR := /cygdrive/c/Program\ Files\ \(x86\)/Steam
 endif
+ifneq (,$(IS_MSYS))
+ STEAMDIR := /c/Program\ Files\ \(x86\)/Steam
+endif
 
 TF2MNT := $(STEAMDIR)/steamapps/common/Team\ Fortress\ 2/tf/custom/!cfgfs/cfg
 
@@ -499,14 +516,14 @@ start:
 	if [ -n "$(IS_LINUX)" ]; then \
 		mount | grep -Po ' on \K(.+?)(?= type (fuse\.)?cfgfs )' | xargs -n1 -rd'\n' fusermount -u; \
 	fi; \
-	if [ -z "$(IS_CYGWIN)" ]; then \
+	if [ -z "$(IS_CYGWIN)$(IS_MSYS)" ]; then \
 		[ -d $(TF2MNT) ] || mkdir -p $(TF2MNT); \
 	else \
 		[ ! -d $(TF2MNT) ] || rmdir $(TF2MNT); \
 	fi; \
 	[ ! -L $(MNTLNK) ] || rm $(MNTLNK); \
 	[ ! -d $(MNTLNK) ] || rmdir $(MNTLNK); \
-	ln -fs $(TF2MNT) $(MNTLNK); \
+	if [ -z "$(IS_MSYS)" ]; then ln -fs $(TF2MNT) $(MNTLNK); fi; \
 	export CFGFS_DIR=$$PWD; \
 	export CFGFS_MOUNTPOINT=$(TF2MNT); \
 	export CFGFS_NO_SCROLLBACK=1; \

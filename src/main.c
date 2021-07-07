@@ -34,6 +34,17 @@
  #pragma GCC diagnostic pop
 #endif
 
+#if defined(__MSYS__)
+ #pragma GCC diagnostic push
+  #if defined(__clang__)
+   #pragma GCC diagnostic ignored "-Wextra-semi-stmt"
+  #endif
+  #pragma GCC diagnostic ignored "-Wsign-conversion"
+  #pragma GCC diagnostic ignored "-Wstrict-prototypes"
+  #include <fuse.h>
+ #pragma GCC diagnostic pop
+#endif
+
 #include <lauxlib.h>
 
 #include "attention.h"
@@ -302,7 +313,7 @@ error:
 
 // -----------------------------------------------------------------------------
 
-#if defined(CYGFUSE)
+#if defined(CYGFUSE) || defined(__MSYS__)
  static uid_t fs_uid;
  static gid_t fs_gid;
 #endif
@@ -327,14 +338,14 @@ V	eprintln("cfgfs_getattr: %s", path);
 		else
 			return -EIO;
 		stbuf->st_size = reported_cfg_size;
-#if defined(CYGFUSE)
+#if defined(CYGFUSE) || defined(__MSYS__)
 		stbuf->st_uid = fs_uid;
 		stbuf->st_gid = fs_gid;
 #endif
 		return 0;
 	} else if (rv == 0xd) {
 		stbuf->st_mode = 0500|S_IFDIR;
-#if defined(CYGFUSE)
+#if defined(CYGFUSE) || defined(__MSYS__)
 		stbuf->st_uid = fs_uid;
 		stbuf->st_gid = fs_gid;
 #endif
@@ -347,7 +358,7 @@ D		assert(rv < 0);
 
 // ~
 
-#if defined(CYGFUSE) || defined(__FreeBSD__)
+#if defined(CYGFUSE) || defined(__FreeBSD__) || defined(__MSYS__)
 
 // needed for "echo > file" to work
 
@@ -386,7 +397,7 @@ D		assert(rv < 0);
 // note: the count is accurate only when the config actually exists outside cfgfs. if it doesn't exist, we get a few less events but have no good way to detect that
 #if defined(__linux__) || defined(__FreeBSD__)
  #define UNMASK_IGNORE_CNT 3
-#elif defined(CYGFUSE)
+#elif defined(CYGFUSE) || defined(__MSYS__)
  #define UNMASK_IGNORE_CNT 6
 #endif
 
@@ -413,6 +424,10 @@ V		eprintln("cfgfs_read: can't read this type of file!");
 	}
 
 	if (unlikely(size < reported_cfg_size)) {
+#if defined(__MSYS__)
+		// stat() seems to make a read with size 3
+		if (size != 3)
+#endif
 		eprintln("warning: cfgfs_read: read size %zu is too small, ignoring request", size);
 #if defined(__linux__)
 		// don't abort on windows. reads from "type" in cmd.exe are 512 bytes but i haven't seen anything like that on linux
@@ -694,7 +709,7 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 	// - "cat" terminal command only printing some of the file contents it read (total mystery)
 	// - keys rarely getting stuck ingame (no evidence but i think it was because of this. haven't had it happen after re-disabling the cache)
 	cfg->direct_io = true;
-#elif defined(CYGFUSE)
+#elif defined(CYGFUSE) || defined(__MSYS__)
 	// set_gid/set_uid don't seem to work with cygfuse
 	fs_uid = geteuid();
 	fs_gid = getegid();
@@ -714,7 +729,7 @@ static void *cfgfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
 
 // -----------------------------------------------------------------------------
 
-#if !defined(CYGFUSE)
+#if !defined(CYGFUSE) && !defined(__MSYS__)
 
 __attribute__((minsize))
 static void cfgfs_log(enum fuse_log_level level, const char *fmt, va_list args) {
@@ -880,7 +895,7 @@ VV		eprintln("fopen %s: %s", path, strerror(errno));
 
 static const struct fuse_operations cfgfs_oper = {
 	.getattr = cfgfs_getattr,
-#if defined(CYGFUSE) || defined(__FreeBSD__)
+#if defined(CYGFUSE) || defined(__FreeBSD__) || defined(__MSYS__)
 	.truncate = cfgfs_truncate,
 #endif
 	.open = cfgfs_open,
@@ -948,7 +963,7 @@ int main(int argc, char **argv) {
 
 	enum fuse_main_rv rv;
 
-#if !defined(CYGFUSE)
+#if !defined(CYGFUSE) && !defined(__MSYS__)
 	fuse_set_log_func(cfgfs_log);
 #endif
 
@@ -987,7 +1002,7 @@ int main(int argc, char **argv) {
 		goto out_no_fuse;
 	}
 	opts.foreground = true;
-#elif defined(CYGFUSE)
+#elif defined(CYGFUSE) || defined(__MSYS__)
 	struct cfgfs_cmdline_opts {
 		char *mountpoint;
 	} opts = {0};
@@ -1076,6 +1091,15 @@ D	assert(NULL != getenv("CFGFS_SCRIPT"));
 	// only this antique version with slightly different syntax works
 	extern int fuse3_loop_mt_31(struct fuse3 *, int clone_fd);
 	int loop_rv = fuse3_loop_mt_31(fuse, 0);
+	rv = rv_ok;
+	if (loop_rv != 0) {
+		rv = rv_fs_error;
+	}
+#elif defined(__MSYS__)
+	int loop_rv = fuse_loop_mt(fuse, &(struct fuse_loop_config){
+		.clone_fd = false,
+		.max_idle_threads = 5,
+	});
 	rv = rv_ok;
 	if (loop_rv != 0) {
 		rv = rv_fs_error;

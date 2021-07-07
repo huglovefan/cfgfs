@@ -32,7 +32,7 @@ case $osname in
 		umount test/mnt
 	}
 	;;
-*Cygwin*)
+*Cygwin*|*Msys*)
 	prepare_mnt() {
 		[ ! -e test/mnt ] || rmdir test/mnt
 	}

@@ -334,7 +334,7 @@ void lua_define_builtins(void *L) {
 	lua_pushboolean(L, 0); lua_setglobal(L, "__linux__");
 #endif
 
-#if defined(__CYGWIN__)
+#if defined(__CYGWIN__) || defined(__MSYS__)
 	lua_pushboolean(L, 1); lua_setglobal(L, "__CYGWIN__");
 #else
 	lua_pushboolean(L, 0); lua_setglobal(L, "__CYGWIN__");
