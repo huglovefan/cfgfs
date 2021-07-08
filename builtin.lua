@@ -544,8 +544,12 @@ fire_event = function (name, ...)
 	local t = events[name]
 	if t then
 		local copy = {table.unpack(t)}
-		for _, cb in ipairs(copy) do
-			if t[cb] then
+		--
+		-- resume coroutines, most recent one first
+		--
+		for i = #copy, 1, -1 do
+			local cb = copy[i]
+			if type(cb) == 'thread' then
 				last_event_name = name
 
 				local old_in_event = in_event
@@ -553,11 +557,32 @@ fire_event = function (name, ...)
 				in_event = true
 				canceldata = nil
 
-				if type(cb) == 'function' then
-					ev_call(cb, ...)
-				elseif type(cb) == 'thread' then
-					ev_resume(cb, ...)
+				ev_resume(cb, ...)
+				rv = rv+1
+
+				local my_canceldata = canceldata
+				in_event = old_in_event
+				canceldata = old_canceldata
+
+				if my_canceldata then
+					return -rv, my_canceldata
 				end
+			end
+		end
+		--
+		-- call callbacks, oldest one first
+		--
+		for i = 1, #copy do
+			local cb = copy[i]
+			if type(cb) == 'function' then
+				last_event_name = name
+
+				local old_in_event = in_event
+				local old_canceldata = canceldata
+				in_event = true
+				canceldata = nil
+
+				ev_call(cb, ...)
 				rv = rv+1
 
 				local my_canceldata = canceldata
