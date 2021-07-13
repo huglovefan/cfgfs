@@ -1329,6 +1329,7 @@ local is_spam = function (line)
 		if c == '*' and #line >= 41 and line:find('^%*%*%* Invalid sample rate %(%-?[0-9]+%) for sound \'.*\'%.$') then goto match end
 		if c == '-' and #line >= 26 and line:find('^%-%-%- Missing Vgui material .*$') then goto match end
 		if c == 'A' and #line >= 48 and line:find('^Attemped to precache unknown particle system ".*"!$') then goto match end
+		if c == 'A' and #line >= 48 and line:find('^Attempting to create unknown particle system \'.*\' $') then goto match end
 		if c == 'A' and #line >= 65 and line:find('^Attempt to set particle collection .* to invalid orientation matrix$') then goto match end
 		if c == 'C' and #line >= 23 and line:find('^Could not find table ".*"$') then goto match end
 		if c == 'C' and #line >= 44 and line:find('^Cannot update control point %-?[0-9]+ for effect \'.*\'%.$') then goto match end
