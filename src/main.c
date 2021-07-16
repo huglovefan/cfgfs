@@ -145,11 +145,10 @@ static int unmask_cnt = 0;
 
 // -----------------------------------------------------------------------------
 
-#define MESSAGE_DIR_PREFIX "/message/"
+static char *notify_list = NULL;
+static pthread_rwlock_t notify_list_lock = PTHREAD_RWLOCK_INITIALIZER;
 
-static int lookup_ordinary_path(const char *restrict path,
-                                size_t pathlen,
-                                bool is_open);
+#define MESSAGE_DIR_PREFIX "/message/"
 
 #define starts_with(self, other) \
 	(0 == memcmp(self, other, strlen(other)))
@@ -201,15 +200,56 @@ static int lookup_path(const char *restrict path,
 
 	// (checked so far: it's a file whose name ends with .cfg)
 
+	//
+	// update some globals related to the path
+	//
+
+	// same config as previously?
+	if (likely(string_equals_buf(&last_config_name, path, length))) {
+		// unmask count non-zero? if so, ignore this call
+		if (unmask_cnt > 0) {
+			unmask_cnt -= 1;
+			return -ENOENT;
+		}
+		// this lookup_path() is for an open()? if so, increment the open counter
+		if (likely(is_open)) {
+			last_config_open_cnt += 1;
+			// note: this is reset when the config is read
+		}
+	} else {
+		// different config
+
+		// unmask_cnt was set for the config but we didn't get all the calls? if so, print a warning
+		if (unlikely(unmask_cnt > 0 && last_config_name.data != NULL)) {
+			eprintln("warning: leftover unmask_cnt %d from config %s",
+			    unmask_cnt, last_config_name.data);
+		}
+
+		string_set_contents_from_buf(&last_config_name, path, length);
+
+		last_config_open_cnt = (is_open) ? 1 : 0;
+		unmask_cnt = 0;
+	}
+
 	// is it in the cfgfs directory?
 	if (likely(starts_with(path, "/cfgfs/"))) {
 		return 0xf;
 	}
 
-	// it's probably a real config
-	// do the checks for ordinary configs
+	// is it one of the configs we're monitoring (like class configs)?
+	bool on_notify_list = false;
+	if (likely(notify_list != NULL)) {
+		pthread_rwlock_rdlock(&notify_list_lock);
+		on_notify_list = optstring_test(notify_list, path, length);
+		pthread_rwlock_unlock(&notify_list_lock);
+	}
+	if (!on_notify_list) {
+		return -ENOENT;
+	}
+
 	if (type) type->fh |= ORDINARY_CONFIG_BIT;
-	return lookup_ordinary_path(path, length, is_open);
+
+	return 0xf;
 }
 
 #undef starts_with
@@ -217,50 +257,6 @@ static int lookup_path(const char *restrict path,
 #undef equals
 
 // -----------------------------------------------------------------------------
-
-static char *notify_list = NULL;
-static pthread_rwlock_t notify_list_lock = PTHREAD_RWLOCK_INITIALIZER;
-
-// -----------------------------------------------------------------------------
-
-__attribute__((noinline))
-static int lookup_ordinary_path(const char *restrict path,
-                                size_t pathlen,
-                                bool is_open) {
-D	assert(pathlen >= 1);
-
-	if (likely(notify_list != NULL)) {
-		pthread_rwlock_rdlock(&notify_list_lock);
-		bool found = optstring_test(notify_list, path, pathlen);
-		pthread_rwlock_unlock(&notify_list_lock);
-		if (!found) return -ENOENT;
-	}
-
-	if (likely(string_equals_buf(&last_config_name, path, pathlen))) {
-		if (unmask_cnt <= 0) {
-			if (likely(is_open)) {
-				last_config_open_cnt += 1;
-				// note: this is reset when the config is read
-			}
-			return 0xf;
-		} else {
-			unmask_cnt -= 1;
-			return -ENOENT;
-		}
-	} else {
-		if (unlikely(unmask_cnt != 0 && last_config_name.data != NULL)) {
-			eprintln("warning: leftover unmask_cnt %d from config %s",
-			    unmask_cnt, last_config_name.data);
-		}
-
-		string_set_contents_from_buf(&last_config_name, path, pathlen);
-
-		last_config_open_cnt = (is_open) ? 1 : 0;
-		unmask_cnt = 0;
-		return 0xf;
-	}
-	compiler_enforced_unreachable();
-}
 
 __attribute__((minsize))
 int l_notify_list_set(void *L) {
@@ -401,8 +397,8 @@ D		assert(rv < 0);
  #define UNMASK_IGNORE_CNT 6
 #endif
 
-
-// game makes this many open() calls total when reading a config
+// when a config is read normally through the command system, this many open()
+//  calls are done before the first call to read()
 #define NUM_OPEN_CALLS_TO_READ_A_CONFIG 3
 
 __attribute__((hot))
@@ -438,41 +434,41 @@ D		abort();
 
 	size_t pathlen = strlen(path);
 
-	if (unlikely(FH_IS_ORDINARY(fi->fh))) {
-		// catch the game manually reading config.cfg at startup so we don't
-		//  lose any buffer contents to that
-		// note: the fake read of config.cfg might leave the count at non-zero,
-		//  so use < instead of !=
-		if (unlikely(last_config_open_cnt < NUM_OPEN_CALLS_TO_READ_A_CONFIG)) {
-			if (unlikely(0 != strcmp(path, "/config.cfg"))) {
-				eprintln("cfgfs_read: warning: ignoring manual read of %s",
-				    path+1);
-			}
-			last_config_open_cnt = 0;
-			return 0;
-		} else {
-			// so it's not being read manually. need to reset this
-			//  anyway so it's correct next time
-			last_config_open_cnt = 0;
+	//
+	// detect and deny manual reads of config files
+	// this catches
+	// - game manually reading config.cfg at startup using fopen()
+	// - file managers reading files if readdir() is enabled
+	//
+	if (unlikely(last_config_open_cnt < NUM_OPEN_CALLS_TO_READ_A_CONFIG)) {
+		if (0 != strcmp(path, "/config.cfg")) {
+			eprintln("cfgfs_read: warning: ignoring manual read of %s",
+			    path+1);
 		}
+		last_config_open_cnt = 0;
+		return 0;
 	} else {
+		// not being read manually. need to reset this anyway so it's
+		//  correct next time
+		last_config_open_cnt = 0;
+	}
+
+	// execcing /unmask_next/?
 #define unmask_next_pre "/cfgfs/unmask_next/"
-		if (
-			pathlen > strlen(unmask_next_pre)+strlen(".cfg") &&
-			unlikely(0 == memcmp(path, unmask_next_pre, strlen(unmask_next_pre)))
-		) {
-			if (unlikely(unmask_cnt != 0 && last_config_name.data != NULL)) {
-				eprintln("warning: leftover unmask_cnt %d from config %s",
-				    unmask_cnt, last_config_name.data);
-			}
-
-			const char *name = path+(strlen(unmask_next_pre)-1);
-			size_t namelen = pathlen-(strlen(unmask_next_pre)-1);
-			string_set_contents_from_buf(&last_config_name, name, namelen);
-
-			unmask_cnt = UNMASK_IGNORE_CNT;
-			return 0;
+	if (!FH_IS_ORDINARY(fi->fh) &&
+	    pathlen > strlen(unmask_next_pre)+strlen(".cfg") &&
+	    0 == memcmp(path, unmask_next_pre, strlen(unmask_next_pre))) {
+		if (unlikely(unmask_cnt != 0 && last_config_name.data != NULL)) {
+			eprintln("warning: leftover unmask_cnt %d from config %s",
+			    unmask_cnt, last_config_name.data);
 		}
+
+		const char *name = path+(strlen(unmask_next_pre)-1);
+		size_t namelen = pathlen-(strlen(unmask_next_pre)-1);
+		string_set_contents_from_buf(&last_config_name, name, namelen);
+
+		unmask_cnt = UNMASK_IGNORE_CNT;
+		return 0;
 	}
 
 	lua_State *L = lua_get_state("cfgfs_read");
